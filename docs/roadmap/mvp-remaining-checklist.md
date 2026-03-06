@@ -56,9 +56,9 @@ This checklist tracks the remaining work to reach a usable Librapix MVP.
 
 - [ ] Improve root lifecycle visibility and indexing controls
 - [ ] Add explicit reindex flow messaging/status
-- [ ] Ensure ignore rules are visible in user-facing status
+- [x] Ensure ignore rules are visible in user-facing status
 - [ ] Add actionable recoverable error surfaces
-- [ ] Verification loop + smoke run
+- [x] Verification loop + smoke run
 - [ ] Commit root/indexing UX milestone
 
 ## G. MVP finalization

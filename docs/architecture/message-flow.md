@@ -24,6 +24,10 @@ Current baseline follows Iced's explicit state/update/view loop.
   - Remove deletes only Librapix-managed records.
 - Refresh roots
   - Reconciliation runs and the root list is reloaded into app state.
+- Ignore-rule management
+  - UI captures ignore pattern text.
+  - App enables/disables rule rows in storage.
+  - App refreshes current ignore-rule list preview.
 - Run indexing baseline
   - App loads eligible roots and enabled ignore patterns from storage.
   - `librapix-indexer` scans and emits media candidates.

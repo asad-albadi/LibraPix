@@ -151,6 +151,14 @@ pub struct MediaReadModel {
     pub tags: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IgnoreRuleRecord {
+    pub id: i64,
+    pub scope: String,
+    pub pattern: String,
+    pub is_enabled: bool,
+}
+
 #[derive(Debug)]
 pub enum StorageError {
     InvalidSourcePath(PathBuf),
@@ -376,6 +384,25 @@ impl Storage {
         let rows = statement.query_map(params![scope], |row| row.get::<usize, String>(0))?;
         let patterns: Result<Vec<_>, rusqlite::Error> = rows.collect();
         Ok(patterns?)
+    }
+
+    pub fn list_ignore_rules(&self, scope: &str) -> Result<Vec<IgnoreRuleRecord>, StorageError> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, scope, pattern, is_enabled
+             FROM ignore_rules
+             WHERE scope = ?1
+             ORDER BY id ASC",
+        )?;
+        let rows = statement.query_map(params![scope], |row| {
+            Ok(IgnoreRuleRecord {
+                id: row.get(0)?,
+                scope: row.get(1)?,
+                pattern: row.get(2)?,
+                is_enabled: row.get::<usize, i64>(3)? == 1,
+            })
+        })?;
+        let collected: Result<Vec<_>, rusqlite::Error> = rows.collect();
+        Ok(collected?)
     }
 
     pub fn replace_indexed_media(

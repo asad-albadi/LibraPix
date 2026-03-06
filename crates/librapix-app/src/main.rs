@@ -52,6 +52,9 @@ enum Message {
     OpenSelectedFile,
     OpenSelectedFolder,
     CopySelectedPath,
+    IgnoreRuleInputChanged(String),
+    EnableIgnoreRule,
+    DisableIgnoreRule,
 }
 
 struct Librapix {
@@ -64,6 +67,8 @@ struct Librapix {
     details_tag_input: String,
     details_lines: Vec<String>,
     details_action_status: String,
+    ignore_rule_input: String,
+    ignore_rules_preview: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -75,8 +80,7 @@ struct RuntimeContext {
 impl Default for Librapix {
     fn default() -> Self {
         let bootstrap = bootstrap_runtime();
-
-        Self {
+        let mut app = Self {
             state: AppState {
                 library_roots: bootstrap.roots,
                 ..AppState::default()
@@ -92,7 +96,11 @@ impl Default for Librapix {
             details_tag_input: String::new(),
             details_lines: Vec::new(),
             details_action_status: String::new(),
-        }
+            ignore_rule_input: String::new(),
+            ignore_rules_preview: Vec::new(),
+        };
+        refresh_ignore_rules_preview(&mut app);
+        app
     }
 }
 
@@ -220,6 +228,15 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
         Message::CopySelectedPath => {
             copy_selected_path(app);
         }
+        Message::IgnoreRuleInputChanged(value) => {
+            app.ignore_rule_input = value;
+        }
+        Message::EnableIgnoreRule => {
+            set_ignore_rule_enabled(app, true);
+        }
+        Message::DisableIgnoreRule => {
+            set_ignore_rule_enabled(app, false);
+        }
     }
 
     Task::none()
@@ -330,6 +347,21 @@ fn view(app: &Librapix) -> Element<'_, Message> {
             button(app.i18n.text(TextKey::RootRefreshButton)).on_press(Message::RefreshRoots),
         ]
         .spacing(8),
+        text(app.i18n.text(TextKey::IgnoreRuleInputLabel)),
+        text_input("", &app.ignore_rule_input)
+            .on_input(Message::IgnoreRuleInputChanged)
+            .width(Length::Fill),
+        row![
+            button(app.i18n.text(TextKey::IgnoreRuleAddButton)).on_press(Message::EnableIgnoreRule),
+            button(app.i18n.text(TextKey::IgnoreRuleDisableButton))
+                .on_press(Message::DisableIgnoreRule),
+        ]
+        .spacing(8),
+        text(app.i18n.text(TextKey::IgnoreRuleListLabel)),
+        app.ignore_rules_preview
+            .iter()
+            .take(8)
+            .fold(column![].spacing(4), |rows, value| rows.push(text(value))),
         button(app.i18n.text(TextKey::IndexRunButton)).on_press(Message::RunIndexing),
         text(format!(
             "{}: roots={}, candidates={}, ignored={}, {}={}, {}={}, {}={}, {}={}, rows={}",
@@ -498,6 +530,36 @@ fn refresh_roots(app: &mut Librapix) {
     .unwrap_or_default();
     app.state.apply(AppMessage::ReplaceLibraryRoots);
     app.state.replace_library_roots(roots);
+    refresh_ignore_rules_preview(app);
+}
+
+fn refresh_ignore_rules_preview(app: &mut Librapix) {
+    let rows = with_storage(&app.runtime, |storage| storage.list_ignore_rules("global"))
+        .map(|rows| {
+            rows.into_iter()
+                .map(|row| {
+                    let status = if row.is_enabled {
+                        app.i18n.text(TextKey::IgnoreRuleEnabled)
+                    } else {
+                        app.i18n.text(TextKey::IgnoreRuleDisabled)
+                    };
+                    format!("{} ({status})", row.pattern)
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    app.ignore_rules_preview = rows;
+}
+
+fn set_ignore_rule_enabled(app: &mut Librapix, is_enabled: bool) {
+    let pattern = app.ignore_rule_input.trim();
+    if pattern.is_empty() {
+        return;
+    }
+    let _ = with_storage(&app.runtime, |storage| {
+        storage.upsert_ignore_rule("global", pattern, is_enabled)
+    });
+    refresh_ignore_rules_preview(app);
 }
 
 fn run_indexing(app: &mut Librapix) {

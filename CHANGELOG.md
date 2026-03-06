@@ -47,6 +47,7 @@ All notable changes to this project are documented in this file.
 - Storage read-model APIs now include media-by-id lookup and tag attach/detach by tag name.
 - App orchestration now supports app-tag/game-tag attachment and media action workflows by selected media id.
 - Gallery and timeline routes now render projection-specific panels instead of mixed debug output.
+- App now supports enabling/disabling global ignore rules from UI and shows current rule status.
 
 ### Docs
 - Established baseline documentation for dependencies, troubleshooting, architecture, and repository map.

@@ -19,6 +19,8 @@ All notable changes to this project are documented in this file.
 - Added storage migrations:
   - `0002_source_root_lifecycle.sql`
   - `0003_indexed_media_baseline.sql`
+- Added `librapix-indexer` crate with scan roots pipeline, media candidate generation, and ignore engine tests.
+- Added ADR `0005` for indexing + ignore-rule baseline.
 
 ### Changed
 - Migrated from a single-crate starter to a multi-crate workspace.
@@ -26,7 +28,10 @@ All notable changes to this project are documented in this file.
 - App bootstrap now loads persisted config, opens storage, and syncs configured source roots.
 - Storage now tracks root lifecycle states (`active`, `unavailable`, `deactivated`) and supports availability reconciliation.
 - App orchestration now supports explicit root management flows (add, update, deactivate/reactivate, remove, refresh, select).
+- App now runs an indexing baseline flow against persisted roots and stores candidates in `indexed_media`.
+- Ignore rules are now centrally evaluated through the indexer engine.
 
 ### Docs
 - Established baseline documentation for dependencies, troubleshooting, architecture, and repository map.
 - Recorded dependency decisions for `serde`, `toml`, `directories`, and `rusqlite`.
+- Recorded dependency decisions for `globset` and `walkdir`.

@@ -12,16 +12,16 @@ This checklist tracks the library-management and indexing foundation phase.
 - [x] Keep UI thin while wiring end-to-end root management behavior
 - [x] Run verification loop for root orchestration milestone
 - [x] Run app smoke test for root orchestration milestone
-- [ ] Commit library root orchestration milestone
-- [ ] Create `librapix-indexer` crate with clear indexing boundaries
-- [ ] Implement centralized ignore-rule engine with tests
-- [ ] Implement minimal indexing pipeline against persisted source roots
-- [ ] Add minimal indexed-media persistence baseline and migration
-- [ ] Wire app orchestration to trigger and display indexing baseline results
-- [ ] Run verification loop for ignore/indexer milestone
-- [ ] Run app smoke test for ignore/indexer milestone
+- [x] Commit library root orchestration milestone
+- [x] Create `librapix-indexer` crate with clear indexing boundaries
+- [x] Implement centralized ignore-rule engine with tests
+- [x] Implement minimal indexing pipeline against persisted source roots
+- [x] Add minimal indexed-media persistence baseline and migration
+- [x] Wire app orchestration to trigger and display indexing baseline results
+- [x] Run verification loop for ignore/indexer milestone
+- [x] Run app smoke test for ignore/indexer milestone
 - [ ] Commit ignore/indexer foundation milestone
-- [ ] Update architecture docs, dependency records, changelog, and ADRs
+- [x] Update architecture docs, dependency records, changelog, and ADRs
 - [ ] Run final verification loop
 - [ ] Run final app smoke test
 - [ ] Commit final documentation/ADR checkpoint (if needed)

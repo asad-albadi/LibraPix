@@ -8,6 +8,7 @@ This is a hard architectural contract.
 - Librapix organizational metadata is stored only in app-managed storage.
 - Metadata extraction is read-only.
 - Thumbnail/cache/index/search artifacts remain in app-owned storage.
+- Missing or offline roots transition lifecycle state only; no source media mutation occurs.
 
 ## Forbidden behavior
 

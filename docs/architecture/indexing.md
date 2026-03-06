@@ -1,6 +1,6 @@
 # Indexing Architecture
 
-Indexing is planned as a dedicated subsystem, isolated from UI rendering.
+Indexing is a dedicated subsystem (`librapix-indexer`) isolated from UI rendering.
 
 ## Baseline decisions
 
@@ -10,12 +10,22 @@ Indexing is planned as a dedicated subsystem, isolated from UI rendering.
 - Indexing events are consumed by search and presentation layers through explicit application flow.
 - Missing source files are expected operationally and must be handled as state transitions, not destructive actions.
 
-## Planned components
+## Baseline components
 
-- Source discovery (library roots + watcher hooks)
-- Ignore matcher (centralized)
-- Metadata extractor (read-only)
-- Index writer (app-managed store)
-- Missing-file reconciler that updates index state without touching source media
+- Source root selection from storage (`active` lifecycle roots only)
+- Ignore matcher via centralized `IgnoreEngine` and glob rules
+- Filesystem traversal with recursive walk
+- Media-kind detection by supported extension set
+- Candidate writer to app-managed `indexed_media` table
+- Missing-root reconciliation delegated to storage lifecycle updates
+
+## Baseline pipeline
+
+1. Reconcile source-root availability.
+2. Load eligible roots.
+3. Load enabled ignore rules.
+4. Scan filesystem and filter ignored entries.
+5. Emit image/video candidates.
+6. Persist candidates in Librapix storage.
 
 No indexing logic should be embedded inside view widgets.

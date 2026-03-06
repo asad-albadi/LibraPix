@@ -24,6 +24,10 @@ Current baseline follows Iced's explicit state/update/view loop.
   - Remove deletes only Librapix-managed records.
 - Refresh roots
   - Reconciliation runs and the root list is reloaded into app state.
+- Run indexing baseline
+  - App loads eligible roots and enabled ignore patterns from storage.
+  - `librapix-indexer` scans and emits media candidates.
+  - App persists candidates to `indexed_media` and records indexing summary in state.
 
 ## Rules
 

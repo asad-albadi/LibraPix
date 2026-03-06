@@ -9,5 +9,6 @@ rust-version.workspace = true
 iced.workspace = true
 librapix-config = { path = "../librapix-config" }
 librapix-core = { path = "../librapix-core" }
+librapix-indexer = { path = "../librapix-indexer" }
 librapix-i18n = { path = "../librapix-i18n" }
 librapix-storage = { path = "../librapix-storage" }

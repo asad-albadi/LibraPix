@@ -34,3 +34,4 @@ This repository is documentation-driven. Architecture and operational decisions 
 - `docs/adrs/0002-config-path-policy.md`
 - `docs/adrs/0003-sqlite-storage-baseline.md`
 - `docs/adrs/0004-source-root-lifecycle-policy.md`
+- `docs/adrs/0005-indexing-ignore-baseline.md`

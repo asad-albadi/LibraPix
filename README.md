@@ -4,7 +4,7 @@ Librapix is a cross-platform, desktop-first, non-destructive local media gallery
 
 ## Status
 
-Project phase: configuration and storage foundation (baseline complete).
+Project phase: library management and indexing foundation.
 
 ## Core Principles
 
@@ -18,6 +18,7 @@ Project phase: configuration and storage foundation (baseline complete).
 - `crates/librapix-app`: Iced desktop executable (presentation + app bootstrap).
 - `crates/librapix-config`: typed config models, path strategy, TOML loading/saving, and validation.
 - `crates/librapix-core`: domain and application orchestration primitives.
+- `crates/librapix-indexer`: indexing pipeline foundation and centralized ignore matching.
 - `crates/librapix-i18n`: key-based localization layer with locale fallback behavior.
 - `crates/librapix-storage`: SQLite storage and migrations subsystem.
 - `docs/`: architecture, roadmap, dependency records, and repository operational docs.
@@ -41,6 +42,8 @@ Project phase: configuration and storage foundation (baseline complete).
 - SQLite database is stored in the platform data directory (`librapix.db`).
 - Thumbnails/cache remain app-owned data under the platform cache directory.
 - Startup bootstrap syncs configured library roots into storage via idempotent upsert.
+- Root lifecycle state is reconciled as `active`, `unavailable`, or `deactivated`.
+- Indexing baseline scans eligible roots, applies centralized ignore rules, and persists indexed media candidates.
 
 ## Documentation Index
 

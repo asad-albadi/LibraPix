@@ -1,9 +1,12 @@
 use iced::widget::{button, column, container, row, text, text_input};
 use iced::{Element, Fill, Length, Task, Theme};
 use librapix_config::{LocalePreference, ThemePreference, lexical_normalize_path, load_or_create};
-use librapix_core::app::{AppMessage, AppState, LibraryRootView, RootLifecycle, Route};
+use librapix_core::app::{
+    AppMessage, AppState, IndexingSummary, LibraryRootView, RootLifecycle, Route,
+};
 use librapix_core::domain::non_destructive;
 use librapix_i18n::{Locale, TextKey, Translator};
+use librapix_indexer::{IgnoreEngine, ScanRoot, candidates_for_storage, scan_roots};
 use librapix_storage::{SourceRootLifecycle, Storage};
 use std::path::PathBuf;
 
@@ -26,6 +29,7 @@ enum Message {
     ReactivateRoot,
     RemoveRoot,
     RefreshRoots,
+    RunIndexing,
 }
 
 struct Librapix {
@@ -139,6 +143,9 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
         Message::RefreshRoots => {
             refresh_roots(app);
         }
+        Message::RunIndexing => {
+            run_indexing(app);
+        }
     }
 
     Task::none()
@@ -214,6 +221,14 @@ fn view(app: &Librapix) -> Element<'_, Message> {
             button(app.i18n.text(TextKey::RootRefreshButton)).on_press(Message::RefreshRoots),
         ]
         .spacing(8),
+        button(app.i18n.text(TextKey::IndexRunButton)).on_press(Message::RunIndexing),
+        text(format!(
+            "{}: roots={}, candidates={}, ignored={}",
+            app.i18n.text(TextKey::ScanSummaryLabel),
+            app.state.indexing_summary.scanned_roots,
+            app.state.indexing_summary.candidate_files,
+            app.state.indexing_summary.ignored_entries
+        )),
         root_rows,
         text(app.i18n.text(TextKey::NonDestructiveNotice)).size(14),
     ]
@@ -297,6 +312,47 @@ fn refresh_roots(app: &mut Librapix) {
     .unwrap_or_default();
     app.state.apply(AppMessage::ReplaceLibraryRoots);
     app.state.replace_library_roots(roots);
+}
+
+fn run_indexing(app: &mut Librapix) {
+    let prep = with_storage(&app.runtime, |storage| {
+        storage.reconcile_source_root_availability()?;
+        storage.ensure_default_ignore_rules()?;
+
+        let roots = storage.list_eligible_source_roots()?;
+        let roots_for_scan = roots
+            .iter()
+            .map(|root| ScanRoot {
+                source_root_id: root.id,
+                normalized_path: root.normalized_path.clone(),
+            })
+            .collect::<Vec<_>>();
+
+        let patterns = storage.list_enabled_ignore_patterns("global")?;
+        Ok((roots_for_scan, patterns))
+    });
+
+    let summary = prep.ok().and_then(|(roots_for_scan, patterns)| {
+        let ignore = IgnoreEngine::new(&patterns).ok()?;
+        let result = scan_roots(&roots_for_scan, &ignore);
+        let rows = candidates_for_storage(&result);
+        let persist_ok =
+            with_storage(&app.runtime, |storage| storage.replace_indexed_media(&rows)).is_ok();
+        if !persist_ok {
+            return None;
+        }
+        Some(IndexingSummary {
+            scanned_roots: result.summary.scanned_roots,
+            candidate_files: result.summary.candidate_files,
+            ignored_entries: result.summary.ignored_entries,
+        })
+    });
+
+    if let Some(summary) = summary {
+        app.state.apply(AppMessage::RecordIndexingSummary);
+        app.state.record_indexing_summary(summary);
+    }
+    refresh_roots(app);
 }
 
 fn with_storage<T>(

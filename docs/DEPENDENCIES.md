@@ -94,3 +94,29 @@ This file tracks major direct dependencies that shape architecture and maintenan
 - Risks/tradeoffs:
   - Bundled SQLite increases compile time.
   - Raw SQL requires disciplined migration/version management.
+
+## `globset` (0.4.18)
+
+- Purpose: Centralized glob-based ignore-rule matching for indexing.
+- Why chosen: Fast compiled matching for multiple glob rules over many file paths.
+- Alternatives considered:
+  - `glob`: simpler one-pattern matching, weaker fit for grouped ignore-rule evaluation.
+- Official docs consulted:
+  - [https://docs.rs/globset/latest/globset/](https://docs.rs/globset/latest/globset/)
+- Notes:
+  - Used in `librapix-indexer::IgnoreEngine`.
+- Risks/tradeoffs:
+  - Invalid glob patterns must be surfaced clearly to avoid silent misconfiguration.
+
+## `walkdir` (2.5.0)
+
+- Purpose: Recursive filesystem traversal for indexing scans.
+- Why chosen: Efficient cross-platform directory walking with robust iterator controls.
+- Alternatives considered:
+  - manual `std::fs` recursion: more error-prone and repetitive.
+- Official docs consulted:
+  - [https://docs.rs/walkdir/latest/walkdir/](https://docs.rs/walkdir/latest/walkdir/)
+- Notes:
+  - Scans run with symlink following disabled by default.
+- Risks/tradeoffs:
+  - Deep directory traversal can be expensive; future tuning may be required for very large libraries.

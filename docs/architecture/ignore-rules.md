@@ -21,4 +21,14 @@ Ignore rules are a first-class, centralized subsystem.
 2. User-defined global rules
 3. Library-specific overrides
 
-Precedence details will be finalized with implementation tests.
+## Baseline implementation
+
+- Ignore evaluation is centralized in `librapix-indexer::IgnoreEngine`.
+- Rule matching is glob-based and compiled as a set for efficient scan-time checks.
+- Baseline enabled global rules are seeded in storage:
+  - `**/thumbnails/**`
+  - `**/cache/**`
+  - `**/*.tmp`
+- Indexing consumes enabled global rules from storage and applies them consistently across scanned roots.
+
+Library-specific overrides are reserved for a follow-up phase.

@@ -4,7 +4,7 @@ Librapix is a cross-platform, desktop-first, non-destructive local media gallery
 
 ## Status
 
-Project phase: MVP complete baseline.
+Project phase: MVP complete (technical + visual shell baseline).
 
 ## Core Principles
 
@@ -51,6 +51,7 @@ Project phase: MVP complete baseline.
 - Re-index runs apply incremental change detection and mark missing indexed files without destructive source operations.
 - Search-facing read-model queries are available over indexed media and tag joins.
 - Indexing/galleries now generate and reuse deterministic image thumbnails in app-owned cache.
+- UI uses a desktop shell layout (header/sidebar/main/details) with media-first gallery/timeline browsing.
 
 ## MVP Usage Flow
 

@@ -8,7 +8,7 @@ This checklist tracks mandatory visual/product-quality redesign work for Librapi
 - [x] Move root/indexing controls into structured management area
 - [x] Keep media-first composition in main content area
 - [x] Verification loop + smoke run
-- [ ] Commit app shell milestone
+- [x] Commit app shell milestone
 
 ## 2. Design system / styling centralization
 
@@ -16,7 +16,7 @@ This checklist tracks mandatory visual/product-quality redesign work for Librapi
 - [x] Add reusable panel/card helpers
 - [x] Ensure consistent button hierarchy and status presentation
 - [x] Verification loop + smoke run
-- [ ] Commit design system milestone
+- [x] Commit design system milestone
 
 ## 3. Gallery redesign
 
@@ -24,7 +24,7 @@ This checklist tracks mandatory visual/product-quality redesign work for Librapi
 - [x] Keep clear selection states and card actions
 - [x] Keep metadata concise and readable
 - [x] Verification loop + smoke run
-- [ ] Commit gallery redesign milestone
+- [x] Commit gallery redesign milestone
 
 ## 4. Timeline redesign
 
@@ -32,7 +32,7 @@ This checklist tracks mandatory visual/product-quality redesign work for Librapi
 - [x] Show media items visually in timeline mode
 - [x] Keep timeline selection integrated with details pane
 - [x] Verification loop + smoke run
-- [ ] Commit timeline redesign milestone
+- [x] Commit timeline redesign milestone
 
 ## 5. Details/actions/tags redesign
 
@@ -40,7 +40,7 @@ This checklist tracks mandatory visual/product-quality redesign work for Librapi
 - [x] Keep open/copy/tag actions consistent and discoverable
 - [x] Integrate game tags cleanly in details flow
 - [x] Verification loop + smoke run
-- [ ] Commit details/actions redesign milestone
+- [x] Commit details/actions redesign milestone
 
 ## 6. Search/root/indexing UX redesign
 
@@ -49,7 +49,7 @@ This checklist tracks mandatory visual/product-quality redesign work for Librapi
 - [x] Improve indexing status readability
 - [x] Keep ignore-rule management integrated and uncluttered
 - [x] Verification loop + smoke run
-- [ ] Commit root/search/indexing redesign milestone
+- [x] Commit root/search/indexing redesign milestone
 
 ## 7. Empty/loading/error visual states
 
@@ -57,13 +57,13 @@ This checklist tracks mandatory visual/product-quality redesign work for Librapi
 - [x] Add intentional loading/progress feedback surfaces
 - [x] Add intentional action/indexing error surfaces
 - [x] Verification loop + smoke run
-- [ ] Commit state-hardening redesign milestone
+- [x] Commit state-hardening redesign milestone
 
 ## 8. Final visual MVP reconciliation
 
-- [ ] Add/update `docs/architecture/ui.md`
-- [ ] Add ADR for UI shell/design-system decisions
-- [ ] Reconcile architecture docs and README with redesign
-- [ ] Final verification loop + smoke run
+- [x] Add/update `docs/architecture/ui.md`
+- [x] Add ADR for UI shell/design-system decisions
+- [x] Reconcile architecture docs and README with redesign
+- [x] Final verification loop + smoke run
 - [ ] Final redesign commit
 - [ ] Clean working tree

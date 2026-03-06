@@ -55,6 +55,7 @@ All notable changes to this project are documented in this file.
 - Added UI redesign checklist and app-shell/design-token architecture baseline.
 - Redesigned app into header/sidebar/main/details shell with thumbnail-first gallery and visual timeline entries.
 - Refined details pane into explicit preview, metadata, tags, and actions sections with consistent interaction layout.
+- Updated architecture/roadmap docs to include UI shell, visual browsing, and redesign completion tracking.
 
 ### Docs
 - Established baseline documentation for dependencies, troubleshooting, architecture, and repository map.

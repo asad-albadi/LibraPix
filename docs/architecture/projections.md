@@ -6,7 +6,7 @@ Timeline and gallery views are read projections built from indexed media read mo
 
 - Source rows come from `librapix-storage` read-model queries (`indexed_media` + `tags` joins).
 - Projection builders live in `librapix-projections`.
-- UI consumes projection outputs only for validation previews.
+- UI consumes projection outputs for gallery/timeline card rendering and selection.
 
 ## Timeline baseline
 
@@ -32,4 +32,4 @@ Timeline and gallery views are read projections built from indexed media read mo
 
 - Projections are read-only and do not mutate source media.
 - This layer is intentionally UI-agnostic and replaceable.
-- Route panels consume projection outputs as selectable media entries wired through explicit app selection state.
+- Route panels consume projection outputs as selectable media cards wired through explicit app selection state.

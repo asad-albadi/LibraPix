@@ -7,7 +7,7 @@ Search is implemented as a replaceable subsystem.
 - Core search logic lives in `librapix-search`.
 - Storage (`librapix-storage`) provides read-model rows.
 - App orchestration maps read-model rows into search documents and executes a search strategy.
-- UI renders only resulting preview rows; it does not implement ranking.
+- UI integrates search in the app header and renders resulting media cards; it does not implement ranking.
 
 ## Baseline contracts
 

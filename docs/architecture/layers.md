@@ -9,6 +9,7 @@
 - Presentation (`librapix-app`)
   - View composition
   - Message emission from user actions
+  - App-shell composition and design-token usage
   - No direct storage/indexing logic
 - Application orchestration (`librapix-core::app`)
   - Explicit app state and state transitions

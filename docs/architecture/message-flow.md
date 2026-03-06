@@ -10,6 +10,8 @@ Current baseline follows Iced's explicit state/update/view loop.
 4. `AppState::apply` performs an explicit transition.
 5. Next `view` reflects updated state.
 
+The current shell uses header/sidebar/main/details regions to separate navigation, management, browsing, and item actions.
+
 ## Library root orchestration baseline
 
 - Add root

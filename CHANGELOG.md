@@ -52,6 +52,8 @@ All notable changes to this project are documented in this file.
 - Added explicit empty/loading/status messaging for roots, indexing, search, gallery, and timeline flows.
 - MVP roadmap and README now reflect a complete usable baseline.
 - Remaining MVP checklist now tracks completion of selection UX, state hardening, and final reconciliation.
+- Added UI redesign checklist and app-shell/design-token architecture baseline.
+- Redesigned app into header/sidebar/main/details shell with thumbnail-first gallery and visual timeline entries.
 
 ### Docs
 - Established baseline documentation for dependencies, troubleshooting, architecture, and repository map.

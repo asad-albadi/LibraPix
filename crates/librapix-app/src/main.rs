@@ -1,5 +1,7 @@
-use iced::widget::{button, column, container, row, text, text_input};
-use iced::{Element, Fill, Length, Task, Theme};
+mod ui;
+
+use iced::widget::{button, column, container, image, row, scrollable, text, text_input};
+use iced::{Element, Length, Task, Theme};
 use librapix_config::{LocalePreference, ThemePreference, lexical_normalize_path, load_or_create};
 use librapix_core::app::{
     AppMessage, AppState, IndexingSummary, LibraryRootView, RootLifecycle, Route,
@@ -18,6 +20,7 @@ use librapix_thumbnails::ensure_image_thumbnail;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use ui::*;
 
 fn main() -> iced::Result {
     iced::application(Librapix::default, update, view)
@@ -78,6 +81,11 @@ struct Librapix {
 #[derive(Debug, Clone)]
 struct BrowseItem {
     media_id: i64,
+    title: String,
+    subtitle: String,
+    thumbnail_path: Option<PathBuf>,
+    selectable: bool,
+    is_group_header: bool,
     line: String,
 }
 
@@ -266,278 +274,348 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
 }
 
 fn view(app: &Librapix) -> Element<'_, Message> {
-    let active_view_text = match app.state.active_route {
-        Route::Gallery => app.i18n.text(TextKey::GalleryTab),
-        Route::Timeline => app.i18n.text(TextKey::TimelineTab),
-    };
-
     let _required_rules = non_destructive::required_rules();
-
-    let root_rows = app
-        .state
-        .library_roots
-        .iter()
-        .fold(column![].spacing(8), |rows, root| {
-            rows.push(
-                row![
-                    text(root.normalized_path.display().to_string()).width(Length::FillPortion(3)),
-                    text(format!(
-                        "{}: {}",
-                        app.i18n.text(TextKey::RootLifecycleLabel),
-                        lifecycle_text(app.i18n, root.lifecycle)
-                    ))
-                    .width(Length::FillPortion(2)),
-                    button(app.i18n.text(TextKey::RootSelectButton))
-                        .on_press(Message::SelectRoot(root.id)),
-                ]
-                .spacing(8),
-            )
-        });
 
     let selected_label = app
         .state
         .selected_root_id
         .map_or_else(|| "-".to_owned(), |id| id.to_string());
 
-    let gallery_panel = column![
-        button(app.i18n.text(TextKey::GalleryRunButton)).on_press(Message::RunGalleryProjection),
-        text(format!(
-            "{}: {}",
-            app.i18n.text(TextKey::GalleryResultLabel),
-            app.gallery_items.len()
-        )),
-        if app.gallery_items.is_empty() {
-            column![text(app.i18n.text(TextKey::EmptyGalleryLabel))]
-        } else {
-            app.gallery_items
-                .iter()
-                .take(16)
-                .fold(column![].spacing(4), |rows, item| {
-                    rows.push(
-                        row![
-                            button(app.i18n.text(TextKey::MediaSelectButton))
-                                .on_press(Message::SelectMedia(item.media_id)),
-                            text(item.line.clone()),
-                        ]
-                        .spacing(8),
-                    )
-                })
-        },
-    ]
-    .spacing(8);
-
-    let timeline_panel = column![
-        button(app.i18n.text(TextKey::TimelineRunButton)).on_press(Message::RunTimelineProjection),
-        text(format!(
-            "{}: {}",
-            app.i18n.text(TextKey::TimelineResultLabel),
-            app.timeline_items.len()
-        )),
-        if app.timeline_items.is_empty() {
-            column![text(app.i18n.text(TextKey::EmptyTimelineLabel))]
-        } else {
-            app.timeline_items
-                .iter()
-                .take(16)
-                .fold(column![].spacing(4), |rows, item| {
-                    rows.push(
-                        row![
-                            button(app.i18n.text(TextKey::MediaSelectButton))
-                                .on_press(Message::SelectMedia(item.media_id)),
-                            text(item.line.clone()),
-                        ]
-                        .spacing(8),
-                    )
-                })
-        },
-    ]
-    .spacing(8);
-
-    let route_panel = match app.state.active_route {
-        Route::Gallery => gallery_panel,
-        Route::Timeline => timeline_panel,
-    };
-
-    let content = column![
-        text(app.i18n.text(TextKey::AppTitle)).size(32),
-        text(app.i18n.text(TextKey::AppSubtitle)).size(18),
+    let header = panel(
         row![
+            text(app.i18n.text(TextKey::AppTitle)).size(FONT_TITLE),
+            text(app.i18n.text(TextKey::AppSubtitle)).size(FONT_BODY),
+            text_input(
+                app.i18n.text(TextKey::SearchInputLabel),
+                &app.state.search_query
+            )
+            .on_input(Message::SearchQueryChanged)
+            .width(Length::FillPortion(2)),
+            button(app.i18n.text(TextKey::SearchRunButton)).on_press(Message::RunSearchQuery),
+        ]
+        .spacing(SPACE_MD)
+        .align_y(iced::Alignment::Center),
+    );
+
+    let nav = subtle_panel(
+        column![
+            text(app.i18n.text(TextKey::ActiveViewLabel)).size(FONT_SECTION),
             button(app.i18n.text(TextKey::GalleryTab)).on_press(Message::OpenGallery),
             button(app.i18n.text(TextKey::TimelineTab)).on_press(Message::OpenTimeline),
+            text(format!(
+                "{}: {}",
+                app.i18n.text(TextKey::BrowseStatusLabel),
+                app.browse_status
+            )),
         ]
-        .spacing(12),
-        text(format!(
-            "{}: {}",
-            app.i18n.text(TextKey::ActiveViewLabel),
-            active_view_text
-        )),
-        text(format!(
-            "{}: {}",
-            app.i18n.text(TextKey::RegisteredRootsLabel),
-            app.state.library_roots.len()
-        )),
-        text(format!(
-            "{}: {}",
-            app.i18n.text(TextKey::RootSelectedLabel),
-            selected_label
-        )),
-        text(app.i18n.text(TextKey::RootInputLabel)),
-        text_input("", &app.state.root_input)
-            .on_input(Message::RootInputChanged)
-            .width(Length::Fill),
-        row![
-            button(app.i18n.text(TextKey::RootAddButton)).on_press(Message::AddRoot),
-            button(app.i18n.text(TextKey::RootUpdateButton)).on_press(Message::UpdateRoot),
-            button(app.i18n.text(TextKey::RootDeactivateButton)).on_press(Message::DeactivateRoot),
-            button(app.i18n.text(TextKey::RootReactivateButton)).on_press(Message::ReactivateRoot),
-            button(app.i18n.text(TextKey::RootRemoveButton)).on_press(Message::RemoveRoot),
-            button(app.i18n.text(TextKey::RootRefreshButton)).on_press(Message::RefreshRoots),
+        .spacing(SPACE_SM),
+    );
+
+    let roots_section = subtle_panel(
+        column![
+            text(format!(
+                "{}: {}",
+                app.i18n.text(TextKey::RegisteredRootsLabel),
+                app.state.library_roots.len()
+            )),
+            text(format!(
+                "{}: {}",
+                app.i18n.text(TextKey::RootSelectedLabel),
+                selected_label
+            )),
+            text_input(
+                app.i18n.text(TextKey::RootInputLabel),
+                &app.state.root_input
+            )
+            .on_input(Message::RootInputChanged),
+            row![
+                button(app.i18n.text(TextKey::RootAddButton)).on_press(Message::AddRoot),
+                button(app.i18n.text(TextKey::RootUpdateButton)).on_press(Message::UpdateRoot),
+            ]
+            .spacing(SPACE_XS),
+            row![
+                button(app.i18n.text(TextKey::RootDeactivateButton))
+                    .on_press(Message::DeactivateRoot),
+                button(app.i18n.text(TextKey::RootReactivateButton))
+                    .on_press(Message::ReactivateRoot),
+            ]
+            .spacing(SPACE_XS),
+            row![
+                button(app.i18n.text(TextKey::RootRemoveButton)).on_press(Message::RemoveRoot),
+                button(app.i18n.text(TextKey::RootRefreshButton)).on_press(Message::RefreshRoots),
+            ]
+            .spacing(SPACE_XS),
+            text(format!(
+                "{}: {}",
+                app.i18n.text(TextKey::RootStatusLabel),
+                app.root_status
+            )),
+            if app.state.library_roots.is_empty() {
+                column![text(app.i18n.text(TextKey::EmptyRootsLabel))]
+            } else {
+                app.state
+                    .library_roots
+                    .iter()
+                    .fold(column![].spacing(SPACE_XS), |rows, root| {
+                        rows.push(
+                            row![
+                                text(root.normalized_path.display().to_string()).size(FONT_BODY),
+                                text(lifecycle_text(app.i18n, root.lifecycle)).size(FONT_BODY),
+                                button(app.i18n.text(TextKey::RootSelectButton))
+                                    .on_press(Message::SelectRoot(root.id)),
+                            ]
+                            .spacing(SPACE_XS),
+                        )
+                    })
+            },
         ]
-        .spacing(8),
-        text(format!(
-            "{}: {}",
-            app.i18n.text(TextKey::RootStatusLabel),
-            app.root_status
-        )),
-        text(app.i18n.text(TextKey::IgnoreRuleInputLabel)),
-        text_input("", &app.ignore_rule_input)
-            .on_input(Message::IgnoreRuleInputChanged)
-            .width(Length::Fill),
-        row![
-            button(app.i18n.text(TextKey::IgnoreRuleAddButton)).on_press(Message::EnableIgnoreRule),
-            button(app.i18n.text(TextKey::IgnoreRuleDisableButton))
-                .on_press(Message::DisableIgnoreRule),
+        .spacing(SPACE_SM),
+    );
+
+    let indexing_section = subtle_panel(
+        column![
+            button(app.i18n.text(TextKey::IndexRunButton)).on_press(Message::RunIndexing),
+            text(format!(
+                "{}: {}",
+                app.i18n.text(TextKey::IndexingStatusLabel),
+                app.indexing_status
+            )),
+            text(format!(
+                "{}: roots={}, candidates={}, ignored={}, new={}, changed={}, unchanged={}, missing={}",
+                app.i18n.text(TextKey::ScanSummaryLabel),
+                app.state.indexing_summary.scanned_roots,
+                app.state.indexing_summary.candidate_files,
+                app.state.indexing_summary.ignored_entries,
+                app.state.indexing_summary.new_files,
+                app.state.indexing_summary.changed_files,
+                app.state.indexing_summary.unchanged_files,
+                app.state.indexing_summary.missing_marked
+            )),
+            text(app.thumbnail_status.clone()),
         ]
-        .spacing(8),
-        text(app.i18n.text(TextKey::IgnoreRuleListLabel)),
-        app.ignore_rules_preview
-            .iter()
-            .take(8)
-            .fold(column![].spacing(4), |rows, value| rows.push(text(value))),
-        button(app.i18n.text(TextKey::IndexRunButton)).on_press(Message::RunIndexing),
-        text(format!(
-            "{}: roots={}, candidates={}, ignored={}, {}={}, {}={}, {}={}, {}={}, rows={}",
-            app.i18n.text(TextKey::ScanSummaryLabel),
-            app.state.indexing_summary.scanned_roots,
-            app.state.indexing_summary.candidate_files,
-            app.state.indexing_summary.ignored_entries,
-            app.i18n.text(TextKey::ScanSummaryNew),
-            app.state.indexing_summary.new_files,
-            app.i18n.text(TextKey::ScanSummaryChanged),
-            app.state.indexing_summary.changed_files,
-            app.i18n.text(TextKey::ScanSummaryUnchanged),
-            app.state.indexing_summary.unchanged_files,
-            app.i18n.text(TextKey::ScanSummaryMissing),
-            app.state.indexing_summary.missing_marked,
-            app.state.indexing_summary.read_model_count
-        )),
-        text(format!(
-            "{}: {}",
-            app.i18n.text(TextKey::ScanSummaryUnreadable),
-            app.state.indexing_summary.unreadable_entries
-        )),
-        if app.state.indexing_summary.read_model_count == 0 {
-            column![text(app.i18n.text(TextKey::EmptyIndexedMediaLabel))]
-        } else {
-            column![]
-        },
-        text(app.thumbnail_status.clone()),
-        text(app.i18n.text(TextKey::SearchInputLabel)),
-        text_input("", &app.state.search_query)
-            .on_input(Message::SearchQueryChanged)
-            .width(Length::Fill),
-        button(app.i18n.text(TextKey::SearchRunButton)).on_press(Message::RunSearchQuery),
-        text(format!(
-            "{}: {}",
-            app.i18n.text(TextKey::SearchResultLabel),
-            app.search_items.len()
-        )),
-        if app.search_items.is_empty() && !app.state.search_query.trim().is_empty() {
-            column![text(app.i18n.text(TextKey::EmptySearchResultsLabel))]
-        } else {
-            app.search_items
+        .spacing(SPACE_SM),
+    );
+
+    let ignore_section = subtle_panel(
+        column![
+            text(app.i18n.text(TextKey::IgnoreRuleInputLabel)),
+            text_input("", &app.ignore_rule_input).on_input(Message::IgnoreRuleInputChanged),
+            row![
+                button(app.i18n.text(TextKey::IgnoreRuleAddButton))
+                    .on_press(Message::EnableIgnoreRule),
+                button(app.i18n.text(TextKey::IgnoreRuleDisableButton))
+                    .on_press(Message::DisableIgnoreRule),
+            ]
+            .spacing(SPACE_XS),
+            app.ignore_rules_preview
                 .iter()
                 .take(8)
-                .fold(column![].spacing(4), |rows, item| {
+                .fold(column![].spacing(SPACE_XS), |rows, value| rows
+                    .push(text(value))),
+        ]
+        .spacing(SPACE_SM),
+    );
+
+    let sidebar = container(
+        scrollable(
+            column![nav, roots_section, indexing_section, ignore_section]
+                .spacing(SPACE_MD)
+                .padding(SPACE_SM as u16),
+        )
+        .height(Length::Fill),
+    )
+    .width(SIDEBAR_WIDTH)
+    .style(container::dark);
+
+    let media_panel = render_media_panel(app);
+
+    let details_panel = render_details_panel(app);
+
+    let body = row![
+        sidebar,
+        container(scrollable(media_panel).height(Length::Fill))
+            .padding(SPACE_MD as u16)
+            .width(Length::Fill),
+        container(scrollable(details_panel).height(Length::Fill))
+            .width(DETAILS_WIDTH)
+            .padding(SPACE_MD as u16)
+            .style(container::dark),
+    ]
+    .spacing(SPACE_SM)
+    .height(Length::Fill);
+
+    container(
+        column![header, body]
+            .spacing(SPACE_SM)
+            .padding(SPACE_SM as u16),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
+}
+
+fn render_media_panel(app: &Librapix) -> Element<'_, Message> {
+    let route_header = match app.state.active_route {
+        Route::Gallery => row![
+            text(app.i18n.text(TextKey::GalleryTab)).size(FONT_SECTION),
+            button(app.i18n.text(TextKey::GalleryRunButton))
+                .on_press(Message::RunGalleryProjection),
+            text(format!(
+                "{}: {}",
+                app.i18n.text(TextKey::GalleryResultLabel),
+                app.gallery_items.len()
+            )),
+        ]
+        .spacing(SPACE_SM),
+        Route::Timeline => row![
+            text(app.i18n.text(TextKey::TimelineTab)).size(FONT_SECTION),
+            button(app.i18n.text(TextKey::TimelineRunButton))
+                .on_press(Message::RunTimelineProjection),
+            text(format!(
+                "{}: {}",
+                app.i18n.text(TextKey::TimelineResultLabel),
+                app.timeline_items.len()
+            )),
+        ]
+        .spacing(SPACE_SM),
+    };
+
+    let search_results = if app.search_items.is_empty() && !app.state.search_query.trim().is_empty()
+    {
+        panel(column![text(
+            app.i18n.text(TextKey::EmptySearchResultsLabel)
+        )])
+    } else {
+        panel(
+            app.search_items.iter().take(8).fold(
+                column![text(app.i18n.text(TextKey::SearchResultLabel)).size(FONT_SECTION)]
+                    .spacing(SPACE_XS),
+                |rows, item| {
                     rows.push(
                         row![
                             button(app.i18n.text(TextKey::MediaSelectButton))
                                 .on_press(Message::SelectMedia(item.media_id)),
-                            text(item.line.clone()),
+                            text(item.line.clone()).size(FONT_BODY),
                         ]
-                        .spacing(8),
+                        .spacing(SPACE_XS),
                     )
-                })
-        },
-        route_panel,
-        text(app.i18n.text(TextKey::DetailsSelectedMediaLabel)),
-        text(
-            app.state
-                .selected_media_id
-                .map(|id| id.to_string())
-                .unwrap_or_else(|| "-".to_owned()),
-        ),
-        text(app.i18n.text(TextKey::DetailsTagInputLabel)),
-        text_input("", &app.details_tag_input)
-            .on_input(Message::DetailsTagInputChanged)
-            .width(Length::Fill),
-        row![
-            button(app.i18n.text(TextKey::DetailsAttachTagButton)).on_press(Message::AttachAppTag),
-            button(app.i18n.text(TextKey::DetailsAttachGameTagButton))
-                .on_press(Message::AttachGameTag),
-            button(app.i18n.text(TextKey::DetailsDetachTagButton)).on_press(Message::DetachTag),
-        ]
-        .spacing(8),
-        row![
-            button(app.i18n.text(TextKey::DetailsOpenFileButton))
-                .on_press(Message::OpenSelectedFile),
-            button(app.i18n.text(TextKey::DetailsOpenFolderButton))
-                .on_press(Message::OpenSelectedFolder),
-            button(app.i18n.text(TextKey::DetailsCopyPathButton))
-                .on_press(Message::CopySelectedPath),
-        ]
-        .spacing(8),
-        text(format!(
-            "{}: {}",
-            app.i18n.text(TextKey::DetailsActionStatusLabel),
-            app.details_action_status
-        )),
-        text(format!(
-            "{}: {}",
-            app.i18n.text(TextKey::IndexingStatusLabel),
-            app.indexing_status
-        )),
-        text(format!(
-            "{}: {}",
-            app.i18n.text(TextKey::BrowseStatusLabel),
-            app.browse_status
-        )),
-        if app.details_lines.is_empty() {
-            column![text(app.i18n.text(TextKey::DetailsNoSelectionLabel))]
-        } else {
-            app.details_lines
-                .iter()
-                .take(8)
-                .fold(column![].spacing(4), |rows, value| rows.push(text(value)))
-        },
-        if app.state.library_roots.is_empty() {
-            column![text(app.i18n.text(TextKey::EmptyRootsLabel))]
-        } else {
-            column![]
-        },
-        root_rows,
-        text(app.i18n.text(TextKey::NonDestructiveNotice)).size(14),
-    ]
-    .spacing(16)
-    .max_width(640);
+                },
+            ),
+        )
+    };
 
-    container(content)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .center_x(Fill)
-        .center_y(Fill)
-        .padding(24)
+    let browse_items = match app.state.active_route {
+        Route::Gallery => &app.gallery_items,
+        Route::Timeline => &app.timeline_items,
+    };
+
+    let empty_label = match app.state.active_route {
+        Route::Gallery => app.i18n.text(TextKey::EmptyGalleryLabel),
+        Route::Timeline => app.i18n.text(TextKey::EmptyTimelineLabel),
+    };
+
+    let browse_content = if browse_items.is_empty() {
+        panel(column![text(empty_label)])
+    } else {
+        panel(
+            browse_items
+                .iter()
+                .take(120)
+                .fold(column![].spacing(SPACE_SM), |rows, item| {
+                    if item.is_group_header {
+                        return rows.push(text(item.title.clone()).size(FONT_SECTION));
+                    }
+                    let thumb: Element<'_, Message> = if let Some(path) = &item.thumbnail_path {
+                        image(image::Handle::from_path(path))
+                            .width(Length::Fixed(120.0))
+                            .height(Length::Fixed(84.0))
+                            .into()
+                    } else {
+                        container(text(" "))
+                            .width(Length::Fixed(120.0))
+                            .height(Length::Fixed(84.0))
+                            .style(container::rounded_box)
+                            .into()
+                    };
+                    let actions: Element<'_, Message> = if item.selectable {
+                        button(app.i18n.text(TextKey::MediaSelectButton))
+                            .on_press(Message::SelectMedia(item.media_id))
+                            .into()
+                    } else {
+                        button(app.i18n.text(TextKey::MediaSelectButton)).into()
+                    };
+                    rows.push(subtle_panel(
+                        row![
+                            thumb,
+                            column![
+                                text(item.title.clone()).size(FONT_BODY),
+                                text(item.subtitle.clone()).size(FONT_BODY),
+                            ]
+                            .spacing(SPACE_XS)
+                            .width(Length::Fill),
+                            actions,
+                        ]
+                        .spacing(SPACE_SM),
+                    ))
+                }),
+        )
+    };
+
+    column![route_header, search_results, browse_content]
+        .spacing(SPACE_MD)
         .into()
+}
+
+fn render_details_panel(app: &Librapix) -> Element<'_, Message> {
+    let selected = app
+        .state
+        .selected_media_id
+        .map(|id| id.to_string())
+        .unwrap_or_else(|| "-".to_owned());
+    let metadata = if app.details_lines.is_empty() {
+        column![text(app.i18n.text(TextKey::DetailsNoSelectionLabel))]
+    } else {
+        app.details_lines
+            .iter()
+            .fold(column![].spacing(SPACE_XS), |rows, line| {
+                rows.push(text(line.clone()).size(FONT_BODY))
+            })
+    };
+
+    panel(
+        column![
+            text(app.i18n.text(TextKey::DetailsSelectedMediaLabel)).size(FONT_SECTION),
+            text(selected),
+            metadata,
+            text(app.i18n.text(TextKey::DetailsTagInputLabel)).size(FONT_SECTION),
+            text_input("", &app.details_tag_input).on_input(Message::DetailsTagInputChanged),
+            row![
+                button(app.i18n.text(TextKey::DetailsAttachTagButton))
+                    .on_press(Message::AttachAppTag),
+                button(app.i18n.text(TextKey::DetailsAttachGameTagButton))
+                    .on_press(Message::AttachGameTag),
+                button(app.i18n.text(TextKey::DetailsDetachTagButton)).on_press(Message::DetachTag),
+            ]
+            .spacing(SPACE_XS),
+            row![
+                button(app.i18n.text(TextKey::DetailsOpenFileButton))
+                    .on_press(Message::OpenSelectedFile),
+                button(app.i18n.text(TextKey::DetailsOpenFolderButton))
+                    .on_press(Message::OpenSelectedFolder),
+                button(app.i18n.text(TextKey::DetailsCopyPathButton))
+                    .on_press(Message::CopySelectedPath),
+            ]
+            .spacing(SPACE_XS),
+            text(format!(
+                "{}: {}",
+                app.i18n.text(TextKey::DetailsActionStatusLabel),
+                app.details_action_status
+            )),
+            text(app.i18n.text(TextKey::NonDestructiveNotice)).size(FONT_BODY),
+        ]
+        .spacing(SPACE_SM),
+    )
+    .into()
 }
 
 struct BootstrapRuntime {
@@ -818,24 +896,43 @@ fn run_read_model_query(app: &mut Librapix) {
             })
             .map(|(hit, row)| BrowseItem {
                 media_id: row.media_id,
-                line: if row.tags.is_empty() {
+                title: row
+                    .absolute_path
+                    .file_name()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_else(|| row.absolute_path.display().to_string()),
+                subtitle: if row.tags.is_empty() {
                     format!(
-                        "{:.3} {} [{}] {}x{}",
+                        "{:.3} [{}] {}x{}",
                         hit.score,
-                        row.absolute_path.display(),
                         row.media_kind,
                         row.width_px.unwrap_or(0),
                         row.height_px.unwrap_or(0)
                     )
                 } else {
                     format!(
-                        "{:.3} {} [{}] tags={}",
+                        "{:.3} [{}] tags={}",
                         hit.score,
-                        row.absolute_path.display(),
                         row.media_kind,
                         row.tags.join("|")
                     )
                 },
+                thumbnail_path: if row.media_kind == "image" {
+                    ensure_image_thumbnail(
+                        &app.runtime.thumbnails_dir,
+                        &row.absolute_path,
+                        row.file_size_bytes,
+                        row.modified_unix_seconds,
+                        256,
+                    )
+                    .ok()
+                    .map(|outcome| outcome.thumbnail_path)
+                } else {
+                    None
+                },
+                selectable: true,
+                is_group_header: false,
+                line: format!("{} | {}", row.absolute_path.display(), row.media_kind),
             })
             .collect::<Vec<_>>()
     })
@@ -859,9 +956,38 @@ fn run_timeline_projection(app: &mut Librapix) {
         let mut items = Vec::new();
         for bucket in buckets {
             lines.push(format!("{} ({})", bucket.label, bucket.item_count));
+            items.push(BrowseItem {
+                media_id: 0,
+                title: bucket.label.clone(),
+                subtitle: String::new(),
+                thumbnail_path: None,
+                selectable: false,
+                is_group_header: true,
+                line: bucket.label.clone(),
+            });
             for item in bucket.items {
                 items.push(BrowseItem {
                     media_id: item.media_id,
+                    title: PathBuf::from(&item.absolute_path)
+                        .file_name()
+                        .map(|s| s.to_string_lossy().to_string())
+                        .unwrap_or(item.absolute_path.clone()),
+                    subtitle: format!("[{}]", item.media_kind),
+                    thumbnail_path: if item.media_kind == "image" {
+                        ensure_image_thumbnail(
+                            &app.runtime.thumbnails_dir,
+                            &PathBuf::from(&item.absolute_path),
+                            0,
+                            item.modified_unix_seconds,
+                            256,
+                        )
+                        .ok()
+                        .map(|outcome| outcome.thumbnail_path)
+                    } else {
+                        None
+                    },
+                    selectable: true,
+                    is_group_header: false,
                     line: format!("{} [{}]", item.absolute_path, item.media_kind),
                 });
             }
@@ -913,6 +1039,34 @@ fn run_gallery_projection(app: &mut Librapix) {
                     .unwrap_or_else(|| app.i18n.text(TextKey::ThumbnailUnavailable).to_owned());
                 BrowseItem {
                     media_id: item.media_id,
+                    title: original
+                        .file_name()
+                        .map(|s| s.to_string_lossy().to_string())
+                        .unwrap_or_else(|| original.display().to_string()),
+                    subtitle: format!(
+                        "[{}] {}={thumbnail_text}",
+                        item.media_kind,
+                        app.i18n.text(TextKey::ThumbnailStatusLabel),
+                    ),
+                    thumbnail_path: rows
+                        .iter()
+                        .find(|row| row.media_id == item.media_id)
+                        .and_then(|row| {
+                            if row.media_kind != "image" {
+                                return None;
+                            }
+                            ensure_image_thumbnail(
+                                &app.runtime.thumbnails_dir,
+                                &row.absolute_path,
+                                row.file_size_bytes,
+                                row.modified_unix_seconds,
+                                256,
+                            )
+                            .ok()
+                            .map(|outcome| outcome.thumbnail_path)
+                        }),
+                    selectable: true,
+                    is_group_header: false,
                     line: format!(
                         "{} [{}] {}={thumbnail_text}",
                         original.display(),

@@ -193,6 +193,30 @@ pub fn empty_state_style(_theme: &Theme) -> container::Style {
     }
 }
 
+pub fn scrubber_panel_style(_theme: &Theme) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(BG_SURFACE)),
+        border: Border {
+            color: DIVIDER_COLOR,
+            width: 1.0,
+            radius: RADIUS_MD.into(),
+        },
+        ..container::Style::default()
+    }
+}
+
+pub fn scrubber_chip_style(_theme: &Theme) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(BG_CARD)),
+        border: Border {
+            color: ACCENT,
+            width: 1.0,
+            radius: RADIUS_PILL.into(),
+        },
+        ..container::Style::default()
+    }
+}
+
 pub fn divider_line_style(_theme: &Theme) -> container::Style {
     container::Style {
         background: Some(Background::Color(DIVIDER_COLOR)),

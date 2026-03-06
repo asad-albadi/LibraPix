@@ -3,7 +3,8 @@ mod ui;
 
 use chrono::Local;
 use iced::widget::{
-    Space, button, column, container, image, responsive, row, scrollable, text, text_input,
+    Id, Space, button, column, container, image, operation, responsive, row, scrollable, text,
+    text_input, vertical_slider,
 };
 use iced::{ContentFit, Element, Length, Size, Subscription, Task, Theme};
 use librapix_config::{
@@ -18,7 +19,9 @@ use librapix_i18n::{Locale, TextKey, Translator};
 use librapix_indexer::{IgnoreEngine, ScanOptions, ScanRoot, scan_roots};
 use librapix_projections::ProjectionMedia;
 use librapix_projections::gallery::{GalleryQuery, GallerySort, project_gallery};
-use librapix_projections::timeline::{TimelineGranularity, project_timeline};
+use librapix_projections::timeline::{
+    TimelineAnchor, TimelineGranularity, build_timeline_anchors, project_timeline,
+};
 use librapix_search::{FuzzySearchStrategy, SearchDocument, SearchQuery, SearchStrategy};
 use librapix_storage::{
     IndexedMediaWrite, IndexedMetadataStatus, SourceRootLifecycle, Storage, TagKind,
@@ -82,6 +85,10 @@ enum Message {
     AddRootAppTag,
     AddRootGameTag,
     RemoveRootTag(String),
+    TimelineScrubChanged(f32),
+    TimelineScrubReleased,
+    JumpToTimelineAnchor(usize),
+    MediaViewportChanged { absolute_y: f32, max_y: f32 },
     BackgroundWorkComplete(Box<BackgroundWorkResult>),
     RefreshDiagnostics,
 }
@@ -94,6 +101,7 @@ struct BackgroundWorkResult {
     indexing_status: String,
     gallery_items: Vec<BrowseItem>,
     timeline_items: Vec<BrowseItem>,
+    timeline_anchors: Vec<TimelineAnchor>,
     gallery_preview_lines: Vec<String>,
     timeline_preview_lines: Vec<String>,
     media_cache: std::collections::HashMap<i64, CachedDetails>,
@@ -117,6 +125,7 @@ struct Librapix {
     ignore_rules_preview: Vec<String>,
     gallery_items: Vec<BrowseItem>,
     timeline_items: Vec<BrowseItem>,
+    timeline_anchors: Vec<TimelineAnchor>,
     search_items: Vec<BrowseItem>,
     indexing_status: String,
     browse_status: String,
@@ -134,6 +143,10 @@ struct Librapix {
     diagnostics_lines: Vec<String>,
     diagnostics_events: Vec<String>,
     show_diagnostics: bool,
+    timeline_scrub_value: f32,
+    timeline_scrubbing: bool,
+    timeline_scrub_anchor_index: Option<usize>,
+    timeline_scroll_max_y: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -164,6 +177,8 @@ const DETAIL_THUMB_SIZE: u32 = 800;
 const TARGET_ROW_HEIGHT: f32 = 200.0;
 const MAX_ROW_HEIGHT: f32 = 350.0;
 const MAX_DIAGNOSTICS_EVENTS: usize = 100;
+const MEDIA_SCROLLABLE_ID: &str = "media-pane-scrollable";
+const SCRUBBER_YEAR_MARKER_LIMIT: usize = 10;
 
 #[derive(Debug, Clone)]
 struct RuntimeContext {
@@ -197,6 +212,7 @@ impl Default for Librapix {
             ignore_rules_preview: Vec::new(),
             gallery_items: Vec::new(),
             timeline_items: Vec::new(),
+            timeline_anchors: Vec::new(),
             search_items: Vec::new(),
             indexing_status: String::new(),
             browse_status: String::new(),
@@ -214,6 +230,10 @@ impl Default for Librapix {
             diagnostics_lines: Vec::new(),
             diagnostics_events: Vec::new(),
             show_diagnostics: true,
+            timeline_scrub_value: 0.0,
+            timeline_scrubbing: false,
+            timeline_scrub_anchor_index: None,
+            timeline_scroll_max_y: 0.0,
         };
         refresh_ignore_rules_preview(&mut app);
         app
@@ -340,6 +360,12 @@ fn message_event_label(msg: &Message) -> String {
         Message::AddRootAppTag => "AddRootAppTag".into(),
         Message::AddRootGameTag => "AddRootGameTag".into(),
         Message::RemoveRootTag(n) => format!("RemoveRootTag({n})"),
+        Message::TimelineScrubChanged(value) => format!("TimelineScrubChanged({value:.3})"),
+        Message::TimelineScrubReleased => "TimelineScrubReleased".into(),
+        Message::JumpToTimelineAnchor(index) => format!("JumpToTimelineAnchor({index})"),
+        Message::MediaViewportChanged { absolute_y, max_y } => {
+            format!("MediaViewportChanged({absolute_y:.1}/{max_y:.1})")
+        }
         Message::BackgroundWorkComplete(_) => "BackgroundWorkComplete".into(),
         Message::RefreshDiagnostics => "RefreshDiagnostics".into(),
     }
@@ -360,9 +386,12 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
     match message {
         Message::OpenGallery => {
             app.state.apply(AppMessage::OpenGallery);
+            app.timeline_scrubbing = false;
         }
         Message::OpenTimeline => {
             app.state.apply(AppMessage::OpenTimeline);
+            app.timeline_scrubbing = false;
+            sync_timeline_scrub_selection(app, app.timeline_scrub_value);
         }
         Message::RootInputChanged(value) => {
             app.state.apply(AppMessage::SetRootInput);
@@ -565,6 +594,18 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
             if remove_root_tag(app, &tag_name) {
                 return spawn_background_work(app);
             }
+        }
+        Message::TimelineScrubChanged(value) => {
+            return apply_timeline_scrub(app, value, true);
+        }
+        Message::TimelineScrubReleased => {
+            app.timeline_scrubbing = false;
+        }
+        Message::JumpToTimelineAnchor(index) => {
+            return jump_to_timeline_anchor(app, index);
+        }
+        Message::MediaViewportChanged { absolute_y, max_y } => {
+            sync_timeline_scrub_from_viewport(app, absolute_y, max_y);
         }
         Message::BackgroundWorkComplete(result) => {
             apply_background_result(app, *result);
@@ -943,7 +984,37 @@ fn view(app: &Librapix) -> Element<'_, Message> {
     .style(sidebar_style);
 
     // ── Media pane ──
-    let (media_header, media_scrollable) = render_media_panel(app);
+    let (media_header, media_scrollable_content) = render_media_panel(app);
+    let base_media_scrollable = scrollable(media_scrollable_content)
+        .id(Id::new(MEDIA_SCROLLABLE_ID))
+        .height(Length::Fill);
+    let media_scrollable: Element<'_, Message> =
+        if matches!(app.state.active_route, Route::Timeline) {
+            base_media_scrollable
+                .on_scroll(|viewport| Message::MediaViewportChanged {
+                    absolute_y: viewport.absolute_offset().y,
+                    max_y: (viewport.content_bounds().height - viewport.bounds().height).max(0.0),
+                })
+                .into()
+        } else {
+            base_media_scrollable.into()
+        };
+    let media_body: Element<'_, Message> = if matches!(app.state.active_route, Route::Timeline) {
+        row![
+            container(media_scrollable)
+                .width(Length::Fill)
+                .height(Length::Fill),
+            render_timeline_scrubber(app),
+        ]
+        .spacing(SPACE_SM)
+        .height(Length::Fill)
+        .into()
+    } else {
+        container(media_scrollable)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+    };
 
     // ── Details pane ──
     let details_content = render_details_panel(app);
@@ -951,15 +1022,9 @@ fn view(app: &Librapix) -> Element<'_, Message> {
     // ── Body ──
     let body = row![
         sidebar,
-        container(
-            column![
-                media_header,
-                scrollable(media_scrollable).height(Length::Fill),
-            ]
-            .spacing(SPACE_SM),
-        )
-        .padding(SPACE_LG as u16)
-        .width(Length::Fill),
+        container(column![media_header, media_body,].spacing(SPACE_SM),)
+            .padding(SPACE_LG as u16)
+            .width(Length::Fill),
         container(scrollable(details_content).height(Length::Fill))
             .width(Length::Fixed(DETAILS_WIDTH))
             .padding(SPACE_LG as u16)
@@ -1277,6 +1342,236 @@ fn render_timeline_view<'a>(
     }
 
     sections.into()
+}
+
+fn render_timeline_scrubber(app: &Librapix) -> Element<'_, Message> {
+    if app.timeline_anchors.is_empty() {
+        return container(column![])
+            .width(Length::Fixed(76.0))
+            .height(Length::Fill)
+            .into();
+    }
+
+    let slider_value = (1.0 - app.timeline_scrub_value).clamp(0.0, 1.0);
+    let slider = vertical_slider(0.0..=1.0, slider_value, |value| {
+        Message::TimelineScrubChanged(1.0 - value)
+    })
+    .on_release(Message::TimelineScrubReleased)
+    .step(0.001)
+    .width(14.0)
+    .height(Length::Fill);
+
+    let chip_label = app
+        .timeline_scrub_anchor_index
+        .and_then(|index| app.timeline_anchors.get(index))
+        .map_or_else(String::new, |anchor| anchor.label.clone());
+
+    let chip_track: Element<'_, Message> = if app.timeline_scrubbing {
+        let top = ((app.timeline_scrub_value.clamp(0.0, 1.0) * 1000.0).round() as u16).min(1000);
+        let bottom = 1000u16.saturating_sub(top);
+        column![
+            Space::new().height(Length::FillPortion(top.max(1))),
+            container(text(chip_label).size(FONT_CAPTION).color(TEXT_PRIMARY))
+                .padding([SPACE_2XS as u16, SPACE_SM as u16])
+                .style(scrubber_chip_style),
+            Space::new().height(Length::FillPortion(bottom.max(1))),
+        ]
+        .height(Length::Fill)
+        .into()
+    } else {
+        Space::new().width(Length::Fixed(0.0)).into()
+    };
+
+    let year_markers = timeline_year_markers(&app.timeline_anchors)
+        .into_iter()
+        .fold(column![].spacing(SPACE_2XS), |col, (label, index)| {
+            col.push(
+                button(text(label).size(FONT_CAPTION))
+                    .on_press(Message::JumpToTimelineAnchor(index))
+                    .style(subtle_button_style)
+                    .padding([SPACE_2XS as u16, SPACE_XS as u16]),
+            )
+        });
+
+    container(
+        column![
+            row![chip_track, slider]
+                .spacing(SPACE_XS)
+                .height(Length::Fill),
+            year_markers,
+        ]
+        .spacing(SPACE_SM)
+        .height(Length::Fill),
+    )
+    .width(Length::Fixed(84.0))
+    .height(Length::Fill)
+    .padding([SPACE_SM as u16, SPACE_XS as u16])
+    .style(scrubber_panel_style)
+    .into()
+}
+
+fn timeline_year_markers(anchors: &[TimelineAnchor]) -> Vec<(String, usize)> {
+    let mut markers = Vec::new();
+    let mut last_year: Option<i32> = None;
+
+    for anchor in anchors {
+        match anchor.year {
+            Some(year) => {
+                if last_year != Some(year) {
+                    markers.push((year.to_string(), anchor.group_index));
+                    last_year = Some(year);
+                }
+            }
+            None => {
+                if markers
+                    .last()
+                    .is_none_or(|(label, _)| label.as_str() != "unknown")
+                {
+                    markers.push(("unknown".to_owned(), anchor.group_index));
+                }
+            }
+        }
+    }
+
+    if markers.len() <= SCRUBBER_YEAR_MARKER_LIMIT {
+        return markers;
+    }
+
+    let step = (markers.len() as f32 / SCRUBBER_YEAR_MARKER_LIMIT as f32).ceil() as usize;
+    let mut reduced = markers.iter().cloned().step_by(step).collect::<Vec<_>>();
+    if let Some(last) = markers.last().cloned()
+        && reduced.last().map(|(_, index)| *index) != Some(last.1)
+    {
+        reduced.push(last);
+    }
+    reduced
+}
+
+fn apply_timeline_scrub(
+    app: &mut Librapix,
+    normalized_value: f32,
+    interactive: bool,
+) -> Task<Message> {
+    if app.timeline_anchors.is_empty() {
+        return Task::none();
+    }
+
+    let clamped = normalized_value.clamp(0.0, 1.0);
+    app.timeline_scrub_value = clamped;
+    app.timeline_scrubbing = interactive;
+    app.timeline_scrub_anchor_index = nearest_timeline_anchor_index(&app.timeline_anchors, clamped);
+
+    if !matches!(app.state.active_route, Route::Timeline) {
+        return Task::none();
+    }
+
+    match app.timeline_scrub_anchor_index {
+        Some(anchor_index) => scroll_task_to_timeline_anchor(app, anchor_index),
+        None => Task::none(),
+    }
+}
+
+fn jump_to_timeline_anchor(app: &mut Librapix, group_index: usize) -> Task<Message> {
+    let Some((anchor_index, anchor)) = app
+        .timeline_anchors
+        .iter()
+        .enumerate()
+        .find(|(_, anchor)| anchor.group_index == group_index)
+    else {
+        return Task::none();
+    };
+
+    app.timeline_scrubbing = false;
+    app.timeline_scrub_anchor_index = Some(anchor_index);
+    app.timeline_scrub_value = anchor.normalized_position.clamp(0.0, 1.0);
+
+    if !matches!(app.state.active_route, Route::Timeline) {
+        return Task::none();
+    }
+
+    scroll_task_to_timeline_anchor(app, anchor_index)
+}
+
+fn sync_timeline_scrub_from_viewport(app: &mut Librapix, absolute_y: f32, max_y: f32) {
+    if !matches!(app.state.active_route, Route::Timeline) {
+        return;
+    }
+
+    app.timeline_scroll_max_y = max_y.max(0.0);
+    if app.timeline_scrubbing {
+        return;
+    }
+
+    let normalized = if app.timeline_scroll_max_y > 0.0 {
+        (absolute_y / app.timeline_scroll_max_y).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    app.timeline_scrub_value = normalized;
+    app.timeline_scrub_anchor_index =
+        nearest_timeline_anchor_index(&app.timeline_anchors, normalized);
+}
+
+fn sync_timeline_scrub_selection(app: &mut Librapix, preferred_value: f32) {
+    if app.timeline_anchors.is_empty() {
+        app.timeline_scrub_value = 0.0;
+        app.timeline_scrub_anchor_index = None;
+        app.timeline_scrubbing = false;
+        app.timeline_scroll_max_y = 0.0;
+        return;
+    }
+
+    let clamped = preferred_value.clamp(0.0, 1.0);
+    let anchor_index = nearest_timeline_anchor_index(&app.timeline_anchors, clamped).unwrap_or(0);
+    let anchor_value = app.timeline_anchors[anchor_index]
+        .normalized_position
+        .clamp(0.0, 1.0);
+
+    app.timeline_scrub_anchor_index = Some(anchor_index);
+    app.timeline_scrub_value = anchor_value;
+    app.timeline_scrubbing = false;
+}
+
+fn nearest_timeline_anchor_index(anchors: &[TimelineAnchor], normalized: f32) -> Option<usize> {
+    anchors
+        .iter()
+        .enumerate()
+        .min_by(|(_, left), (_, right)| {
+            let left_distance = (left.normalized_position - normalized).abs();
+            let right_distance = (right.normalized_position - normalized).abs();
+            left_distance
+                .partial_cmp(&right_distance)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .map(|(index, _)| index)
+}
+
+fn scroll_task_to_timeline_anchor(app: &Librapix, anchor_index: usize) -> Task<Message> {
+    let Some(anchor) = app.timeline_anchors.get(anchor_index) else {
+        return Task::none();
+    };
+    let normalized = anchor.normalized_position.clamp(0.0, 1.0);
+    let id = Id::new(MEDIA_SCROLLABLE_ID);
+
+    if app.timeline_scroll_max_y > 0.0 {
+        let target_y =
+            (normalized * app.timeline_scroll_max_y).clamp(0.0, app.timeline_scroll_max_y);
+        operation::scroll_to(
+            id,
+            operation::AbsoluteOffset {
+                x: 0.0,
+                y: target_y,
+            },
+        )
+    } else {
+        operation::snap_to(
+            id,
+            operation::RelativeOffset {
+                x: 0.0,
+                y: normalized,
+            },
+        )
+    }
 }
 
 fn render_details_panel(app: &Librapix) -> Element<'_, Message> {
@@ -1651,6 +1946,10 @@ fn run_timeline_projection(app: &mut Librapix) {
     app.browse_status = app.i18n.text(TextKey::LoadingTimelineLabel).to_owned();
     let rows = with_storage(&app.runtime, |storage| storage.list_all_media_read_models())
         .map(|rows| {
+            let row_lookup = rows
+                .iter()
+                .map(|row| (row.media_id, row))
+                .collect::<std::collections::HashMap<_, _>>();
             let media = rows_to_projection_media(&rows);
             let filtered: Vec<ProjectionMedia> = media
                 .into_iter()
@@ -1669,6 +1968,7 @@ fn run_timeline_projection(app: &mut Librapix) {
                 })
                 .collect();
             let buckets = project_timeline(&filtered, TimelineGranularity::Day);
+            let anchors = build_timeline_anchors(&buckets);
             let mut lines = Vec::new();
             let mut items = Vec::new();
             for bucket in buckets {
@@ -1683,7 +1983,7 @@ fn run_timeline_projection(app: &mut Librapix) {
                     aspect_ratio: 1.5,
                 });
                 for tl_item in bucket.items {
-                    let matched_row = rows.iter().find(|r| r.media_id == tl_item.media_id);
+                    let matched_row = row_lookup.get(&tl_item.media_id).copied();
                     let thumbnail_path = matched_row.and_then(|row| {
                         resolve_thumbnail(&app.runtime.thumbnails_dir, row, GALLERY_THUMB_SIZE)
                     });
@@ -1705,12 +2005,14 @@ fn run_timeline_projection(app: &mut Librapix) {
                 }
             }
             populate_media_cache(&mut app.media_cache, &rows, &app.runtime.thumbnails_dir);
-            (lines, items)
+            (lines, items, anchors)
         })
         .unwrap_or_default();
     app.state.apply(AppMessage::ReplaceTimelinePreview);
     app.state.replace_timeline_preview(rows.0);
     app.timeline_items = rows.1;
+    app.timeline_anchors = rows.2;
+    sync_timeline_scrub_selection(app, app.timeline_scrub_value);
     app.browse_status = app.i18n.text(TextKey::TimelineCompletedLabel).to_owned();
 }
 
@@ -1718,6 +2020,10 @@ fn run_gallery_projection(app: &mut Librapix) {
     app.browse_status = app.i18n.text(TextKey::LoadingGalleryLabel).to_owned();
     let rows = with_storage(&app.runtime, |storage| storage.list_all_media_read_models())
         .map(|rows| {
+            let row_lookup = rows
+                .iter()
+                .map(|row| (row.media_id, row))
+                .collect::<std::collections::HashMap<_, _>>();
             let media = rows_to_projection_media(&rows);
             let query = GalleryQuery {
                 media_kind: app.filter_media_kind.clone(),
@@ -1731,7 +2037,7 @@ fn run_gallery_projection(app: &mut Librapix) {
                 .into_iter()
                 .map(|item| {
                     let original = PathBuf::from(&item.absolute_path);
-                    let matched_row = rows.iter().find(|row| row.media_id == item.media_id);
+                    let matched_row = row_lookup.get(&item.media_id).copied();
                     let thumbnail_path = matched_row.and_then(|row| {
                         resolve_thumbnail(&app.runtime.thumbnails_dir, row, GALLERY_THUMB_SIZE)
                     });
@@ -2329,6 +2635,10 @@ fn do_background_work(
         .unwrap_or_default();
 
     let all_rows = storage.list_all_media_read_models().unwrap_or_default();
+    let row_lookup = all_rows
+        .iter()
+        .map(|row| (row.media_id, row))
+        .collect::<std::collections::HashMap<_, _>>();
 
     let media = rows_to_projection_media(&all_rows);
 
@@ -2344,7 +2654,7 @@ fn do_background_work(
         .into_iter()
         .map(|item| {
             let original = PathBuf::from(&item.absolute_path);
-            let matched_row = all_rows.iter().find(|row| row.media_id == item.media_id);
+            let matched_row = row_lookup.get(&item.media_id).copied();
             let thumbnail_path = matched_row
                 .and_then(|row| resolve_thumbnail(&thumbnails_dir, row, GALLERY_THUMB_SIZE));
             let (aspect_ratio, subtitle) = matched_row
@@ -2393,6 +2703,7 @@ fn do_background_work(
         .collect();
 
     let buckets = project_timeline(&filtered_media, TimelineGranularity::Day);
+    out.timeline_anchors = build_timeline_anchors(&buckets);
     let mut timeline_lines = Vec::new();
     let mut timeline_items = Vec::new();
     for bucket in buckets {
@@ -2407,7 +2718,7 @@ fn do_background_work(
             aspect_ratio: 1.5,
         });
         for tl_item in bucket.items {
-            let matched_row = all_rows.iter().find(|r| r.media_id == tl_item.media_id);
+            let matched_row = row_lookup.get(&tl_item.media_id).copied();
             let thumbnail_path = matched_row
                 .and_then(|row| resolve_thumbnail(&thumbnails_dir, row, GALLERY_THUMB_SIZE));
             let ar = matched_row
@@ -2457,6 +2768,11 @@ fn refresh_diagnostics(app: &mut Librapix) {
     lines.push(format!("indexed media: {}", indexed_count));
     lines.push(format!("gallery items: {}", app.gallery_items.len()));
     lines.push(format!("timeline items: {}", app.timeline_items.len()));
+    lines.push(format!("timeline anchors: {}", app.timeline_anchors.len()));
+    lines.push(format!(
+        "timeline scrub: value={:.3}, active={:?}, dragging={}",
+        app.timeline_scrub_value, app.timeline_scrub_anchor_index, app.timeline_scrubbing
+    ));
     lines.push(format!(
         "filter: kind={:?}, ext={:?}",
         app.filter_media_kind.as_deref().unwrap_or("all"),
@@ -2489,6 +2805,8 @@ fn apply_background_result(app: &mut Librapix, result: BackgroundWorkResult) {
     app.state
         .replace_timeline_preview(result.timeline_preview_lines);
     app.timeline_items = result.timeline_items;
+    app.timeline_anchors = result.timeline_anchors;
+    sync_timeline_scrub_selection(app, app.timeline_scrub_value);
 
     app.media_cache = result.media_cache;
     app.browse_status = result.browse_status;
@@ -2518,4 +2836,61 @@ fn map_roots_from_storage(roots: Vec<librapix_storage::SourceRootRecord>) -> Vec
             },
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn anchor(
+        group_index: usize,
+        year: Option<i32>,
+        label: &str,
+        normalized_position: f32,
+    ) -> TimelineAnchor {
+        TimelineAnchor {
+            group_index,
+            label: label.to_owned(),
+            year,
+            month: None,
+            day: None,
+            item_count: 10,
+            normalized_position,
+        }
+    }
+
+    #[test]
+    fn nearest_anchor_index_picks_closest_normalized_value() {
+        let anchors = vec![
+            anchor(0, Some(2026), "2026-03-01", 0.0),
+            anchor(1, Some(2025), "2025-12-01", 0.35),
+            anchor(2, Some(2024), "2024-08-01", 0.7),
+            anchor(3, None, "unknown", 1.0),
+        ];
+
+        assert_eq!(nearest_timeline_anchor_index(&anchors, 0.01), Some(0));
+        assert_eq!(nearest_timeline_anchor_index(&anchors, 0.55), Some(2));
+        assert_eq!(nearest_timeline_anchor_index(&anchors, 0.97), Some(3));
+    }
+
+    #[test]
+    fn year_markers_deduplicate_by_year_and_keep_unknown() {
+        let anchors = vec![
+            anchor(0, Some(2026), "2026-03-01", 0.0),
+            anchor(1, Some(2026), "2026-02-01", 0.1),
+            anchor(2, Some(2025), "2025-12-01", 0.4),
+            anchor(3, Some(2025), "2025-08-01", 0.55),
+            anchor(4, None, "unknown", 1.0),
+        ];
+
+        let markers = timeline_year_markers(&anchors);
+        assert_eq!(
+            markers,
+            vec![
+                ("2026".to_owned(), 0),
+                ("2025".to_owned(), 2),
+                ("unknown".to_owned(), 4),
+            ]
+        );
+    }
 }

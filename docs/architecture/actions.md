@@ -12,6 +12,7 @@ Librapix exposes simple file-oriented actions without mutating source media.
 
 - Action commands are triggered from app orchestration handlers.
 - Storage provides selected media lookup by media id.
+- Media id comes from explicit selection state populated by search/gallery/timeline route panels.
 - UI remains a thin input/button surface.
 
 ## Platform behavior

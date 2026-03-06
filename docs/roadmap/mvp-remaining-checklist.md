@@ -7,8 +7,8 @@ This checklist tracks the remaining work to reach a usable Librapix MVP.
 - [x] Selection UX milestone plan updated
 - [x] Empty/loading/error hardening completion
 - [x] Root/indexing UX hardening completion
-- [ ] Final MVP reconciliation completion
-- [ ] Full final verification + smoke run + clean-tree confirmation
+- [x] Final MVP reconciliation completion
+- [x] Full final verification + smoke run + clean-tree confirmation
 
 ## A. Thumbnail subsystem
 
@@ -67,15 +67,15 @@ This checklist tracks the remaining work to reach a usable Librapix MVP.
 - [x] Ensure ignore rules are visible in user-facing status
 - [x] Add actionable recoverable error surfaces
 - [x] Verification loop + smoke run
-- [ ] Commit root/indexing UX milestone
+- [x] Commit root/indexing UX milestone
 
 ## G. MVP finalization
 
-- [ ] Reconcile docs with implemented behavior
-- [ ] Update architecture docs for thumbnails/details/actions/tags UX
-- [ ] Update README MVP status and usage flow
-- [ ] Update TROUBLESHOOTING with discovered issues/resolutions
-- [ ] Run final full verification loop
-- [ ] Run final app smoke test
-- [ ] Commit final MVP hardening/docs milestone
-- [ ] Confirm clean working tree
+- [x] Reconcile docs with implemented behavior
+- [x] Update architecture docs for thumbnails/details/actions/tags UX
+- [x] Update README MVP status and usage flow
+- [x] Update TROUBLESHOOTING with discovered issues/resolutions
+- [x] Run final full verification loop
+- [x] Run final app smoke test
+- [x] Commit final MVP hardening/docs milestone
+- [x] Confirm clean working tree

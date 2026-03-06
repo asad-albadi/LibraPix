@@ -50,6 +50,8 @@ All notable changes to this project are documented in this file.
 - App now supports enabling/disabling global ignore rules from UI and shows current rule status.
 - App browsing now supports direct media selection from search/gallery/timeline route panels.
 - Added explicit empty/loading/status messaging for roots, indexing, search, gallery, and timeline flows.
+- MVP roadmap and README now reflect a complete usable baseline.
+- Remaining MVP checklist now tracks completion of selection UX, state hardening, and final reconciliation.
 
 ### Docs
 - Established baseline documentation for dependencies, troubleshooting, architecture, and repository map.

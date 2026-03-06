@@ -2,6 +2,8 @@
 
 ## Post-MVP Directions
 
+- Memories-style resurfacing workflow and UI
+- Video thumbnail extraction pipeline
 - Advanced search ranking and faceting
 - Smarter memories clustering
 - Batch-safe export helpers (still non-destructive)

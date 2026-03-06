@@ -4,7 +4,7 @@ Librapix is a cross-platform, desktop-first, non-destructive local media gallery
 
 ## Status
 
-Project phase: search/projections baseline with thumbnail cache integration.
+Project phase: MVP complete baseline.
 
 ## Core Principles
 
@@ -51,6 +51,14 @@ Project phase: search/projections baseline with thumbnail cache integration.
 - Re-index runs apply incremental change detection and mark missing indexed files without destructive source operations.
 - Search-facing read-model queries are available over indexed media and tag joins.
 - Indexing/galleries now generate and reuse deterministic image thumbnails in app-owned cache.
+
+## MVP Usage Flow
+
+1. Add one or more library roots.
+2. Configure ignore rules as needed.
+3. Run indexing/reindexing.
+4. Browse gallery or timeline and select media directly.
+5. Inspect details, attach app/game tags, run search, and use open/copy actions.
 
 ## Documentation Index
 

@@ -13,7 +13,7 @@
 - Application orchestration (`librapix-core::app`)
   - Explicit app state and state transitions
   - Route-level coordination
-  - Library root selection and orchestration state
+  - Library root and media selection orchestration state
 - Domain (`librapix-core::domain`)
   - Product invariants and non-destructive rules
   - Media/tag concepts (expanding in next phases)

@@ -39,11 +39,14 @@ Current baseline follows Iced's explicit state/update/view loop.
 - Run timeline projection baseline
   - App loads read-model rows.
   - App delegates grouping to `librapix-projections`.
-  - UI renders bucket preview only.
+  - UI renders selectable timeline items grouped by route panel.
 - Run gallery projection baseline
   - App loads read-model rows.
   - App delegates filtering/sorting to `librapix-projections`.
-  - UI renders row preview only.
+  - UI renders selectable gallery items by route panel.
+- Direct media selection
+  - Selection is explicit app state (`selected_media_id`).
+  - Selecting from search/gallery/timeline loads details and enables actions/tags.
 - Load media details
   - UI provides selected media id.
   - App resolves media details from storage read-model lookup.

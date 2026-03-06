@@ -2,6 +2,14 @@
 
 This checklist tracks the remaining work to reach a usable Librapix MVP.
 
+## Current closure pass
+
+- [x] Selection UX milestone plan updated
+- [x] Empty/loading/error hardening completion
+- [x] Root/indexing UX hardening completion
+- [ ] Final MVP reconciliation completion
+- [ ] Full final verification + smoke run + clean-tree confirmation
+
 ## A. Thumbnail subsystem
 
 - [x] Define thumbnail architecture boundary and cache policy
@@ -18,17 +26,17 @@ This checklist tracks the remaining work to reach a usable Librapix MVP.
 - [x] Implement real gallery media list/grid rendering
 - [x] Use gallery projections with paging/sort baseline
 - [x] Show thumbnail where available
-- [ ] Add media selection behavior
-- [ ] Add empty-state and loading/status hints
+- [x] Add media selection behavior
+- [x] Add empty-state and loading/status hints
 - [x] Verification loop + smoke run
 - [x] Commit gallery UX milestone
 
 ## C. Timeline UX completion
 
 - [x] Implement timeline grouped rendering from projections
-- [ ] Add group navigation and media access controls
+- [x] Add group navigation and media access controls
 - [x] Align timeline route behavior with app state
-- [ ] Add empty-state and loading/status hints
+- [x] Add empty-state and loading/status hints
 - [x] Verification loop + smoke run
 - [x] Commit timeline UX milestone
 
@@ -55,11 +63,11 @@ This checklist tracks the remaining work to reach a usable Librapix MVP.
 ## F. Library + indexing UX hardening
 
 - [ ] Improve root lifecycle visibility and indexing controls
-- [ ] Add explicit reindex flow messaging/status
+- [x] Add explicit reindex flow messaging/status
 - [x] Ensure ignore rules are visible in user-facing status
-- [ ] Add actionable recoverable error surfaces
+- [x] Add actionable recoverable error surfaces
 - [x] Verification loop + smoke run
-- [x] Commit root/indexing UX milestone
+- [ ] Commit root/indexing UX milestone
 
 ## G. MVP finalization
 

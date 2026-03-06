@@ -43,9 +43,8 @@ enum Message {
     RunSearchQuery,
     RunTimelineProjection,
     RunGalleryProjection,
-    SelectedMediaIdChanged(String),
+    SelectMedia(i64),
     DetailsTagInputChanged(String),
-    LoadMediaDetails,
     AttachAppTag,
     AttachGameTag,
     DetachTag,
@@ -63,12 +62,23 @@ struct Librapix {
     theme_preference: ThemePreference,
     runtime: RuntimeContext,
     thumbnail_status: String,
-    selected_media_id_input: String,
     details_tag_input: String,
     details_lines: Vec<String>,
     details_action_status: String,
     ignore_rule_input: String,
     ignore_rules_preview: Vec<String>,
+    gallery_items: Vec<BrowseItem>,
+    timeline_items: Vec<BrowseItem>,
+    search_items: Vec<BrowseItem>,
+    indexing_status: String,
+    browse_status: String,
+    root_status: String,
+}
+
+#[derive(Debug, Clone)]
+struct BrowseItem {
+    media_id: i64,
+    line: String,
 }
 
 #[derive(Debug, Clone)]
@@ -92,12 +102,17 @@ impl Default for Librapix {
                 thumbnails_dir: bootstrap.thumbnails_dir,
             },
             thumbnail_status: String::new(),
-            selected_media_id_input: String::new(),
             details_tag_input: String::new(),
             details_lines: Vec::new(),
             details_action_status: String::new(),
             ignore_rule_input: String::new(),
             ignore_rules_preview: Vec::new(),
+            gallery_items: Vec::new(),
+            timeline_items: Vec::new(),
+            search_items: Vec::new(),
+            indexing_status: String::new(),
+            browse_status: String::new(),
+            root_status: String::new(),
         };
         refresh_ignore_rules_preview(&mut app);
         app
@@ -139,6 +154,9 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
             {
                 refresh_roots(app);
                 app.state.clear_selection_and_input();
+                app.root_status = app.i18n.text(TextKey::RootActionSuccess).to_owned();
+            } else {
+                app.root_status = app.i18n.text(TextKey::ErrorInvalidRootPathLabel).to_owned();
             }
         }
         Message::UpdateRoot => {
@@ -151,6 +169,9 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
             .is_ok()
             {
                 refresh_roots(app);
+                app.root_status = app.i18n.text(TextKey::RootActionSuccess).to_owned();
+            } else {
+                app.root_status = app.i18n.text(TextKey::ErrorInvalidRootPathLabel).to_owned();
             }
         }
         Message::DeactivateRoot => {
@@ -161,6 +182,7 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
                 .is_ok()
             {
                 refresh_roots(app);
+                app.root_status = app.i18n.text(TextKey::RootActionSuccess).to_owned();
             }
         }
         Message::ReactivateRoot => {
@@ -171,6 +193,7 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
                 .is_ok()
             {
                 refresh_roots(app);
+                app.root_status = app.i18n.text(TextKey::RootActionSuccess).to_owned();
             }
         }
         Message::RemoveRoot => {
@@ -180,6 +203,7 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
                 refresh_roots(app);
                 app.state.apply(AppMessage::ClearRootSelection);
                 app.state.clear_selection_and_input();
+                app.root_status = app.i18n.text(TextKey::RootActionSuccess).to_owned();
             }
         }
         Message::RefreshRoots => {
@@ -201,14 +225,13 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
         Message::RunGalleryProjection => {
             run_gallery_projection(app);
         }
-        Message::SelectedMediaIdChanged(value) => {
-            app.selected_media_id_input = value;
+        Message::SelectMedia(media_id) => {
+            app.state.apply(AppMessage::SetSelectedMedia);
+            app.state.set_selected_media(Some(media_id));
+            load_media_details(app);
         }
         Message::DetailsTagInputChanged(value) => {
             app.details_tag_input = value;
-        }
-        Message::LoadMediaDetails => {
-            load_media_details(app);
         }
         Message::AttachAppTag => {
             attach_tag_to_selected_media(app, TagKind::App);
@@ -281,13 +304,25 @@ fn view(app: &Librapix) -> Element<'_, Message> {
         text(format!(
             "{}: {}",
             app.i18n.text(TextKey::GalleryResultLabel),
-            app.state.gallery_preview.len()
+            app.gallery_items.len()
         )),
-        app.state
-            .gallery_preview
-            .iter()
-            .take(12)
-            .fold(column![].spacing(4), |rows, value| rows.push(text(value))),
+        if app.gallery_items.is_empty() {
+            column![text(app.i18n.text(TextKey::EmptyGalleryLabel))]
+        } else {
+            app.gallery_items
+                .iter()
+                .take(16)
+                .fold(column![].spacing(4), |rows, item| {
+                    rows.push(
+                        row![
+                            button(app.i18n.text(TextKey::MediaSelectButton))
+                                .on_press(Message::SelectMedia(item.media_id)),
+                            text(item.line.clone()),
+                        ]
+                        .spacing(8),
+                    )
+                })
+        },
     ]
     .spacing(8);
 
@@ -296,13 +331,25 @@ fn view(app: &Librapix) -> Element<'_, Message> {
         text(format!(
             "{}: {}",
             app.i18n.text(TextKey::TimelineResultLabel),
-            app.state.timeline_preview.len()
+            app.timeline_items.len()
         )),
-        app.state
-            .timeline_preview
-            .iter()
-            .take(12)
-            .fold(column![].spacing(4), |rows, value| rows.push(text(value))),
+        if app.timeline_items.is_empty() {
+            column![text(app.i18n.text(TextKey::EmptyTimelineLabel))]
+        } else {
+            app.timeline_items
+                .iter()
+                .take(16)
+                .fold(column![].spacing(4), |rows, item| {
+                    rows.push(
+                        row![
+                            button(app.i18n.text(TextKey::MediaSelectButton))
+                                .on_press(Message::SelectMedia(item.media_id)),
+                            text(item.line.clone()),
+                        ]
+                        .spacing(8),
+                    )
+                })
+        },
     ]
     .spacing(8);
 
@@ -347,6 +394,11 @@ fn view(app: &Librapix) -> Element<'_, Message> {
             button(app.i18n.text(TextKey::RootRefreshButton)).on_press(Message::RefreshRoots),
         ]
         .spacing(8),
+        text(format!(
+            "{}: {}",
+            app.i18n.text(TextKey::RootStatusLabel),
+            app.root_status
+        )),
         text(app.i18n.text(TextKey::IgnoreRuleInputLabel)),
         text_input("", &app.ignore_rule_input)
             .on_input(Message::IgnoreRuleInputChanged)
@@ -384,6 +436,11 @@ fn view(app: &Librapix) -> Element<'_, Message> {
             app.i18n.text(TextKey::ScanSummaryUnreadable),
             app.state.indexing_summary.unreadable_entries
         )),
+        if app.state.indexing_summary.read_model_count == 0 {
+            column![text(app.i18n.text(TextKey::EmptyIndexedMediaLabel))]
+        } else {
+            column![]
+        },
         text(app.thumbnail_status.clone()),
         text(app.i18n.text(TextKey::SearchInputLabel)),
         text_input("", &app.state.search_query)
@@ -393,24 +450,38 @@ fn view(app: &Librapix) -> Element<'_, Message> {
         text(format!(
             "{}: {}",
             app.i18n.text(TextKey::SearchResultLabel),
-            app.state.search_preview.len()
+            app.search_items.len()
         )),
-        app.state
-            .search_preview
-            .iter()
-            .take(5)
-            .fold(column![].spacing(4), |rows, value| rows.push(text(value))),
+        if app.search_items.is_empty() && !app.state.search_query.trim().is_empty() {
+            column![text(app.i18n.text(TextKey::EmptySearchResultsLabel))]
+        } else {
+            app.search_items
+                .iter()
+                .take(8)
+                .fold(column![].spacing(4), |rows, item| {
+                    rows.push(
+                        row![
+                            button(app.i18n.text(TextKey::MediaSelectButton))
+                                .on_press(Message::SelectMedia(item.media_id)),
+                            text(item.line.clone()),
+                        ]
+                        .spacing(8),
+                    )
+                })
+        },
         route_panel,
         text(app.i18n.text(TextKey::DetailsSelectedMediaLabel)),
-        text_input("", &app.selected_media_id_input)
-            .on_input(Message::SelectedMediaIdChanged)
-            .width(Length::Fill),
+        text(
+            app.state
+                .selected_media_id
+                .map(|id| id.to_string())
+                .unwrap_or_else(|| "-".to_owned()),
+        ),
         text(app.i18n.text(TextKey::DetailsTagInputLabel)),
         text_input("", &app.details_tag_input)
             .on_input(Message::DetailsTagInputChanged)
             .width(Length::Fill),
         row![
-            button(app.i18n.text(TextKey::DetailsLoadButton)).on_press(Message::LoadMediaDetails),
             button(app.i18n.text(TextKey::DetailsAttachTagButton)).on_press(Message::AttachAppTag),
             button(app.i18n.text(TextKey::DetailsAttachGameTagButton))
                 .on_press(Message::AttachGameTag),
@@ -431,6 +502,16 @@ fn view(app: &Librapix) -> Element<'_, Message> {
             app.i18n.text(TextKey::DetailsActionStatusLabel),
             app.details_action_status
         )),
+        text(format!(
+            "{}: {}",
+            app.i18n.text(TextKey::IndexingStatusLabel),
+            app.indexing_status
+        )),
+        text(format!(
+            "{}: {}",
+            app.i18n.text(TextKey::BrowseStatusLabel),
+            app.browse_status
+        )),
         if app.details_lines.is_empty() {
             column![text(app.i18n.text(TextKey::DetailsNoSelectionLabel))]
         } else {
@@ -438,6 +519,11 @@ fn view(app: &Librapix) -> Element<'_, Message> {
                 .iter()
                 .take(8)
                 .fold(column![].spacing(4), |rows, value| rows.push(text(value)))
+        },
+        if app.state.library_roots.is_empty() {
+            column![text(app.i18n.text(TextKey::EmptyRootsLabel))]
+        } else {
+            column![]
         },
         root_rows,
         text(app.i18n.text(TextKey::NonDestructiveNotice)).size(14),
@@ -563,6 +649,7 @@ fn set_ignore_rule_enabled(app: &mut Librapix, is_enabled: bool) {
 }
 
 fn run_indexing(app: &mut Librapix) {
+    app.indexing_status = app.i18n.text(TextKey::LoadingIndexingLabel).to_owned();
     let prep = with_storage(&app.runtime, |storage| {
         storage.reconcile_source_root_availability()?;
         storage.ensure_default_ignore_rules()?;
@@ -685,11 +772,15 @@ fn run_indexing(app: &mut Librapix) {
     if let Some(summary) = summary {
         app.state.apply(AppMessage::RecordIndexingSummary);
         app.state.record_indexing_summary(summary);
+        app.indexing_status = app.i18n.text(TextKey::IndexingCompletedLabel).to_owned();
+    } else {
+        app.indexing_status = app.i18n.text(TextKey::ErrorIndexingFailedLabel).to_owned();
     }
     refresh_roots(app);
 }
 
 fn run_read_model_query(app: &mut Librapix) {
+    app.browse_status = app.i18n.text(TextKey::LoadingSearchLabel).to_owned();
     let query = app.state.search_query.clone();
     let rows = with_storage(&app.runtime, |storage| {
         storage.list_media_read_models(200, 0)
@@ -725,8 +816,9 @@ fn run_read_model_query(app: &mut Librapix) {
                     .find(|row| row.media_id == hit.media_id)
                     .map(|row| (hit, row))
             })
-            .map(|(hit, row)| {
-                if row.tags.is_empty() {
+            .map(|(hit, row)| BrowseItem {
+                media_id: row.media_id,
+                line: if row.tags.is_empty() {
                     format!(
                         "{:.3} {} [{}] {}x{}",
                         hit.score,
@@ -743,33 +835,48 @@ fn run_read_model_query(app: &mut Librapix) {
                         row.media_kind,
                         row.tags.join("|")
                     )
-                }
+                },
             })
             .collect::<Vec<_>>()
     })
     .unwrap_or_default();
 
-    app.state.apply(AppMessage::ReplaceSearchPreview);
-    app.state.replace_search_preview(rows);
+    app.search_items = rows;
+    app.browse_status = app.i18n.text(TextKey::SearchCompletedLabel).to_owned();
 }
 
 fn run_timeline_projection(app: &mut Librapix) {
+    app.browse_status = app.i18n.text(TextKey::LoadingTimelineLabel).to_owned();
     let rows = with_storage(&app.runtime, |storage| {
         storage.list_media_read_models(500, 0)
     })
     .map(|rows| {
         let media = rows_to_projection_media(&rows);
         project_timeline(&media, TimelineGranularity::Day)
-            .into_iter()
-            .map(|bucket| format!("{} ({})", bucket.label, bucket.item_count))
-            .collect::<Vec<_>>()
+    })
+    .map(|buckets| {
+        let mut lines = Vec::new();
+        let mut items = Vec::new();
+        for bucket in buckets {
+            lines.push(format!("{} ({})", bucket.label, bucket.item_count));
+            for item in bucket.items {
+                items.push(BrowseItem {
+                    media_id: item.media_id,
+                    line: format!("{} [{}]", item.absolute_path, item.media_kind),
+                });
+            }
+        }
+        (lines, items)
     })
     .unwrap_or_default();
     app.state.apply(AppMessage::ReplaceTimelinePreview);
-    app.state.replace_timeline_preview(rows);
+    app.state.replace_timeline_preview(rows.0);
+    app.timeline_items = rows.1;
+    app.browse_status = app.i18n.text(TextKey::TimelineCompletedLabel).to_owned();
 }
 
 fn run_gallery_projection(app: &mut Librapix) {
+    app.browse_status = app.i18n.text(TextKey::LoadingGalleryLabel).to_owned();
     let rows = with_storage(&app.runtime, |storage| {
         storage.list_media_read_models(500, 0)
     })
@@ -804,27 +911,29 @@ fn run_gallery_projection(app: &mut Librapix) {
                         .map(|outcome| outcome.thumbnail_path.display().to_string())
                     })
                     .unwrap_or_else(|| app.i18n.text(TextKey::ThumbnailUnavailable).to_owned());
-                format!(
-                    "{} [{}] {}={thumbnail_text}",
-                    original.display(),
-                    item.media_kind,
-                    app.i18n.text(TextKey::ThumbnailStatusLabel),
-                )
+                BrowseItem {
+                    media_id: item.media_id,
+                    line: format!(
+                        "{} [{}] {}={thumbnail_text}",
+                        original.display(),
+                        item.media_kind,
+                        app.i18n.text(TextKey::ThumbnailStatusLabel),
+                    ),
+                }
             })
             .collect::<Vec<_>>()
     })
     .unwrap_or_default();
     app.state.apply(AppMessage::ReplaceGalleryPreview);
-    app.state.replace_gallery_preview(rows);
-}
-
-fn parse_selected_media_id(app: &Librapix) -> Option<i64> {
-    app.selected_media_id_input.trim().parse::<i64>().ok()
+    app.state
+        .replace_gallery_preview(rows.iter().map(|item| item.line.clone()).collect());
+    app.gallery_items = rows;
+    app.browse_status = app.i18n.text(TextKey::GalleryCompletedLabel).to_owned();
 }
 
 fn load_media_details(app: &mut Librapix) {
-    let Some(media_id) = parse_selected_media_id(app) else {
-        app.details_action_status = app.i18n.text(TextKey::DetailsInvalidMediaId).to_owned();
+    let Some(media_id) = app.state.selected_media_id else {
+        app.details_action_status = app.i18n.text(TextKey::DetailsNoSelectionLabel).to_owned();
         return;
     };
     let details = with_storage(&app.runtime, |storage| {
@@ -847,7 +956,14 @@ fn load_media_details(app: &mut Librapix) {
                 details.width_px.unwrap_or(0),
                 details.height_px.unwrap_or(0)
             ),
-            format!("tags={}", details.tags.join("|")),
+            format!(
+                "tags={}",
+                if details.tags.is_empty() {
+                    app.i18n.text(TextKey::EmptyTagsLabel).to_owned()
+                } else {
+                    details.tags.join("|")
+                }
+            ),
         ];
         app.details_action_status = app.i18n.text(TextKey::DetailsActionSuccess).to_owned();
     } else {
@@ -857,8 +973,8 @@ fn load_media_details(app: &mut Librapix) {
 }
 
 fn attach_tag_to_selected_media(app: &mut Librapix, kind: TagKind) {
-    let Some(media_id) = parse_selected_media_id(app) else {
-        app.details_action_status = app.i18n.text(TextKey::DetailsInvalidMediaId).to_owned();
+    let Some(media_id) = app.state.selected_media_id else {
+        app.details_action_status = app.i18n.text(TextKey::DetailsNoSelectionLabel).to_owned();
         return;
     };
     let tag = app.details_tag_input.trim();
@@ -880,8 +996,8 @@ fn attach_tag_to_selected_media(app: &mut Librapix, kind: TagKind) {
 }
 
 fn detach_tag_from_selected_media(app: &mut Librapix) {
-    let Some(media_id) = parse_selected_media_id(app) else {
-        app.details_action_status = app.i18n.text(TextKey::DetailsInvalidMediaId).to_owned();
+    let Some(media_id) = app.state.selected_media_id else {
+        app.details_action_status = app.i18n.text(TextKey::DetailsNoSelectionLabel).to_owned();
         return;
     };
     let tag = app.details_tag_input.trim();
@@ -903,8 +1019,8 @@ fn detach_tag_from_selected_media(app: &mut Librapix) {
 }
 
 fn open_selected_path(app: &mut Librapix, containing_folder: bool) {
-    let Some(media_id) = parse_selected_media_id(app) else {
-        app.details_action_status = app.i18n.text(TextKey::DetailsInvalidMediaId).to_owned();
+    let Some(media_id) = app.state.selected_media_id else {
+        app.details_action_status = app.i18n.text(TextKey::DetailsNoSelectionLabel).to_owned();
         return;
     };
     let row = with_storage(&app.runtime, |storage| {
@@ -924,19 +1040,23 @@ fn open_selected_path(app: &mut Librapix, containing_folder: bool) {
     } else {
         row.absolute_path
     };
+    if !target.exists() {
+        app.details_action_status = app.i18n.text(TextKey::ErrorUnavailableFileLabel).to_owned();
+        return;
+    }
     match open_with_system_default(&target) {
         Ok(_) => {
             app.details_action_status = app.i18n.text(TextKey::DetailsActionSuccess).to_owned()
         }
         Err(_) => {
-            app.details_action_status = app.i18n.text(TextKey::DetailsActionFailed).to_owned()
+            app.details_action_status = app.i18n.text(TextKey::ErrorActionFailedLabel).to_owned()
         }
     }
 }
 
 fn copy_selected_path(app: &mut Librapix) {
-    let Some(media_id) = parse_selected_media_id(app) else {
-        app.details_action_status = app.i18n.text(TextKey::DetailsInvalidMediaId).to_owned();
+    let Some(media_id) = app.state.selected_media_id else {
+        app.details_action_status = app.i18n.text(TextKey::DetailsNoSelectionLabel).to_owned();
         return;
     };
     let row = with_storage(&app.runtime, |storage| {
@@ -948,12 +1068,16 @@ fn copy_selected_path(app: &mut Librapix) {
         app.details_action_status = app.i18n.text(TextKey::DetailsActionFailed).to_owned();
         return;
     };
+    if !row.absolute_path.exists() {
+        app.details_action_status = app.i18n.text(TextKey::ErrorUnavailableFileLabel).to_owned();
+        return;
+    }
     match copy_to_clipboard(&row.absolute_path.display().to_string()) {
         Ok(_) => {
             app.details_action_status = app.i18n.text(TextKey::DetailsActionSuccess).to_owned()
         }
         Err(_) => {
-            app.details_action_status = app.i18n.text(TextKey::DetailsActionFailed).to_owned()
+            app.details_action_status = app.i18n.text(TextKey::ErrorActionFailedLabel).to_owned()
         }
     }
 }

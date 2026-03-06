@@ -38,6 +38,7 @@ pub struct AppState {
     pub active_route: Route,
     pub root_input: String,
     pub selected_root_id: Option<i64>,
+    pub selected_media_id: Option<i64>,
     pub library_roots: Vec<LibraryRootView>,
     pub indexing_summary: IndexingSummary,
     pub search_query: String,
@@ -52,6 +53,7 @@ impl Default for AppState {
             active_route: Route::Gallery,
             root_input: String::new(),
             selected_root_id: None,
+            selected_media_id: None,
             library_roots: Vec::new(),
             indexing_summary: IndexingSummary::default(),
             search_query: String::new(),
@@ -68,6 +70,7 @@ pub enum AppMessage {
     OpenTimeline,
     SetRootInput,
     SetSelectedRoot,
+    SetSelectedMedia,
     ReplaceLibraryRoots,
     ClearRootSelection,
     RecordIndexingSummary,
@@ -84,6 +87,7 @@ impl AppState {
             AppMessage::OpenTimeline => self.active_route = Route::Timeline,
             AppMessage::SetRootInput
             | AppMessage::SetSelectedRoot
+            | AppMessage::SetSelectedMedia
             | AppMessage::ReplaceLibraryRoots
             | AppMessage::ClearRootSelection
             | AppMessage::RecordIndexingSummary
@@ -108,6 +112,10 @@ impl AppState {
         {
             self.root_input = root.normalized_path.to_string_lossy().to_string();
         }
+    }
+
+    pub fn set_selected_media(&mut self, id: Option<i64>) {
+        self.selected_media_id = id;
     }
 
     pub fn replace_library_roots(&mut self, roots: Vec<LibraryRootView>) {

@@ -70,5 +70,5 @@ This checklist tracks the correctness + UX fixes requested after the media-navig
 
 - [x] Commit timeline scrubber + regrouping fixes
 - [x] Commit dialog + shortcut + details/stats fixes
-- [ ] Commit docs reconciliation
+- [x] Commit docs reconciliation
 - [ ] Final clean working tree check

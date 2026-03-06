@@ -118,6 +118,7 @@ pub enum TextKey {
     RootTagGameButton,
     RootTagRemoveButton,
     InheritedTagLabel,
+    DiagnosticsSectionLabel,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -262,5 +263,6 @@ fn en_us(key: TextKey) -> &'static str {
         TextKey::RootTagGameButton => "Game Tag",
         TextKey::RootTagRemoveButton => "Remove",
         TextKey::InheritedTagLabel => "inherited",
+        TextKey::DiagnosticsSectionLabel => "Diagnostics",
     }
 }

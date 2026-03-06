@@ -24,6 +24,7 @@ use librapix_storage::{
 };
 use librapix_thumbnails::{ensure_image_thumbnail, ensure_video_thumbnail};
 use notify::{EventKind, RecursiveMode, Watcher};
+use chrono::Local;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -82,6 +83,7 @@ enum Message {
     AddRootGameTag,
     RemoveRootTag(String),
     BackgroundWorkComplete(Box<BackgroundWorkResult>),
+    RefreshDiagnostics,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -129,6 +131,9 @@ struct Librapix {
     media_cache: std::collections::HashMap<i64, CachedDetails>,
     root_tag_input: String,
     root_tags_preview: Vec<(String, String)>,
+    diagnostics_lines: Vec<String>,
+    diagnostics_events: Vec<String>,
+    show_diagnostics: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -159,6 +164,7 @@ const DETAIL_THUMB_SIZE: u32 = 800;
 const TARGET_ROW_HEIGHT: f32 = 200.0;
 const MAX_ROW_HEIGHT: f32 = 350.0;
 const MEDIA_QUERY_LIMIT: usize = 50_000;
+const MAX_DIAGNOSTICS_EVENTS: usize = 100;
 
 #[derive(Debug, Clone)]
 struct RuntimeContext {
@@ -206,6 +212,9 @@ impl Default for Librapix {
             media_cache: std::collections::HashMap::new(),
             root_tag_input: String::new(),
             root_tags_preview: Vec::new(),
+            diagnostics_lines: Vec::new(),
+            diagnostics_events: Vec::new(),
+            show_diagnostics: true,
         };
         refresh_ignore_rules_preview(&mut app);
         app
@@ -293,7 +302,61 @@ fn watch_filesystem(
     })
 }
 
+fn message_event_label(msg: &Message) -> String {
+    match msg {
+        Message::OpenGallery => "OpenGallery".into(),
+        Message::OpenTimeline => "OpenTimeline".into(),
+        Message::RootInputChanged(v) => format!("RootInputChanged({})", v.len()),
+        Message::SelectRoot(id) => format!("SelectRoot({id})"),
+        Message::AddRoot => "AddRoot".into(),
+        Message::UpdateRoot => "UpdateRoot".into(),
+        Message::DeactivateRoot => "DeactivateRoot".into(),
+        Message::ReactivateRoot => "ReactivateRoot".into(),
+        Message::RemoveRoot => "RemoveRoot".into(),
+        Message::RefreshRoots => "RefreshRoots".into(),
+        Message::RunIndexing => "RunIndexing".into(),
+        Message::SearchQueryChanged(v) => format!("SearchQueryChanged({})", v.len()),
+        Message::RunSearchQuery => "RunSearchQuery".into(),
+        Message::RunTimelineProjection => "RunTimelineProjection".into(),
+        Message::RunGalleryProjection => "RunGalleryProjection".into(),
+        Message::SelectMedia(id) => format!("SelectMedia({id})"),
+        Message::DetailsTagInputChanged(v) => format!("DetailsTagInputChanged({})", v.len()),
+        Message::AttachAppTag => "AttachAppTag".into(),
+        Message::AttachGameTag => "AttachGameTag".into(),
+        Message::DetachTag => "DetachTag".into(),
+        Message::OpenSelectedFile => "OpenSelectedFile".into(),
+        Message::OpenSelectedFolder => "OpenSelectedFolder".into(),
+        Message::CopySelectedPath => "CopySelectedPath".into(),
+        Message::IgnoreRuleInputChanged(v) => format!("IgnoreRuleInputChanged({})", v.len()),
+        Message::EnableIgnoreRule => "EnableIgnoreRule".into(),
+        Message::DisableIgnoreRule => "DisableIgnoreRule".into(),
+        Message::StartupRestore => "StartupRestore".into(),
+        Message::BrowseFolder => "BrowseFolder".into(),
+        Message::FilesystemChanged => "FilesystemChanged".into(),
+        Message::SetFilterMediaKind(k) => format!("SetFilterMediaKind({:?})", k.as_deref()),
+        Message::SetFilterExtension(e) => format!("SetFilterExtension({:?})", e.as_deref()),
+        Message::MinFileSizeInputChanged(v) => format!("MinFileSizeInputChanged({})", v.len()),
+        Message::ApplyMinFileSize => "ApplyMinFileSize".into(),
+        Message::RootTagInputChanged(v) => format!("RootTagInputChanged({})", v.len()),
+        Message::AddRootAppTag => "AddRootAppTag".into(),
+        Message::AddRootGameTag => "AddRootGameTag".into(),
+        Message::RemoveRootTag(n) => format!("RemoveRootTag({n})"),
+        Message::BackgroundWorkComplete(_) => "BackgroundWorkComplete".into(),
+        Message::RefreshDiagnostics => "RefreshDiagnostics".into(),
+    }
+}
+
+fn log_diagnostic_event(app: &mut Librapix, label: &str) {
+    let ts = Local::now().format("%H:%M:%S%.3f");
+    app.diagnostics_events.push(format!("{ts} {label}"));
+    if app.diagnostics_events.len() > MAX_DIAGNOSTICS_EVENTS {
+        app.diagnostics_events.drain(0..(app.diagnostics_events.len() - MAX_DIAGNOSTICS_EVENTS));
+    }
+}
+
 fn update(app: &mut Librapix, message: Message) -> Task<Message> {
+    log_diagnostic_event(app, &message_event_label(&message));
+
     match message {
         Message::OpenGallery => {
             app.state.apply(AppMessage::OpenGallery);
@@ -505,6 +568,10 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
         }
         Message::BackgroundWorkComplete(result) => {
             apply_background_result(app, *result);
+            refresh_diagnostics(app);
+        }
+        Message::RefreshDiagnostics => {
+            refresh_diagnostics(app);
         }
     }
 
@@ -791,6 +858,61 @@ fn view(app: &Librapix) -> Element<'_, Message> {
         column![].into()
     };
 
+    let diagnostics_section: Element<'_, Message> = if app.show_diagnostics {
+        let state_lines = if app.diagnostics_lines.is_empty() {
+            column![
+                text("Click Refresh to load state.")
+                    .size(FONT_CAPTION)
+                    .color(TEXT_TERTIARY)
+            ]
+        } else {
+            app.diagnostics_lines
+                .iter()
+                .fold(column![].spacing(SPACE_2XS), |col, line| {
+                    col.push(
+                        text(line.as_str())
+                            .size(FONT_CAPTION)
+                            .color(TEXT_TERTIARY)
+                            .font(iced::Font::MONOSPACE),
+                    )
+                })
+        };
+        let event_lines = if app.diagnostics_events.is_empty() {
+            column![text("(no events yet)").size(FONT_CAPTION).color(TEXT_TERTIARY)]
+        } else {
+            app.diagnostics_events
+                .iter()
+                .rev()
+                .fold(column![].spacing(SPACE_2XS), |col, line| {
+                    col.push(
+                        text(line.as_str())
+                            .size(FONT_CAPTION)
+                            .color(TEXT_TERTIARY)
+                            .font(iced::Font::MONOSPACE),
+                    )
+                })
+        };
+        column![
+            row![
+                section_heading(app.i18n.text(TextKey::DiagnosticsSectionLabel)),
+                Space::new().width(Length::Fill),
+                button(text(app.i18n.text(TextKey::RefreshButton)).size(FONT_CAPTION))
+                    .on_press(Message::RefreshDiagnostics)
+                    .style(subtle_button_style)
+                    .padding([SPACE_2XS as u16, SPACE_XS as u16]),
+            ]
+            .align_y(iced::Alignment::Center),
+            text("Events (newest first)").size(FONT_CAPTION).color(TEXT_SECONDARY),
+            scrollable(event_lines).height(Length::Fixed(120.0)),
+            text("State").size(FONT_CAPTION).color(TEXT_SECONDARY),
+            state_lines,
+        ]
+        .spacing(SPACE_SM)
+        .into()
+    } else {
+        column![].into()
+    };
+
     let sidebar = container(
         scrollable(
             column![
@@ -803,6 +925,8 @@ fn view(app: &Librapix) -> Element<'_, Message> {
                 ignore_section,
                 h_divider(),
                 auto_tag_section,
+                h_divider(),
+                diagnostics_section,
             ]
             .spacing(SPACE_LG)
             .padding(SPACE_LG as u16),
@@ -2316,6 +2440,38 @@ fn do_background_work(
 
     out.browse_status = i18n.text(TextKey::GalleryCompletedLabel).to_owned();
     out
+}
+
+fn refresh_diagnostics(app: &mut Librapix) {
+    let mut lines = Vec::new();
+
+    let (indexed_count, roots_total, roots_eligible) = with_storage(&app.runtime, |storage| {
+        let indexed = storage.count_indexed_media().unwrap_or(-1);
+        let total = storage.list_source_roots().map(|r| r.len()).unwrap_or(0);
+        let eligible = storage
+            .list_eligible_source_roots()
+            .map(|r| r.len())
+            .unwrap_or(0);
+        Ok::<_, librapix_storage::StorageError>((indexed, total, eligible))
+    })
+    .unwrap_or((-1, 0, 0));
+
+    lines.push(format!(
+        "roots: {} total, {} eligible",
+        roots_total, roots_eligible
+    ));
+    lines.push(format!("indexed media: {}", indexed_count));
+    lines.push(format!("gallery items: {}", app.gallery_items.len()));
+    lines.push(format!("timeline items: {}", app.timeline_items.len()));
+    lines.push(format!(
+        "filter: kind={:?}, ext={:?}",
+        app.filter_media_kind.as_deref().unwrap_or("all"),
+        app.filter_extension.as_deref().unwrap_or("all")
+    ));
+    lines.push(format!("min file size: {} bytes", app.min_file_size_bytes));
+    lines.push(format!("browse status: {}", app.browse_status));
+
+    app.diagnostics_lines = lines;
 }
 
 fn apply_background_result(app: &mut Librapix, result: BackgroundWorkResult) {

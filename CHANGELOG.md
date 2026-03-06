@@ -5,6 +5,8 @@ All notable changes to this project are documented in this file.
 ## [Unreleased]
 
 ### Added
+- Diagnostics panel in sidebar showing roots count, indexed media count, gallery/timeline item counts, filter state, and browse status for debugging.
+- Event log in diagnostics panel: all processed messages (user actions, system events) are logged with timestamps for visibility into app behavior.
 - Introduced a workspace layout with `librapix-app`, `librapix-core`, and `librapix-i18n`.
 - Added initial architecture documentation set under `docs/architecture/`.
 - Added roadmap documentation for MVP and future phases.

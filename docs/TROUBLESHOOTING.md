@@ -167,3 +167,28 @@
   - Re-index library to generate video thumbnails.
 - Prevention guidance
   - Video thumbnails are optional; the app degrades gracefully to placeholder display.
+
+## Intermittent missing media in "All" / multi-root browse views
+
+- Symptoms
+  - "All" sometimes appeared to miss videos or showed disproportionate results from some roots.
+  - With large libraries, users reported that visible items did not always match expectations.
+- Affected area
+  - Read-model query strategy, projection inputs, and diagnostics visibility.
+- What we tried so far
+  - Increased aggregate browse/search/projection limits to `50,000` (`MEDIA_QUERY_LIMIT`) to remove low truncation ceilings.
+  - Introduced per-kind balancing (images/videos) to force representation in "All".
+  - Introduced per-root balancing to force multi-root representation.
+  - Added a diagnostics panel in the sidebar (counts + filter state + status).
+  - Added an event log in diagnostics to show processed app messages with timestamps.
+- Current confirmed findings
+  - Indexer traversal is recursive across nested folders (`WalkDir::new(...).into_iter()` with no `max_depth`), so deep subfolder depth is not currently capped by scan logic.
+  - Per-kind/per-root balancing logic was removed again to avoid artificial shaping of results; browse now uses straightforward ordering plus global `LIMIT/OFFSET`.
+  - Missing items are more likely explained by filter state, ignore rules, eligibility/lifecycle of roots, min-size threshold, or media-type recognition than by shallow directory traversal.
+- Resolution status
+  - Partial: observability improved (diagnostics + event log), and hard low limits were removed.
+  - Ongoing: continue validating root eligibility, ignore matches, and filter/min-size configuration against user datasets.
+- Prevention guidance
+  - Keep diagnostics enabled when changing query/indexing behavior.
+  - Prefer explicit instrumentation over heuristic query shaping when debugging cross-root/media-kind visibility.
+  - When introducing balancing logic, document tradeoffs and verify it does not hide real underlying causes.

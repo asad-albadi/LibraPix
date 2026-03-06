@@ -698,6 +698,10 @@ impl Storage {
         self.query_media_read_models(None, limit, offset)
     }
 
+    pub fn list_all_media_read_models(&self) -> Result<Vec<MediaReadModel>, StorageError> {
+        self.query_media_read_models_unbounded(None)
+    }
+
     pub fn search_media_read_models(
         &self,
         query: &str,
@@ -725,6 +729,51 @@ impl Storage {
             .query_row(params![media_id], map_media_read_model_row)
             .optional()?;
         Ok(row)
+    }
+
+    fn query_media_read_models_unbounded(
+        &self,
+        query: Option<&str>,
+    ) -> Result<Vec<MediaReadModel>, StorageError> {
+        let sql_with_filter = "
+            SELECT m.id, m.source_root_id, m.absolute_path, m.media_kind,
+                   m.file_size_bytes, m.modified_unix_seconds, m.width_px, m.height_px,
+                   m.metadata_status, COALESCE(GROUP_CONCAT(t.name, ','), '')
+            FROM indexed_media m
+            LEFT JOIN media_tags mt ON mt.media_id = m.id
+            LEFT JOIN tags t ON t.id = mt.tag_id
+            WHERE m.metadata_status != 'missing'
+              AND (m.absolute_path LIKE '%' || ?1 || '%' OR t.name LIKE '%' || ?1 || '%')
+            GROUP BY m.id
+            ORDER BY m.modified_unix_seconds DESC, m.absolute_path ASC";
+
+        let sql_without_filter = "
+            SELECT m.id, m.source_root_id, m.absolute_path, m.media_kind,
+                   m.file_size_bytes, m.modified_unix_seconds, m.width_px, m.height_px,
+                   m.metadata_status, COALESCE(GROUP_CONCAT(t.name, ','), '')
+            FROM indexed_media m
+            LEFT JOIN media_tags mt ON mt.media_id = m.id
+            LEFT JOIN tags t ON t.id = mt.tag_id
+            WHERE m.metadata_status != 'missing'
+            GROUP BY m.id
+            ORDER BY m.modified_unix_seconds DESC, m.absolute_path ASC";
+
+        let mut statement = self.connection.prepare(if query.is_some() {
+            sql_with_filter
+        } else {
+            sql_without_filter
+        })?;
+        let mapper = |row: &rusqlite::Row<'_>| -> Result<MediaReadModel, rusqlite::Error> {
+            map_media_read_model_row(row)
+        };
+
+        let rows = if let Some(text) = query {
+            statement.query_map(params![text], mapper)?
+        } else {
+            statement.query_map([], mapper)?
+        };
+        let collected: Result<Vec<_>, rusqlite::Error> = rows.collect();
+        Ok(collected?)
     }
 
     fn query_media_read_models(
@@ -1086,6 +1135,71 @@ mod tests {
             .expect("row lookup should work")
             .expect("row should exist");
         assert!(!detached.tags.iter().any(|tag| tag == "boss-fight"));
+
+        let _ = std::fs::remove_file(db);
+    }
+
+    #[test]
+    fn list_all_media_read_models_does_not_truncate() {
+        let db = temp_db_file("read-model-all");
+        let mut storage = Storage::open(&db).expect("database should open");
+        storage
+            .upsert_source_root(Path::new("/tmp/librapix-read-model-all"))
+            .expect("root insert should work");
+        let root_id = storage
+            .list_source_roots()
+            .expect("roots should list")
+            .first()
+            .expect("one root expected")
+            .id;
+
+        let writes = vec![
+            IndexedMediaWrite {
+                source_root_id: root_id,
+                absolute_path: PathBuf::from("/tmp/librapix-read-model-all/new-image.png"),
+                media_kind: "image".to_owned(),
+                file_size_bytes: 12,
+                modified_unix_seconds: Some(300),
+                width_px: Some(20),
+                height_px: Some(20),
+                metadata_status: IndexedMetadataStatus::Ok,
+            },
+            IndexedMediaWrite {
+                source_root_id: root_id,
+                absolute_path: PathBuf::from("/tmp/librapix-read-model-all/old-video.mp4"),
+                media_kind: "video".to_owned(),
+                file_size_bytes: 14,
+                modified_unix_seconds: Some(100),
+                width_px: None,
+                height_px: None,
+                metadata_status: IndexedMetadataStatus::Ok,
+            },
+            IndexedMediaWrite {
+                source_root_id: root_id,
+                absolute_path: PathBuf::from("/tmp/librapix-read-model-all/mid-image.jpg"),
+                media_kind: "image".to_owned(),
+                file_size_bytes: 10,
+                modified_unix_seconds: Some(200),
+                width_px: Some(10),
+                height_px: Some(10),
+                metadata_status: IndexedMetadataStatus::Ok,
+            },
+        ];
+        storage
+            .apply_incremental_index(&writes, &[root_id])
+            .expect("apply should work");
+
+        let capped = storage
+            .list_media_read_models(2, 0)
+            .expect("capped query should work");
+        assert_eq!(capped.len(), 2);
+        assert!(!capped.iter().any(|row| row.media_kind == "video"));
+
+        let all_rows = storage
+            .list_all_media_read_models()
+            .expect("all query should work");
+        assert_eq!(all_rows.len(), 3);
+        assert!(all_rows.iter().any(|row| row.media_kind == "video"));
 
         let _ = std::fs::remove_file(db);
     }

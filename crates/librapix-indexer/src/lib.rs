@@ -312,4 +312,68 @@ mod tests {
 
         let _ = fs::remove_dir_all(root);
     }
+
+    #[test]
+    fn scans_all_roots_recursively_without_depth_cap() {
+        let root_a = temp_dir("recursive-a");
+        let root_b = temp_dir("recursive-b");
+
+        fs::create_dir_all(root_a.join("nested").join("one").join("two").join("three"))
+            .expect("deep tree A should be created");
+        fs::create_dir_all(root_b.join("x").join("y").join("z"))
+            .expect("deep tree B should be created");
+
+        let deep_image = root_a
+            .join("nested")
+            .join("one")
+            .join("two")
+            .join("three")
+            .join("deep.png");
+        let deep_video = root_a.join("nested").join("one").join("clip.mp4");
+        let other_root_video = root_b.join("x").join("y").join("z").join("other.webm");
+
+        fs::write(&deep_image, []).expect("deep image should be created");
+        fs::write(&deep_video, []).expect("deep video should be created");
+        fs::write(&other_root_video, []).expect("other root video should be created");
+
+        let roots = vec![
+            ScanRoot {
+                source_root_id: 10,
+                normalized_path: root_a.clone(),
+            },
+            ScanRoot {
+                source_root_id: 20,
+                normalized_path: root_b.clone(),
+            },
+        ];
+        let ignore = IgnoreEngine::new(&[]).expect("ignore should compile");
+
+        let result = scan_roots(&roots, &ignore, &[], &ScanOptions::default());
+
+        assert_eq!(result.summary.scanned_roots, 2);
+        assert_eq!(result.summary.candidate_files, 3);
+        assert!(result.scanned_root_ids.contains(&10));
+        assert!(result.scanned_root_ids.contains(&20));
+        assert!(
+            result
+                .candidates
+                .iter()
+                .any(|candidate| candidate.absolute_path == deep_image)
+        );
+        assert!(
+            result
+                .candidates
+                .iter()
+                .any(|candidate| candidate.absolute_path == deep_video)
+        );
+        assert!(
+            result
+                .candidates
+                .iter()
+                .any(|candidate| candidate.absolute_path == other_root_video)
+        );
+
+        let _ = fs::remove_dir_all(root_a);
+        let _ = fs::remove_dir_all(root_b);
+    }
 }

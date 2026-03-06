@@ -1,6 +1,7 @@
 mod format;
 mod ui;
 
+use chrono::Local;
 use iced::widget::{
     Space, button, column, container, image, responsive, row, scrollable, text, text_input,
 };
@@ -24,7 +25,6 @@ use librapix_storage::{
 };
 use librapix_thumbnails::{ensure_image_thumbnail, ensure_video_thumbnail};
 use notify::{EventKind, RecursiveMode, Watcher};
-use chrono::Local;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -163,7 +163,6 @@ const GALLERY_THUMB_SIZE: u32 = 400;
 const DETAIL_THUMB_SIZE: u32 = 800;
 const TARGET_ROW_HEIGHT: f32 = 200.0;
 const MAX_ROW_HEIGHT: f32 = 350.0;
-const MEDIA_QUERY_LIMIT: usize = 50_000;
 const MAX_DIAGNOSTICS_EVENTS: usize = 100;
 
 #[derive(Debug, Clone)]
@@ -350,7 +349,8 @@ fn log_diagnostic_event(app: &mut Librapix, label: &str) {
     let ts = Local::now().format("%H:%M:%S%.3f");
     app.diagnostics_events.push(format!("{ts} {label}"));
     if app.diagnostics_events.len() > MAX_DIAGNOSTICS_EVENTS {
-        app.diagnostics_events.drain(0..(app.diagnostics_events.len() - MAX_DIAGNOSTICS_EVENTS));
+        app.diagnostics_events
+            .drain(0..(app.diagnostics_events.len() - MAX_DIAGNOSTICS_EVENTS));
     }
 }
 
@@ -878,7 +878,11 @@ fn view(app: &Librapix) -> Element<'_, Message> {
                 })
         };
         let event_lines = if app.diagnostics_events.is_empty() {
-            column![text("(no events yet)").size(FONT_CAPTION).color(TEXT_TERTIARY)]
+            column![
+                text("(no events yet)")
+                    .size(FONT_CAPTION)
+                    .color(TEXT_TERTIARY)
+            ]
         } else {
             app.diagnostics_events
                 .iter()
@@ -902,7 +906,9 @@ fn view(app: &Librapix) -> Element<'_, Message> {
                     .padding([SPACE_2XS as u16, SPACE_XS as u16]),
             ]
             .align_y(iced::Alignment::Center),
-            text("Events (newest first)").size(FONT_CAPTION).color(TEXT_SECONDARY),
+            text("Events (newest first)")
+                .size(FONT_CAPTION)
+                .color(TEXT_SECONDARY),
             scrollable(event_lines).height(Length::Fixed(120.0)),
             text("State").size(FONT_CAPTION).color(TEXT_SECONDARY),
             state_lines,
@@ -1110,11 +1116,7 @@ fn render_justified_gallery<'a>(
     items: &'a [BrowseItem],
     selected_id: Option<i64>,
 ) -> Element<'a, Message> {
-    let media: Vec<&BrowseItem> = items
-        .iter()
-        .filter(|i| !i.is_group_header)
-        .take(120)
-        .collect();
+    let media: Vec<&BrowseItem> = items.iter().filter(|i| !i.is_group_header).collect();
     if media.is_empty() {
         return column![].into();
     }
@@ -1203,7 +1205,7 @@ fn render_timeline_view<'a>(
 ) -> Element<'a, Message> {
     let mut sections = column![].spacing(SPACE_MD);
     let mut i = 0;
-    let limit = items.len().min(200);
+    let limit = items.len();
 
     while i < limit {
         if items[i].is_group_header {
@@ -1571,77 +1573,75 @@ fn set_ignore_rule_enabled(app: &mut Librapix, is_enabled: bool) {
 fn run_read_model_query(app: &mut Librapix) {
     app.browse_status = app.i18n.text(TextKey::LoadingSearchLabel).to_owned();
     let query = app.state.search_query.clone();
-    let rows = with_storage(&app.runtime, |storage| {
-        storage.list_media_read_models(MEDIA_QUERY_LIMIT, 0)
-    })
-    .map(|rows| {
-        let docs = rows
-            .iter()
-            .map(|row| SearchDocument {
-                media_id: row.media_id,
-                absolute_path: row.absolute_path.display().to_string(),
-                file_name: row
-                    .absolute_path
-                    .file_name()
-                    .map(|name| name.to_string_lossy().to_string())
-                    .unwrap_or_default(),
-                media_kind: row.media_kind.clone(),
-                tags: row.tags.clone(),
-            })
-            .collect::<Vec<_>>();
-
-        let strategy = FuzzySearchStrategy::default();
-        let hits = strategy.search(
-            &docs,
-            &SearchQuery {
-                text: query.clone(),
-                limit: 20,
-            },
-        );
-
-        hits.into_iter()
-            .filter_map(|hit| {
-                rows.iter()
-                    .find(|row| row.media_id == hit.media_id)
-                    .map(|row| (hit, row))
-            })
-            .filter(|(_, row)| {
-                app.filter_media_kind
-                    .as_ref()
-                    .is_none_or(|k| row.media_kind.eq_ignore_ascii_case(k))
-            })
-            .filter(|(_, row)| {
-                app.filter_extension.as_ref().is_none_or(|ext| {
-                    row.absolute_path
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        .is_some_and(|e| e.eq_ignore_ascii_case(ext))
+    let rows = with_storage(&app.runtime, |storage| storage.list_all_media_read_models())
+        .map(|rows| {
+            let docs = rows
+                .iter()
+                .map(|row| SearchDocument {
+                    media_id: row.media_id,
+                    absolute_path: row.absolute_path.display().to_string(),
+                    file_name: row
+                        .absolute_path
+                        .file_name()
+                        .map(|name| name.to_string_lossy().to_string())
+                        .unwrap_or_default(),
+                    media_kind: row.media_kind.clone(),
+                    tags: row.tags.clone(),
                 })
-            })
-            .map(|(_hit, row)| BrowseItem {
-                media_id: row.media_id,
-                title: row
-                    .absolute_path
-                    .file_name()
-                    .map(|s| s.to_string_lossy().to_string())
-                    .unwrap_or_else(|| row.absolute_path.display().to_string()),
-                subtitle: if row.tags.is_empty() {
-                    row.media_kind.clone()
-                } else {
-                    format!("{} \u{00B7} {}", row.media_kind, row.tags.join(", "))
+                .collect::<Vec<_>>();
+
+            let strategy = FuzzySearchStrategy::default();
+            let hits = strategy.search(
+                &docs,
+                &SearchQuery {
+                    text: query.clone(),
+                    limit: 20,
                 },
-                thumbnail_path: resolve_thumbnail(
-                    &app.runtime.thumbnails_dir,
-                    row,
-                    GALLERY_THUMB_SIZE,
-                ),
-                is_group_header: false,
-                line: format!("{} | {}", row.absolute_path.display(), row.media_kind),
-                aspect_ratio: aspect_ratio_from(row.width_px, row.height_px),
-            })
-            .collect::<Vec<_>>()
-    })
-    .unwrap_or_default();
+            );
+
+            hits.into_iter()
+                .filter_map(|hit| {
+                    rows.iter()
+                        .find(|row| row.media_id == hit.media_id)
+                        .map(|row| (hit, row))
+                })
+                .filter(|(_, row)| {
+                    app.filter_media_kind
+                        .as_ref()
+                        .is_none_or(|k| row.media_kind.eq_ignore_ascii_case(k))
+                })
+                .filter(|(_, row)| {
+                    app.filter_extension.as_ref().is_none_or(|ext| {
+                        row.absolute_path
+                            .extension()
+                            .and_then(|e| e.to_str())
+                            .is_some_and(|e| e.eq_ignore_ascii_case(ext))
+                    })
+                })
+                .map(|(_hit, row)| BrowseItem {
+                    media_id: row.media_id,
+                    title: row
+                        .absolute_path
+                        .file_name()
+                        .map(|s| s.to_string_lossy().to_string())
+                        .unwrap_or_else(|| row.absolute_path.display().to_string()),
+                    subtitle: if row.tags.is_empty() {
+                        row.media_kind.clone()
+                    } else {
+                        format!("{} \u{00B7} {}", row.media_kind, row.tags.join(", "))
+                    },
+                    thumbnail_path: resolve_thumbnail(
+                        &app.runtime.thumbnails_dir,
+                        row,
+                        GALLERY_THUMB_SIZE,
+                    ),
+                    is_group_header: false,
+                    line: format!("{} | {}", row.absolute_path.display(), row.media_kind),
+                    aspect_ratio: aspect_ratio_from(row.width_px, row.height_px),
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
 
     app.search_items = rows;
     app.browse_status = app.i18n.text(TextKey::SearchCompletedLabel).to_owned();
@@ -1649,67 +1649,65 @@ fn run_read_model_query(app: &mut Librapix) {
 
 fn run_timeline_projection(app: &mut Librapix) {
     app.browse_status = app.i18n.text(TextKey::LoadingTimelineLabel).to_owned();
-    let rows = with_storage(&app.runtime, |storage| {
-        storage.list_media_read_models(MEDIA_QUERY_LIMIT, 0)
-    })
-    .map(|rows| {
-        let media = rows_to_projection_media(&rows);
-        let filtered: Vec<ProjectionMedia> = media
-            .into_iter()
-            .filter(|m| {
-                app.filter_media_kind
-                    .as_ref()
-                    .is_none_or(|k| m.media_kind.eq_ignore_ascii_case(k))
-            })
-            .filter(|m| {
-                app.filter_extension.as_ref().is_none_or(|ext| {
-                    m.absolute_path
-                        .rsplit('.')
-                        .next()
-                        .is_some_and(|e| e.eq_ignore_ascii_case(ext))
+    let rows = with_storage(&app.runtime, |storage| storage.list_all_media_read_models())
+        .map(|rows| {
+            let media = rows_to_projection_media(&rows);
+            let filtered: Vec<ProjectionMedia> = media
+                .into_iter()
+                .filter(|m| {
+                    app.filter_media_kind
+                        .as_ref()
+                        .is_none_or(|k| m.media_kind.eq_ignore_ascii_case(k))
                 })
-            })
-            .collect();
-        let buckets = project_timeline(&filtered, TimelineGranularity::Day);
-        let mut lines = Vec::new();
-        let mut items = Vec::new();
-        for bucket in buckets {
-            lines.push(format!("{} ({})", bucket.label, bucket.item_count));
-            items.push(BrowseItem {
-                media_id: 0,
-                title: bucket.label.clone(),
-                subtitle: String::new(),
-                thumbnail_path: None,
-                is_group_header: true,
-                line: bucket.label.clone(),
-                aspect_ratio: 1.5,
-            });
-            for tl_item in bucket.items {
-                let matched_row = rows.iter().find(|r| r.media_id == tl_item.media_id);
-                let thumbnail_path = matched_row.and_then(|row| {
-                    resolve_thumbnail(&app.runtime.thumbnails_dir, row, GALLERY_THUMB_SIZE)
-                });
-                let ar = matched_row
-                    .map(|r| aspect_ratio_from(r.width_px, r.height_px))
-                    .unwrap_or(1.5);
+                .filter(|m| {
+                    app.filter_extension.as_ref().is_none_or(|ext| {
+                        m.absolute_path
+                            .rsplit('.')
+                            .next()
+                            .is_some_and(|e| e.eq_ignore_ascii_case(ext))
+                    })
+                })
+                .collect();
+            let buckets = project_timeline(&filtered, TimelineGranularity::Day);
+            let mut lines = Vec::new();
+            let mut items = Vec::new();
+            for bucket in buckets {
+                lines.push(format!("{} ({})", bucket.label, bucket.item_count));
                 items.push(BrowseItem {
-                    media_id: tl_item.media_id,
-                    title: PathBuf::from(&tl_item.absolute_path)
-                        .file_name()
-                        .map(|s| s.to_string_lossy().to_string())
-                        .unwrap_or(tl_item.absolute_path.clone()),
-                    subtitle: tl_item.media_kind.clone(),
-                    thumbnail_path,
-                    is_group_header: false,
-                    line: format!("{} [{}]", tl_item.absolute_path, tl_item.media_kind),
-                    aspect_ratio: ar,
+                    media_id: 0,
+                    title: bucket.label.clone(),
+                    subtitle: String::new(),
+                    thumbnail_path: None,
+                    is_group_header: true,
+                    line: bucket.label.clone(),
+                    aspect_ratio: 1.5,
                 });
+                for tl_item in bucket.items {
+                    let matched_row = rows.iter().find(|r| r.media_id == tl_item.media_id);
+                    let thumbnail_path = matched_row.and_then(|row| {
+                        resolve_thumbnail(&app.runtime.thumbnails_dir, row, GALLERY_THUMB_SIZE)
+                    });
+                    let ar = matched_row
+                        .map(|r| aspect_ratio_from(r.width_px, r.height_px))
+                        .unwrap_or(1.5);
+                    items.push(BrowseItem {
+                        media_id: tl_item.media_id,
+                        title: PathBuf::from(&tl_item.absolute_path)
+                            .file_name()
+                            .map(|s| s.to_string_lossy().to_string())
+                            .unwrap_or(tl_item.absolute_path.clone()),
+                        subtitle: tl_item.media_kind.clone(),
+                        thumbnail_path,
+                        is_group_header: false,
+                        line: format!("{} [{}]", tl_item.absolute_path, tl_item.media_kind),
+                        aspect_ratio: ar,
+                    });
+                }
             }
-        }
-        populate_media_cache(&mut app.media_cache, &rows, &app.runtime.thumbnails_dir);
-        (lines, items)
-    })
-    .unwrap_or_default();
+            populate_media_cache(&mut app.media_cache, &rows, &app.runtime.thumbnails_dir);
+            (lines, items)
+        })
+        .unwrap_or_default();
     app.state.apply(AppMessage::ReplaceTimelinePreview);
     app.state.replace_timeline_preview(rows.0);
     app.timeline_items = rows.1;
@@ -1718,56 +1716,54 @@ fn run_timeline_projection(app: &mut Librapix) {
 
 fn run_gallery_projection(app: &mut Librapix) {
     app.browse_status = app.i18n.text(TextKey::LoadingGalleryLabel).to_owned();
-    let rows = with_storage(&app.runtime, |storage| {
-        storage.list_media_read_models(MEDIA_QUERY_LIMIT, 0)
-    })
-    .map(|rows| {
-        let media = rows_to_projection_media(&rows);
-        let query = GalleryQuery {
-            media_kind: app.filter_media_kind.clone(),
-            extension: app.filter_extension.clone(),
-            tag: None,
-            sort: GallerySort::ModifiedDesc,
-            limit: MEDIA_QUERY_LIMIT,
-            offset: 0,
-        };
-        let items: Vec<BrowseItem> = project_gallery(&media, &query)
-            .into_iter()
-            .map(|item| {
-                let original = PathBuf::from(&item.absolute_path);
-                let matched_row = rows.iter().find(|row| row.media_id == item.media_id);
-                let thumbnail_path = matched_row.and_then(|row| {
-                    resolve_thumbnail(&app.runtime.thumbnails_dir, row, GALLERY_THUMB_SIZE)
-                });
-                let (aspect_ratio, subtitle) = matched_row
-                    .map(|row| {
-                        let ar = aspect_ratio_from(row.width_px, row.height_px);
-                        let sub = format!(
-                            "{} \u{00B7} {}",
-                            row.media_kind,
-                            format::format_file_size(row.file_size_bytes)
-                        );
-                        (ar, sub)
-                    })
-                    .unwrap_or((1.5, item.media_kind.clone()));
-                BrowseItem {
-                    media_id: item.media_id,
-                    title: original
-                        .file_name()
-                        .map(|s| s.to_string_lossy().to_string())
-                        .unwrap_or_else(|| original.display().to_string()),
-                    subtitle,
-                    thumbnail_path,
-                    is_group_header: false,
-                    line: format!("{} [{}]", original.display(), item.media_kind),
-                    aspect_ratio,
-                }
-            })
-            .collect();
-        populate_media_cache(&mut app.media_cache, &rows, &app.runtime.thumbnails_dir);
-        items
-    })
-    .unwrap_or_default();
+    let rows = with_storage(&app.runtime, |storage| storage.list_all_media_read_models())
+        .map(|rows| {
+            let media = rows_to_projection_media(&rows);
+            let query = GalleryQuery {
+                media_kind: app.filter_media_kind.clone(),
+                extension: app.filter_extension.clone(),
+                tag: None,
+                sort: GallerySort::ModifiedDesc,
+                limit: rows.len(),
+                offset: 0,
+            };
+            let items: Vec<BrowseItem> = project_gallery(&media, &query)
+                .into_iter()
+                .map(|item| {
+                    let original = PathBuf::from(&item.absolute_path);
+                    let matched_row = rows.iter().find(|row| row.media_id == item.media_id);
+                    let thumbnail_path = matched_row.and_then(|row| {
+                        resolve_thumbnail(&app.runtime.thumbnails_dir, row, GALLERY_THUMB_SIZE)
+                    });
+                    let (aspect_ratio, subtitle) = matched_row
+                        .map(|row| {
+                            let ar = aspect_ratio_from(row.width_px, row.height_px);
+                            let sub = format!(
+                                "{} \u{00B7} {}",
+                                row.media_kind,
+                                format::format_file_size(row.file_size_bytes)
+                            );
+                            (ar, sub)
+                        })
+                        .unwrap_or((1.5, item.media_kind.clone()));
+                    BrowseItem {
+                        media_id: item.media_id,
+                        title: original
+                            .file_name()
+                            .map(|s| s.to_string_lossy().to_string())
+                            .unwrap_or_else(|| original.display().to_string()),
+                        subtitle,
+                        thumbnail_path,
+                        is_group_header: false,
+                        line: format!("{} [{}]", original.display(), item.media_kind),
+                        aspect_ratio,
+                    }
+                })
+                .collect();
+            populate_media_cache(&mut app.media_cache, &rows, &app.runtime.thumbnails_dir);
+            items
+        })
+        .unwrap_or_default();
     app.state.apply(AppMessage::ReplaceGalleryPreview);
     app.state
         .replace_gallery_preview(rows.iter().map(|item| item.line.clone()).collect());
@@ -2266,7 +2262,7 @@ fn do_background_work(
         let _ = storage.ensure_root_tags_exist();
         let _ = storage.apply_root_auto_tags();
 
-        let read_models = storage.list_media_read_models(MEDIA_QUERY_LIMIT, 0).ok()?;
+        let read_models = storage.list_all_media_read_models().ok()?;
 
         let mut generated = 0usize;
         let mut reused = 0usize;
@@ -2332,9 +2328,7 @@ fn do_background_work(
         .map(map_roots_from_storage)
         .unwrap_or_default();
 
-    let all_rows = storage
-        .list_media_read_models(MEDIA_QUERY_LIMIT, 0)
-        .unwrap_or_default();
+    let all_rows = storage.list_all_media_read_models().unwrap_or_default();
 
     let media = rows_to_projection_media(&all_rows);
 
@@ -2343,7 +2337,7 @@ fn do_background_work(
         extension: filter_extension.clone(),
         tag: None,
         sort: GallerySort::ModifiedDesc,
-        limit: MEDIA_QUERY_LIMIT,
+        limit: all_rows.len(),
         offset: 0,
     };
     out.gallery_items = project_gallery(&media, &gallery_query)

@@ -67,3 +67,22 @@ This checklist tracks mandatory visual/product-quality redesign work for Librapi
 - [x] Final verification loop + smoke run
 - [x] Final redesign commit
 - [x] Clean working tree
+
+## 9. Fluent-inspired visual redesign (Phase 2)
+
+- [x] Expand design tokens into comprehensive Fluent-inspired system (colors, spacing, typography, radii)
+- [x] Add custom button styles (primary, subtle, action, nav, card)
+- [x] Add custom text input styles (search pill, field)
+- [x] Add custom container styles (header, sidebar, details, cards, empty states)
+- [x] Redesign header with centered search bar and Fluent-style spacing
+- [x] Redesign sidebar with sectioned nav, library roots with status indicators, structured management
+- [x] Redesign gallery as thumbnail-first grid with card selection states
+- [x] Redesign timeline with styled group headers and card rows
+- [x] Redesign details panel with clear sections, dividers, and action layout
+- [x] Update i18n to product-oriented language
+- [x] Increase gallery limit for richer browsing
+- [x] Clean up BrowseItem subtitles to be user-facing
+- [x] Remove dead code (lifecycle_text, unused ui helpers)
+- [x] Full verification loop (fmt, check, clippy, test) passes clean
+- [x] Smoke run passes
+- [x] Documentation reconciled

@@ -1,7 +1,7 @@
 mod ui;
 
-use iced::widget::{button, column, container, image, row, scrollable, text, text_input};
-use iced::{Element, Length, Task, Theme};
+use iced::widget::{Space, button, column, container, image, row, scrollable, text, text_input};
+use iced::{ContentFit, Element, Length, Task, Theme};
 use librapix_config::{LocalePreference, ThemePreference, lexical_normalize_path, load_or_create};
 use librapix_core::app::{
     AppMessage, AppState, IndexingSummary, LibraryRootView, RootLifecycle, Route,
@@ -86,7 +86,6 @@ struct BrowseItem {
     title: String,
     subtitle: String,
     thumbnail_path: Option<PathBuf>,
-    selectable: bool,
     is_group_header: bool,
     line: String,
 }
@@ -279,238 +278,318 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
 
 fn view(app: &Librapix) -> Element<'_, Message> {
     let _required_rules = non_destructive::required_rules();
+    let is_gallery = matches!(app.state.active_route, Route::Gallery);
+    let is_timeline = matches!(app.state.active_route, Route::Timeline);
 
-    let selected_label = app
-        .state
-        .selected_root_id
-        .map_or_else(|| "-".to_owned(), |id| id.to_string());
-
-    let header = panel(
+    // ── Header ──
+    let header = container(
         row![
-            text(app.i18n.text(TextKey::AppTitle)).size(FONT_TITLE),
-            text(app.i18n.text(TextKey::AppSubtitle)).size(FONT_BODY),
+            text(app.i18n.text(TextKey::AppTitle))
+                .size(FONT_DISPLAY)
+                .color(TEXT_PRIMARY),
+            Space::new().width(Length::Fill),
             text_input(
                 app.i18n.text(TextKey::SearchInputLabel),
                 &app.state.search_query
             )
             .on_input(Message::SearchQueryChanged)
-            .width(Length::FillPortion(2)),
-            button(app.i18n.text(TextKey::SearchRunButton)).on_press(Message::RunSearchQuery),
+            .on_submit(Message::RunSearchQuery)
+            .width(Length::Fixed(400.0))
+            .style(search_input_style),
+            Space::new().width(Length::Fill),
         ]
-        .spacing(SPACE_MD)
         .align_y(iced::Alignment::Center),
-    );
+    )
+    .padding([0, SPACE_XL as u16])
+    .center_y(HEADER_HEIGHT)
+    .width(Length::Fill)
+    .style(header_style);
 
-    let nav = subtle_panel(
-        column![
-            text(app.i18n.text(TextKey::ActiveViewLabel)).size(FONT_SECTION),
-            button(app.i18n.text(TextKey::GalleryTab)).on_press(Message::OpenGallery),
-            button(app.i18n.text(TextKey::TimelineTab)).on_press(Message::OpenTimeline),
-            text(format!(
-                "{}: {}",
-                app.i18n.text(TextKey::BrowseStatusLabel),
-                app.browse_status
-            )),
-        ]
-        .spacing(SPACE_SM),
-    );
+    // ── Sidebar: Browse navigation ──
+    let nav_section = column![
+        section_heading(app.i18n.text(TextKey::BrowseSectionLabel)),
+        button(text(app.i18n.text(TextKey::GalleryTab)).size(FONT_BODY))
+            .width(Length::Fill)
+            .on_press(Message::OpenGallery)
+            .style(nav_button_style(is_gallery))
+            .padding([SPACE_SM as u16, SPACE_MD as u16]),
+        button(text(app.i18n.text(TextKey::TimelineTab)).size(FONT_BODY))
+            .width(Length::Fill)
+            .on_press(Message::OpenTimeline)
+            .style(nav_button_style(is_timeline))
+            .padding([SPACE_SM as u16, SPACE_MD as u16]),
+    ]
+    .spacing(SPACE_XS);
 
-    let roots_section = subtle_panel(
+    // ── Sidebar: Library roots ──
+    let roots_list: Element<'_, Message> = if app.state.library_roots.is_empty() {
+        text(app.i18n.text(TextKey::EmptyRootsLabel))
+            .size(FONT_BODY)
+            .color(TEXT_TERTIARY)
+            .into()
+    } else {
+        app.state
+            .library_roots
+            .iter()
+            .fold(column![].spacing(SPACE_2XS), |col, root| {
+                let is_selected = app.state.selected_root_id == Some(root.id);
+                let path_name = root
+                    .normalized_path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| root.normalized_path.display().to_string());
+                let status_color = match root.lifecycle {
+                    RootLifecycle::Active => SUCCESS_COLOR,
+                    RootLifecycle::Unavailable => WARNING_COLOR,
+                    RootLifecycle::Deactivated => TEXT_DISABLED,
+                };
+                col.push(
+                    button(
+                        row![
+                            text("\u{25CF}").size(FONT_CAPTION).color(status_color),
+                            text(path_name).size(FONT_BODY).color(if is_selected {
+                                TEXT_PRIMARY
+                            } else {
+                                TEXT_SECONDARY
+                            }),
+                        ]
+                        .spacing(SPACE_SM)
+                        .align_y(iced::Alignment::Center),
+                    )
+                    .width(Length::Fill)
+                    .on_press(Message::SelectRoot(root.id))
+                    .style(nav_button_style(is_selected))
+                    .padding([SPACE_XS as u16, SPACE_SM as u16]),
+                )
+            })
+            .into()
+    };
+
+    let selected_root_actions: Element<'_, Message> = if app.state.selected_root_id.is_some() {
         column![
-            text(format!(
-                "{}: {}",
-                app.i18n.text(TextKey::RegisteredRootsLabel),
-                app.state.library_roots.len()
-            )),
-            text(format!(
-                "{}: {}",
-                app.i18n.text(TextKey::RootSelectedLabel),
-                selected_label
-            )),
-            text_input(
-                app.i18n.text(TextKey::RootInputLabel),
-                &app.state.root_input
-            )
-            .on_input(Message::RootInputChanged),
             row![
-                button(app.i18n.text(TextKey::RootAddButton)).on_press(Message::AddRoot),
-                button(app.i18n.text(TextKey::RootUpdateButton)).on_press(Message::UpdateRoot),
+                button(text(app.i18n.text(TextKey::RootUpdateButton)).size(FONT_CAPTION))
+                    .on_press(Message::UpdateRoot)
+                    .style(subtle_button_style)
+                    .padding([SPACE_2XS as u16, SPACE_SM as u16]),
+                button(text(app.i18n.text(TextKey::RootDeactivateButton)).size(FONT_CAPTION))
+                    .on_press(Message::DeactivateRoot)
+                    .style(subtle_button_style)
+                    .padding([SPACE_2XS as u16, SPACE_SM as u16]),
             ]
             .spacing(SPACE_XS),
             row![
-                button(app.i18n.text(TextKey::RootDeactivateButton))
-                    .on_press(Message::DeactivateRoot),
-                button(app.i18n.text(TextKey::RootReactivateButton))
-                    .on_press(Message::ReactivateRoot),
+                button(text(app.i18n.text(TextKey::RootReactivateButton)).size(FONT_CAPTION))
+                    .on_press(Message::ReactivateRoot)
+                    .style(subtle_button_style)
+                    .padding([SPACE_2XS as u16, SPACE_SM as u16]),
+                button(text(app.i18n.text(TextKey::RootRemoveButton)).size(FONT_CAPTION))
+                    .on_press(Message::RemoveRoot)
+                    .style(subtle_button_style)
+                    .padding([SPACE_2XS as u16, SPACE_SM as u16]),
             ]
             .spacing(SPACE_XS),
-            row![
-                button(app.i18n.text(TextKey::RootRemoveButton)).on_press(Message::RemoveRoot),
-                button(app.i18n.text(TextKey::RootRefreshButton)).on_press(Message::RefreshRoots),
-            ]
-            .spacing(SPACE_XS),
-            text(format!(
-                "{}: {}",
-                app.i18n.text(TextKey::RootStatusLabel),
-                app.root_status
-            )),
-            if app.state.library_roots.is_empty() {
-                column![text(app.i18n.text(TextKey::EmptyRootsLabel))]
-            } else {
-                app.state
-                    .library_roots
-                    .iter()
-                    .fold(column![].spacing(SPACE_XS), |rows, root| {
-                        rows.push(
-                            row![
-                                text(root.normalized_path.display().to_string()).size(FONT_BODY),
-                                text(lifecycle_text(app.i18n, root.lifecycle)).size(FONT_BODY),
-                                button(app.i18n.text(TextKey::RootSelectButton))
-                                    .on_press(Message::SelectRoot(root.id)),
-                            ]
-                            .spacing(SPACE_XS),
-                        )
-                    })
-            },
         ]
-        .spacing(SPACE_SM),
-    );
+        .spacing(SPACE_XS)
+        .into()
+    } else {
+        column![].into()
+    };
 
-    let indexing_section = subtle_panel(
-        column![
-            button(app.i18n.text(TextKey::IndexRunButton)).on_press(Message::RunIndexing),
-            text(format!(
-                "{}: {}",
-                app.i18n.text(TextKey::IndexingStatusLabel),
-                app.indexing_status
-            )),
-            text(format!(
-                "{}: roots={}, candidates={}, ignored={}, new={}, changed={}, unchanged={}, missing={}",
-                app.i18n.text(TextKey::ScanSummaryLabel),
-                app.state.indexing_summary.scanned_roots,
-                app.state.indexing_summary.candidate_files,
-                app.state.indexing_summary.ignored_entries,
-                app.state.indexing_summary.new_files,
-                app.state.indexing_summary.changed_files,
-                app.state.indexing_summary.unchanged_files,
-                app.state.indexing_summary.missing_marked
-            )),
-            text(app.thumbnail_status.clone()),
+    let library_section = column![
+        section_heading(app.i18n.text(TextKey::LibrarySectionLabel)),
+        roots_list,
+        text_input(
+            app.i18n.text(TextKey::FolderPathPlaceholder),
+            &app.state.root_input
+        )
+        .on_input(Message::RootInputChanged)
+        .style(field_input_style),
+        row![
+            button(text(app.i18n.text(TextKey::RootAddButton)).size(FONT_BODY))
+                .on_press(Message::AddRoot)
+                .style(primary_button_style)
+                .padding([SPACE_XS as u16, SPACE_MD as u16]),
+            button(text(app.i18n.text(TextKey::RootRefreshButton)).size(FONT_BODY))
+                .on_press(Message::RefreshRoots)
+                .style(subtle_button_style)
+                .padding([SPACE_XS as u16, SPACE_MD as u16]),
         ]
-        .spacing(SPACE_SM),
-    );
+        .spacing(SPACE_XS),
+        selected_root_actions,
+        text(app.root_status.clone())
+            .size(FONT_CAPTION)
+            .color(TEXT_TERTIARY),
+    ]
+    .spacing(SPACE_SM);
 
-    let ignore_section = subtle_panel(
-        column![
-            text(app.i18n.text(TextKey::IgnoreRuleInputLabel)),
-            text_input("", &app.ignore_rule_input).on_input(Message::IgnoreRuleInputChanged),
-            row![
-                button(app.i18n.text(TextKey::IgnoreRuleAddButton))
-                    .on_press(Message::EnableIgnoreRule),
-                button(app.i18n.text(TextKey::IgnoreRuleDisableButton))
-                    .on_press(Message::DisableIgnoreRule),
-            ]
-            .spacing(SPACE_XS),
-            app.ignore_rules_preview
-                .iter()
-                .take(8)
-                .fold(column![].spacing(SPACE_XS), |rows, value| rows
-                    .push(text(value))),
+    // ── Sidebar: Indexing ──
+    let indexing_section = column![
+        section_heading(app.i18n.text(TextKey::IndexingSectionLabel)),
+        button(text(app.i18n.text(TextKey::IndexRunButton)).size(FONT_BODY))
+            .on_press(Message::RunIndexing)
+            .style(primary_button_style)
+            .width(Length::Fill)
+            .padding([SPACE_SM as u16, SPACE_MD as u16]),
+        text(app.indexing_status.clone())
+            .size(FONT_CAPTION)
+            .color(TEXT_TERTIARY),
+        text(app.thumbnail_status.clone())
+            .size(FONT_CAPTION)
+            .color(TEXT_TERTIARY),
+    ]
+    .spacing(SPACE_SM);
+
+    // ── Sidebar: Ignore rules ──
+    let ignore_section = column![
+        section_heading(app.i18n.text(TextKey::IgnoreRuleInputLabel)),
+        text_input("*.tmp, **/cache/**", &app.ignore_rule_input)
+            .on_input(Message::IgnoreRuleInputChanged)
+            .style(field_input_style),
+        row![
+            button(text(app.i18n.text(TextKey::IgnoreRuleAddButton)).size(FONT_CAPTION))
+                .on_press(Message::EnableIgnoreRule)
+                .style(subtle_button_style)
+                .padding([SPACE_2XS as u16, SPACE_SM as u16]),
+            button(text(app.i18n.text(TextKey::IgnoreRuleDisableButton)).size(FONT_CAPTION))
+                .on_press(Message::DisableIgnoreRule)
+                .style(subtle_button_style)
+                .padding([SPACE_2XS as u16, SPACE_SM as u16]),
         ]
-        .spacing(SPACE_SM),
-    );
+        .spacing(SPACE_XS),
+        app.ignore_rules_preview
+            .iter()
+            .take(6)
+            .fold(column![].spacing(SPACE_2XS), |col, rule| {
+                col.push(text(rule.clone()).size(FONT_CAPTION).color(TEXT_TERTIARY))
+            }),
+    ]
+    .spacing(SPACE_SM);
 
     let sidebar = container(
         scrollable(
-            column![nav, roots_section, indexing_section, ignore_section]
-                .spacing(SPACE_MD)
-                .padding(SPACE_SM as u16),
+            column![
+                nav_section,
+                h_divider(),
+                library_section,
+                h_divider(),
+                indexing_section,
+                h_divider(),
+                ignore_section,
+            ]
+            .spacing(SPACE_LG)
+            .padding(SPACE_LG as u16),
         )
         .height(Length::Fill),
     )
-    .width(SIDEBAR_WIDTH)
-    .style(container::dark);
+    .width(Length::Fixed(SIDEBAR_WIDTH))
+    .style(sidebar_style);
 
-    let media_panel = render_media_panel(app);
+    // ── Media pane ──
+    let media_content = render_media_panel(app);
 
-    let details_panel = render_details_panel(app);
+    // ── Details pane ──
+    let details_content = render_details_panel(app);
 
+    // ── Body ──
     let body = row![
         sidebar,
-        container(scrollable(media_panel).height(Length::Fill))
-            .padding(SPACE_MD as u16)
+        container(scrollable(media_content).height(Length::Fill))
+            .padding(SPACE_LG as u16)
             .width(Length::Fill),
-        container(scrollable(details_panel).height(Length::Fill))
-            .width(DETAILS_WIDTH)
-            .padding(SPACE_MD as u16)
-            .style(container::dark),
+        container(scrollable(details_content).height(Length::Fill))
+            .width(Length::Fixed(DETAILS_WIDTH))
+            .padding(SPACE_LG as u16)
+            .style(details_pane_style),
     ]
-    .spacing(SPACE_SM)
     .height(Length::Fill);
 
-    container(
-        column![header, body]
-            .spacing(SPACE_SM)
-            .padding(SPACE_SM as u16),
-    )
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into()
+    container(column![header, body])
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .style(app_bg_style)
+        .into()
 }
 
 fn render_media_panel(app: &Librapix) -> Element<'_, Message> {
-    let route_header = match app.state.active_route {
-        Route::Gallery => row![
-            text(app.i18n.text(TextKey::GalleryTab)).size(FONT_SECTION),
-            button(app.i18n.text(TextKey::GalleryRunButton))
-                .on_press(Message::RunGalleryProjection),
-            text(format!(
-                "{}: {}",
-                app.i18n.text(TextKey::GalleryResultLabel),
-                app.gallery_items.len()
-            )),
-        ]
-        .spacing(SPACE_SM),
-        Route::Timeline => row![
-            text(app.i18n.text(TextKey::TimelineTab)).size(FONT_SECTION),
-            button(app.i18n.text(TextKey::TimelineRunButton))
-                .on_press(Message::RunTimelineProjection),
-            text(format!(
-                "{}: {}",
-                app.i18n.text(TextKey::TimelineResultLabel),
-                app.timeline_items.len()
-            )),
-        ]
-        .spacing(SPACE_SM),
+    let route_title = match app.state.active_route {
+        Route::Gallery => app.i18n.text(TextKey::GalleryTab),
+        Route::Timeline => app.i18n.text(TextKey::TimelineTab),
     };
-
-    let search_results = if app.search_items.is_empty() && !app.state.search_query.trim().is_empty()
-    {
-        panel(column![text(
-            app.i18n.text(TextKey::EmptySearchResultsLabel)
-        )])
-    } else {
-        panel(
-            app.search_items.iter().take(8).fold(
-                column![text(app.i18n.text(TextKey::SearchResultLabel)).size(FONT_SECTION)]
-                    .spacing(SPACE_XS),
-                |rows, item| {
-                    rows.push(
-                        row![
-                            button(app.i18n.text(TextKey::MediaSelectButton))
-                                .on_press(Message::SelectMedia(item.media_id)),
-                            text(item.line.clone()).size(FONT_BODY),
-                        ]
-                        .spacing(SPACE_XS),
-                    )
-                },
-            ),
-        )
+    let run_msg = match app.state.active_route {
+        Route::Gallery => Message::RunGalleryProjection,
+        Route::Timeline => Message::RunTimelineProjection,
     };
-
     let browse_items = match app.state.active_route {
         Route::Gallery => &app.gallery_items,
         Route::Timeline => &app.timeline_items,
+    };
+    let item_count = browse_items.iter().filter(|i| !i.is_group_header).count();
+
+    let content_header = row![
+        text(route_title).size(FONT_TITLE).color(TEXT_PRIMARY),
+        Space::new().width(Length::Fill),
+        button(text(app.i18n.text(TextKey::RefreshButton)).size(FONT_BODY))
+            .on_press(run_msg)
+            .style(subtle_button_style)
+            .padding([SPACE_XS as u16, SPACE_MD as u16]),
+        text(format!(
+            "{item_count} {}",
+            app.i18n.text(TextKey::ItemsLabel)
+        ))
+        .size(FONT_BODY)
+        .color(TEXT_SECONDARY),
+    ]
+    .spacing(SPACE_SM)
+    .align_y(iced::Alignment::Center);
+
+    let search_section: Element<'_, Message> = if !app.state.search_query.trim().is_empty() {
+        if app.search_items.is_empty() {
+            container(
+                text(app.i18n.text(TextKey::EmptySearchResultsLabel))
+                    .size(FONT_BODY)
+                    .color(TEXT_SECONDARY),
+            )
+            .padding(SPACE_XL as u16)
+            .width(Length::Fill)
+            .style(empty_state_style)
+            .into()
+        } else {
+            let search_header = row![
+                text(app.i18n.text(TextKey::SearchResultLabel))
+                    .size(FONT_SUBTITLE)
+                    .color(TEXT_PRIMARY),
+                text(format!("({})", app.search_items.len()))
+                    .size(FONT_BODY)
+                    .color(TEXT_SECONDARY),
+            ]
+            .spacing(SPACE_SM);
+
+            let mut grid = column![search_header].spacing(SPACE_SM);
+            let mut current_row = row![].spacing(GALLERY_GAP);
+            let mut col_idx = 0;
+            for item in app.search_items.iter().take(12) {
+                let selected = app.state.selected_media_id == Some(item.media_id);
+                let card = render_gallery_card(item, selected);
+                current_row = current_row.push(card);
+                col_idx += 1;
+                if col_idx >= GALLERY_COLUMNS {
+                    grid = grid.push(current_row);
+                    current_row = row![].spacing(GALLERY_GAP);
+                    col_idx = 0;
+                }
+            }
+            if col_idx > 0 {
+                for _ in col_idx..GALLERY_COLUMNS {
+                    current_row =
+                        current_row.push(container(text("")).width(Length::FillPortion(1)));
+                }
+                grid = grid.push(current_row);
+            }
+            grid.into()
+        }
+    } else {
+        column![].into()
     };
 
     let empty_label = match app.state.active_route {
@@ -518,141 +597,250 @@ fn render_media_panel(app: &Librapix) -> Element<'_, Message> {
         Route::Timeline => app.i18n.text(TextKey::EmptyTimelineLabel),
     };
 
-    let browse_content = if browse_items.is_empty() {
-        panel(column![text(empty_label)])
+    let browse_content: Element<'_, Message> = if browse_items.is_empty() {
+        container(text(empty_label).size(FONT_SUBTITLE).color(TEXT_SECONDARY))
+            .padding(SPACE_2XL as u16)
+            .width(Length::Fill)
+            .style(empty_state_style)
+            .into()
     } else {
-        panel(
-            browse_items
-                .iter()
-                .take(120)
-                .fold(column![].spacing(SPACE_SM), |rows, item| {
-                    if item.is_group_header {
-                        return rows.push(text(item.title.clone()).size(FONT_SECTION));
-                    }
-                    let thumb: Element<'_, Message> = if let Some(path) = &item.thumbnail_path {
-                        image(image::Handle::from_path(path))
-                            .width(Length::Fixed(120.0))
-                            .height(Length::Fixed(84.0))
-                            .into()
-                    } else {
-                        container(text(" "))
-                            .width(Length::Fixed(120.0))
-                            .height(Length::Fixed(84.0))
-                            .style(container::rounded_box)
-                            .into()
-                    };
-                    let actions: Element<'_, Message> = if item.selectable {
-                        button(app.i18n.text(TextKey::MediaSelectButton))
-                            .on_press(Message::SelectMedia(item.media_id))
-                            .into()
-                    } else {
-                        button(app.i18n.text(TextKey::MediaSelectButton)).into()
-                    };
-                    rows.push(subtle_panel(
+        match app.state.active_route {
+            Route::Gallery => render_gallery_grid(browse_items, app.state.selected_media_id),
+            Route::Timeline => render_timeline_view(browse_items, app.state.selected_media_id),
+        }
+    };
+
+    column![content_header, search_section, browse_content]
+        .spacing(SPACE_LG)
+        .into()
+}
+
+fn render_gallery_grid(items: &[BrowseItem], selected_id: Option<i64>) -> Element<'_, Message> {
+    let mut grid = column![].spacing(GALLERY_GAP);
+    let mut current_row = row![].spacing(GALLERY_GAP);
+    let mut col_idx = 0;
+    for item in items.iter().filter(|i| !i.is_group_header).take(100) {
+        let card = render_gallery_card(item, selected_id == Some(item.media_id));
+        current_row = current_row.push(card);
+        col_idx += 1;
+        if col_idx >= GALLERY_COLUMNS {
+            grid = grid.push(current_row);
+            current_row = row![].spacing(GALLERY_GAP);
+            col_idx = 0;
+        }
+    }
+    if col_idx > 0 {
+        for _ in col_idx..GALLERY_COLUMNS {
+            current_row = current_row.push(container(text("")).width(Length::FillPortion(1)));
+        }
+        grid = grid.push(current_row);
+    }
+    grid.into()
+}
+
+fn render_gallery_card(item: &BrowseItem, selected: bool) -> Element<'_, Message> {
+    let thumb: Element<'_, Message> = if let Some(path) = &item.thumbnail_path {
+        image(image::Handle::from_path(path))
+            .width(Length::Fill)
+            .height(Length::Fixed(THUMB_HEIGHT))
+            .content_fit(ContentFit::Cover)
+            .into()
+    } else {
+        container(text(""))
+            .width(Length::Fill)
+            .height(Length::Fixed(THUMB_HEIGHT))
+            .style(thumb_placeholder_style)
+            .into()
+    };
+    let caption = container(
+        column![
+            text(item.title.clone()).size(FONT_BODY).color(TEXT_PRIMARY),
+            text(item.subtitle.clone())
+                .size(FONT_CAPTION)
+                .color(TEXT_TERTIARY),
+        ]
+        .spacing(SPACE_2XS),
+    )
+    .padding([SPACE_XS as u16, SPACE_SM as u16]);
+
+    button(column![thumb, caption])
+        .width(Length::FillPortion(1))
+        .on_press(Message::SelectMedia(item.media_id))
+        .style(card_button_style(selected))
+        .padding(0)
+        .into()
+}
+
+fn render_timeline_view(items: &[BrowseItem], selected_id: Option<i64>) -> Element<'_, Message> {
+    items
+        .iter()
+        .take(120)
+        .fold(column![].spacing(SPACE_SM), |col, item| {
+            if item.is_group_header {
+                col.push(
+                    container(
+                        text(item.title.clone())
+                            .size(FONT_SUBTITLE)
+                            .color(TEXT_PRIMARY),
+                    )
+                    .padding([SPACE_MD as u16, 0]),
+                )
+            } else {
+                let thumb: Element<'_, Message> = if let Some(path) = &item.thumbnail_path {
+                    image(image::Handle::from_path(path))
+                        .width(Length::Fixed(100.0))
+                        .height(Length::Fixed(72.0))
+                        .content_fit(ContentFit::Cover)
+                        .into()
+                } else {
+                    container(text(""))
+                        .width(Length::Fixed(100.0))
+                        .height(Length::Fixed(72.0))
+                        .style(thumb_placeholder_style)
+                        .into()
+                };
+                let is_selected = selected_id == Some(item.media_id);
+                col.push(
+                    button(
                         row![
                             thumb,
                             column![
-                                text(item.title.clone()).size(FONT_BODY),
-                                text(item.subtitle.clone()).size(FONT_BODY),
+                                text(item.title.clone()).size(FONT_BODY).color(TEXT_PRIMARY),
+                                text(item.subtitle.clone())
+                                    .size(FONT_CAPTION)
+                                    .color(TEXT_TERTIARY),
                             ]
-                            .spacing(SPACE_XS)
+                            .spacing(SPACE_2XS)
                             .width(Length::Fill),
-                            actions,
                         ]
-                        .spacing(SPACE_SM),
-                    ))
-                }),
-        )
-    };
-
-    column![route_header, search_results, browse_content]
-        .spacing(SPACE_MD)
+                        .spacing(SPACE_SM)
+                        .align_y(iced::Alignment::Center),
+                    )
+                    .width(Length::Fill)
+                    .on_press(Message::SelectMedia(item.media_id))
+                    .style(card_button_style(is_selected))
+                    .padding(SPACE_SM as u16),
+                )
+            }
+        })
         .into()
 }
 
 fn render_details_panel(app: &Librapix) -> Element<'_, Message> {
-    let selected = app
-        .state
-        .selected_media_id
-        .map(|id| id.to_string())
-        .unwrap_or_else(|| "-".to_owned());
+    if app.state.selected_media_id.is_none() {
+        return container(
+            column![
+                text(app.i18n.text(TextKey::SelectPhotoTitle))
+                    .size(FONT_SUBTITLE)
+                    .color(TEXT_SECONDARY),
+                text(app.i18n.text(TextKey::SelectPhotoSubtitle))
+                    .size(FONT_BODY)
+                    .color(TEXT_TERTIARY),
+            ]
+            .spacing(SPACE_SM)
+            .padding(SPACE_2XL as u16),
+        )
+        .width(Length::Fill)
+        .style(empty_state_style)
+        .into();
+    }
+
     let preview: Element<'_, Message> = if let Some(path) = &app.details_preview_path {
-        image(image::Handle::from_path(path))
-            .width(Length::Fill)
-            .height(Length::Fixed(220.0))
-            .into()
-    } else {
-        subtle_panel(column![text(
-            app.i18n.text(TextKey::DetailsNoSelectionLabel)
-        )])
+        container(
+            image(image::Handle::from_path(path))
+                .width(Length::Fill)
+                .content_fit(ContentFit::Contain),
+        )
+        .width(Length::Fill)
+        .style(card_style)
         .into()
+    } else {
+        container(text(""))
+            .width(Length::Fill)
+            .height(Length::Fixed(160.0))
+            .style(thumb_placeholder_style)
+            .into()
     };
+
     let metadata = if app.details_lines.is_empty() {
-        column![text(app.i18n.text(TextKey::DetailsNoSelectionLabel))]
+        column![
+            text(app.i18n.text(TextKey::DetailsNoSelectionLabel))
+                .size(FONT_BODY)
+                .color(TEXT_TERTIARY)
+        ]
     } else {
         app.details_lines
             .iter()
-            .fold(column![].spacing(SPACE_XS), |rows, line| {
-                rows.push(text(line.clone()).size(FONT_BODY))
+            .fold(column![].spacing(SPACE_XS), |col, line| {
+                col.push(text(line.clone()).size(FONT_BODY).color(TEXT_SECONDARY))
             })
     };
 
     column![
-        panel(
-            column![
-                text(app.i18n.text(TextKey::DetailsSelectedMediaLabel)).size(FONT_SECTION),
-                text(selected),
-                text(app.details_title.clone()).size(FONT_BODY),
-                preview,
+        preview,
+        text(app.details_title.clone())
+            .size(FONT_SUBTITLE)
+            .color(TEXT_PRIMARY),
+        h_divider(),
+        column![
+            section_heading(app.i18n.text(TextKey::FileInfoLabel)),
+            metadata,
+        ]
+        .spacing(SPACE_SM),
+        h_divider(),
+        column![
+            section_heading(app.i18n.text(TextKey::DetailsTagsSectionLabel)),
+            text_input(
+                app.i18n.text(TextKey::DetailsTagInputLabel),
+                &app.details_tag_input
+            )
+            .on_input(Message::DetailsTagInputChanged)
+            .style(field_input_style),
+            row![
+                button(text(app.i18n.text(TextKey::DetailsAttachTagButton)).size(FONT_BODY))
+                    .on_press(Message::AttachAppTag)
+                    .style(action_button_style)
+                    .padding([SPACE_XS as u16, SPACE_MD as u16]),
+                button(text(app.i18n.text(TextKey::DetailsAttachGameTagButton)).size(FONT_BODY))
+                    .on_press(Message::AttachGameTag)
+                    .style(action_button_style)
+                    .padding([SPACE_XS as u16, SPACE_MD as u16]),
+                button(text(app.i18n.text(TextKey::DetailsDetachTagButton)).size(FONT_BODY))
+                    .on_press(Message::DetachTag)
+                    .style(subtle_button_style)
+                    .padding([SPACE_XS as u16, SPACE_MD as u16]),
             ]
-            .spacing(SPACE_SM),
-        ),
-        panel(
-            column![
-                text(app.i18n.text(TextKey::DetailsMetadataSectionLabel)).size(FONT_SECTION),
-                metadata,
+            .spacing(SPACE_XS),
+        ]
+        .spacing(SPACE_SM),
+        h_divider(),
+        column![
+            section_heading(app.i18n.text(TextKey::DetailsActionsSectionLabel)),
+            row![
+                button(text(app.i18n.text(TextKey::DetailsOpenFileButton)).size(FONT_BODY))
+                    .on_press(Message::OpenSelectedFile)
+                    .style(action_button_style)
+                    .padding([SPACE_XS as u16, SPACE_MD as u16]),
+                button(text(app.i18n.text(TextKey::DetailsOpenFolderButton)).size(FONT_BODY))
+                    .on_press(Message::OpenSelectedFolder)
+                    .style(action_button_style)
+                    .padding([SPACE_XS as u16, SPACE_MD as u16]),
+                button(text(app.i18n.text(TextKey::DetailsCopyPathButton)).size(FONT_BODY))
+                    .on_press(Message::CopySelectedPath)
+                    .style(subtle_button_style)
+                    .padding([SPACE_XS as u16, SPACE_MD as u16]),
             ]
-            .spacing(SPACE_SM),
-        ),
-        panel(
-            column![
-                text(app.i18n.text(TextKey::DetailsTagsSectionLabel)).size(FONT_SECTION),
-                text_input("", &app.details_tag_input).on_input(Message::DetailsTagInputChanged),
-                row![
-                    button(app.i18n.text(TextKey::DetailsAttachTagButton))
-                        .on_press(Message::AttachAppTag),
-                    button(app.i18n.text(TextKey::DetailsAttachGameTagButton))
-                        .on_press(Message::AttachGameTag),
-                    button(app.i18n.text(TextKey::DetailsDetachTagButton))
-                        .on_press(Message::DetachTag),
-                ]
-                .spacing(SPACE_XS),
-            ]
-            .spacing(SPACE_SM),
-        ),
-        panel(
-            column![
-                text(app.i18n.text(TextKey::DetailsActionsSectionLabel)).size(FONT_SECTION),
-                row![
-                    button(app.i18n.text(TextKey::DetailsOpenFileButton))
-                        .on_press(Message::OpenSelectedFile),
-                    button(app.i18n.text(TextKey::DetailsOpenFolderButton))
-                        .on_press(Message::OpenSelectedFolder),
-                    button(app.i18n.text(TextKey::DetailsCopyPathButton))
-                        .on_press(Message::CopySelectedPath),
-                ]
-                .spacing(SPACE_XS),
-                text(format!(
-                    "{}: {}",
-                    app.i18n.text(TextKey::DetailsActionStatusLabel),
-                    app.details_action_status
-                )),
-                text(app.i18n.text(TextKey::NonDestructiveNotice)).size(FONT_BODY),
-            ]
-            .spacing(SPACE_SM),
-        ),
+            .spacing(SPACE_XS),
+        ]
+        .spacing(SPACE_SM),
+        text(app.details_action_status.clone())
+            .size(FONT_CAPTION)
+            .color(TEXT_TERTIARY),
+        text(app.i18n.text(TextKey::NonDestructiveNotice))
+            .size(FONT_CAPTION)
+            .color(TEXT_TERTIARY),
     ]
-    .spacing(SPACE_SM)
+    .spacing(SPACE_LG)
     .into()
 }
 
@@ -932,7 +1120,7 @@ fn run_read_model_query(app: &mut Librapix) {
                     .find(|row| row.media_id == hit.media_id)
                     .map(|row| (hit, row))
             })
-            .map(|(hit, row)| BrowseItem {
+            .map(|(_hit, row)| BrowseItem {
                 media_id: row.media_id,
                 title: row
                     .absolute_path
@@ -940,20 +1128,9 @@ fn run_read_model_query(app: &mut Librapix) {
                     .map(|s| s.to_string_lossy().to_string())
                     .unwrap_or_else(|| row.absolute_path.display().to_string()),
                 subtitle: if row.tags.is_empty() {
-                    format!(
-                        "{:.3} [{}] {}x{}",
-                        hit.score,
-                        row.media_kind,
-                        row.width_px.unwrap_or(0),
-                        row.height_px.unwrap_or(0)
-                    )
+                    row.media_kind.clone()
                 } else {
-                    format!(
-                        "{:.3} [{}] tags={}",
-                        hit.score,
-                        row.media_kind,
-                        row.tags.join("|")
-                    )
+                    format!("{} \u{00B7} {}", row.media_kind, row.tags.join(", "))
                 },
                 thumbnail_path: if row.media_kind == "image" {
                     ensure_image_thumbnail(
@@ -968,7 +1145,6 @@ fn run_read_model_query(app: &mut Librapix) {
                 } else {
                     None
                 },
-                selectable: true,
                 is_group_header: false,
                 line: format!("{} | {}", row.absolute_path.display(), row.media_kind),
             })
@@ -999,7 +1175,6 @@ fn run_timeline_projection(app: &mut Librapix) {
                 title: bucket.label.clone(),
                 subtitle: String::new(),
                 thumbnail_path: None,
-                selectable: false,
                 is_group_header: true,
                 line: bucket.label.clone(),
             });
@@ -1010,7 +1185,7 @@ fn run_timeline_projection(app: &mut Librapix) {
                         .file_name()
                         .map(|s| s.to_string_lossy().to_string())
                         .unwrap_or(item.absolute_path.clone()),
-                    subtitle: format!("[{}]", item.media_kind),
+                    subtitle: item.media_kind.clone(),
                     thumbnail_path: if item.media_kind == "image" {
                         ensure_image_thumbnail(
                             &app.runtime.thumbnails_dir,
@@ -1024,7 +1199,6 @@ fn run_timeline_projection(app: &mut Librapix) {
                     } else {
                         None
                     },
-                    selectable: true,
                     is_group_header: false,
                     line: format!("{} [{}]", item.absolute_path, item.media_kind),
                 });
@@ -1050,7 +1224,7 @@ fn run_gallery_projection(app: &mut Librapix) {
             media_kind: None,
             tag: None,
             sort: GallerySort::ModifiedDesc,
-            limit: 20,
+            limit: 60,
             offset: 0,
         };
         project_gallery(&media, &query)
@@ -1081,11 +1255,7 @@ fn run_gallery_projection(app: &mut Librapix) {
                         .file_name()
                         .map(|s| s.to_string_lossy().to_string())
                         .unwrap_or_else(|| original.display().to_string()),
-                    subtitle: format!(
-                        "[{}] {}={thumbnail_text}",
-                        item.media_kind,
-                        app.i18n.text(TextKey::ThumbnailStatusLabel),
-                    ),
+                    subtitle: item.media_kind.clone(),
                     thumbnail_path: rows
                         .iter()
                         .find(|row| row.media_id == item.media_id)
@@ -1103,7 +1273,6 @@ fn run_gallery_projection(app: &mut Librapix) {
                             .ok()
                             .map(|outcome| outcome.thumbnail_path)
                         }),
-                    selectable: true,
                     is_group_header: false,
                     line: format!(
                         "{} [{}] {}={thumbnail_text}",
@@ -1382,12 +1551,4 @@ fn map_roots_from_storage(roots: Vec<librapix_storage::SourceRootRecord>) -> Vec
             },
         })
         .collect()
-}
-
-fn lifecycle_text(translator: Translator, lifecycle: RootLifecycle) -> &'static str {
-    match lifecycle {
-        RootLifecycle::Active => translator.text(TextKey::RootLifecycleActive),
-        RootLifecycle::Unavailable => translator.text(TextKey::RootLifecycleUnavailable),
-        RootLifecycle::Deactivated => translator.text(TextKey::RootLifecycleDeactivated),
-    }
 }

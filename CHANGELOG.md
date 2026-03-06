@@ -31,6 +31,15 @@ All notable changes to this project are documented in this file.
 - Added media-details action baseline (load metadata, open file/folder, copy path).
 
 ### Changed
+- Redesigned UI with Fluent-inspired design system: comprehensive color palette, spacing scale, typography hierarchy, and component styles.
+- Gallery now renders as a thumbnail-first card grid with selection states instead of a vertical list.
+- Timeline renders with styled group headers and selectable media rows.
+- Header now features a centered pill-shaped search bar with Fluent-style spacing.
+- Sidebar now uses sectioned navigation with root status dot indicators.
+- Details panel now uses clear sections separated by dividers with structured action layout.
+- i18n strings updated to product-oriented language throughout.
+- Gallery projection limit increased from 20 to 60 for richer browsing.
+- BrowseItem subtitles simplified to user-facing format.
 - Migrated from a single-crate starter to a multi-crate workspace.
 - Declared MSRV `1.85` in workspace metadata and repository docs.
 - App bootstrap now loads persisted config, opens storage, and syncs configured source roots.

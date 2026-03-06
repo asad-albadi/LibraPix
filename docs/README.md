@@ -51,3 +51,4 @@ This repository is documentation-driven. Architecture and operational decisions 
 - `docs/adrs/0009-thumbnail-cache-baseline.md`
 - `docs/adrs/0010-media-details-tags-actions-baseline.md`
 - `docs/adrs/0011-ui-shell-and-design-tokens.md`
+- `docs/adrs/0012-fluent-inspired-design-system.md`

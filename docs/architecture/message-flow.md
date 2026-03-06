@@ -10,6 +10,21 @@ Current baseline follows Iced's explicit state/update/view loop.
 4. `AppState::apply` performs an explicit transition.
 5. Next `view` reflects updated state.
 
+## Library root orchestration baseline
+
+- Add root
+  - UI message captures path input.
+  - App normalizes path and upserts source root in storage.
+  - Reconciliation refreshes root lifecycle states.
+- Update root
+  - UI selects root id and submits new path.
+  - Storage updates normalized path and lifecycle to `active`.
+- Deactivate/reactivate/remove root
+  - Lifecycle updates are explicit storage operations.
+  - Remove deletes only Librapix-managed records.
+- Refresh roots
+  - Reconciliation runs and the root list is reloaded into app state.
+
 ## Rules
 
 - Message handling remains explicit and testable.

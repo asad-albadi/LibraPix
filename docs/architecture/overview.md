@@ -18,6 +18,7 @@ Librapix is a desktop-first Rust application with strict internal boundaries.
 - Keep user-facing text key-based and locale-resolved in `librapix-i18n`.
 - Keep config path and settings behavior centralized in `librapix-config`.
 - Keep storage/indexing/search as dedicated subsystems, not ad-hoc modules.
+- Keep library root operations in application orchestration, not widget internals.
 
 ## Non-destructive stance
 

@@ -7,11 +7,11 @@ This checklist tracks the library-management and indexing foundation phase.
 - [x] Implement missing-root reconciliation policy in storage layer
 - [x] Run verification loop for lifecycle/schema milestone
 - [x] Run app smoke test for lifecycle/schema milestone
-- [ ] Commit schema/migration milestone
-- [ ] Implement explicit library root orchestration flows (add, edit, deactivate, remove, list)
-- [ ] Keep UI thin while wiring end-to-end root management behavior
-- [ ] Run verification loop for root orchestration milestone
-- [ ] Run app smoke test for root orchestration milestone
+- [x] Commit schema/migration milestone
+- [x] Implement explicit library root orchestration flows (add, edit, deactivate, remove, list)
+- [x] Keep UI thin while wiring end-to-end root management behavior
+- [x] Run verification loop for root orchestration milestone
+- [x] Run app smoke test for root orchestration milestone
 - [ ] Commit library root orchestration milestone
 - [ ] Create `librapix-indexer` crate with clear indexing boundaries
 - [ ] Implement centralized ignore-rule engine with tests

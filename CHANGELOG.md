@@ -25,6 +25,7 @@ All notable changes to this project are documented in this file.
 - Declared MSRV `1.85` in workspace metadata and repository docs.
 - App bootstrap now loads persisted config, opens storage, and syncs configured source roots.
 - Storage now tracks root lifecycle states (`active`, `unavailable`, `deactivated`) and supports availability reconciliation.
+- App orchestration now supports explicit root management flows (add, update, deactivate/reactivate, remove, refresh, select).
 
 ### Docs
 - Established baseline documentation for dependencies, troubleshooting, architecture, and repository map.

@@ -1,5 +1,30 @@
 # Troubleshooting
 
+## "All" filter misses videos or only shows part of the library
+
+- Symptoms
+  - "All" can appear image-only while "Videos" still shows video files.
+  - Gallery/timeline can show only a subset of indexed media across registered roots.
+- Affected area
+  - App browse pipeline (read-model hydration + projection input), gallery/timeline rendering.
+- Confirmed cause
+  - Hidden truncation was applied in multiple layers:
+    - Gallery rendering used `.take(120)` before layout.
+    - Timeline rendering capped processing to `min(200)` items.
+    - Browse/index/search hydration paths used paginated reads with a hard upper bound.
+  - When recent images dominated earlier slices, videos and older media were pushed out of "All".
+- Resolution
+  - Removed gallery and timeline UI caps so projected items are fully renderable.
+  - Added storage API `list_all_media_read_models()` (no SQL `LIMIT`).
+  - Updated browse/index/search hydration paths to use the unbounded read-model API.
+  - Added regression tests for:
+    - unbounded read-model retrieval including older video rows
+    - recursive multi-root indexing across deeply nested folders
+- Prevention guidance
+  - Avoid hidden hard caps in aggregate browse surfaces.
+  - If pagination is needed for performance, make it explicit and user-visible.
+  - Keep correctness tests for "All includes images+videos" and deep multi-root recursion.
+
 ## Auto refresh does not react to file changes
 
 - Symptoms

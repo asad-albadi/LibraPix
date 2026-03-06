@@ -33,3 +33,4 @@ Timeline and gallery views are read projections built from indexed media read mo
 - Projections are read-only and do not mutate source media.
 - This layer is intentionally UI-agnostic and replaceable.
 - Route panels consume projection outputs as selectable media cards wired through explicit app selection state.
+- Projection inputs must not be silently pre-truncated by hard-coded UI caps; gallery/timeline views consume full projected item sets.

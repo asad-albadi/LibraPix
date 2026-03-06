@@ -56,6 +56,7 @@ All visual presentation is centralized in `librapix-app/src/ui.rs`:
 - Filters apply to gallery, timeline, and search projections simultaneously.
 - Filter state lives in app state (`filter_media_kind`, `filter_extension`); presentation is in the media pane toolbar.
 - Filter logic is applied at the app orchestration layer, not inside widgets.
+- `All` means no media-kind filter; it includes both images and videos.
 
 ## Media pane layout
 
@@ -84,6 +85,7 @@ Gallery, timeline, and search views share a unified media-view architecture:
 - Thumbnails use `ContentFit::Cover` within their allocated card space.
 - Selected cards show an accent-colored border.
 - When no thumbnail exists, a placeholder with the filename is shown.
+- Gallery rendering does not apply a hidden hard item cap.
 
 ## Timeline rendering
 
@@ -91,6 +93,7 @@ Gallery, timeline, and search views share a unified media-view architecture:
 - The mini-grid within each group uses the same justified row algorithm as the gallery.
 - Both gallery and timeline use `render_media_card()` for card rendering.
 - Items are selectable with the same card style as gallery cards.
+- Timeline rendering does not apply a hidden hard item cap.
 
 ## Details pane
 

@@ -51,7 +51,9 @@ Results are applied atomically to app state via `BackgroundWorkComplete`.
 
 ## Query limits
 
-All read-model queries use `MEDIA_QUERY_LIMIT` (50,000) to avoid artificially truncating multi-library results.
-Thumbnail generation, gallery projection, timeline projection, and search all share this limit.
+Indexing-side projection/thumbnail/search hydration now uses `list_all_media_read_models()` (no SQL `LIMIT`)
+to avoid silently truncating aggregate multi-root/media-kind browse behavior.
+
+Bounded APIs (`list_media_read_models(limit, offset)`) remain available for explicit pagination call sites.
 
 No indexing logic should be embedded inside view widgets.

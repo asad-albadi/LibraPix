@@ -101,15 +101,15 @@ All notable changes to this project are documented in this file.
 - i18n keys for auto-tag UI labels.
 
 ### Fixed
-- "All" filter now truly includes both images and videos: read-model query uses per-root and per-media-kind caps (10k per root, 5k per kind per root) so neither images nor videos dominate when sorted by date.
-- All active roots now represented in gallery/timeline: ROW_NUMBER() window with PARTITION BY source_root_id ensures up to 10k items per root, preventing one or two roots from filling the 50k limit.
+- "All" filter now truly includes both images and videos by removing hidden browse truncation layers; no implicit image-only behavior remains in `All`.
+- Multi-root aggregation now consumes full read-model datasets for browse/index/search hydration via unbounded storage reads, avoiding silent root/media loss from hard SQL limits.
 - Read-model query ordering changed from `ORDER BY absolute_path ASC` to `ORDER BY modified_unix_seconds DESC, absolute_path ASC` so gallery/timeline show most-recent-first across all roots instead of filling the limit with alphabetically-first paths (which favored one or two libraries).
 - Video thumbnails on Windows: use `ffmpeg.exe` explicitly and normalize paths to forward slashes for ffmpeg subprocess compatibility.
 - Extension filter chips for "All" type now include mkv and webm; video type includes avi.
 - Roots added via UI are now persisted to config file so they survive restarts and bootstrap correctly.
 - Startup no longer blocks the UI ("Not Responding" on Windows) while indexing/thumbnails run; all heavy work now executes via `Task::perform` on a background thread, keeping the UI interactive immediately.
-- Gallery and timeline now aggregate all active libraries; removed hard query limits (200/500/120) that truncated multi-library results to a fraction of actual media.
-- All valid media across registered roots are now indexed and displayed; thumbnail generation query limit raised from 200 to 50,000, gallery display limit from 120 to 50,000, timeline and search limits similarly increased.
+- Gallery and timeline now aggregate all active libraries without hidden item caps in rendering (`take(120)` and `min(200)` removed).
+- All valid media across registered roots are now indexed and displayed; thumbnail generation, projections, and search hydration use full read-model input instead of capped slices.
 - `FilesystemChanged`, `RunIndexing`, `ApplyMinFileSize`, `AddRoot`, and auto-tag operations now run indexing/projections asynchronously instead of blocking the UI thread.
 - Dimensions now show correctly for files that were initially indexed before dimension extraction was implemented; indexer re-extracts dimensions for unchanged images missing width/height in the database.
 - Media selection lag on first click eliminated by pre-caching detail-size thumbnail paths during projection builds instead of resolving them synchronously on click.
@@ -127,7 +127,7 @@ All notable changes to this project are documented in this file.
 - Header branding improved: "Libra" + "Pix" split with accent color on "Pix" and subtle "Media Library" subtitle.
 - Minimum file size exclusion moved from Indexing sidebar section to Exclusions/Ignores section where it conceptually belongs.
 - Video thumbnails are now generated via `ffmpeg` during indexing and displayed in gallery, timeline, search, and details views.
-- Gallery projection limit increased from 60 to 120 items.
+- Gallery/timeline rendering no longer applies hard item-count limits.
 - Gallery gap reduced from 6px to 4px for tighter justified grid.
 - Browse items now carry `aspect_ratio` for justified row computation.
 

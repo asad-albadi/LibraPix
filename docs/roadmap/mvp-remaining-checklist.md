@@ -11,7 +11,7 @@ This checklist tracks the remaining work to reach a usable Librapix MVP.
 - [x] Expose thumbnail lookup for gallery/timeline rendering
 - [x] Document deferred video-thumbnails policy
 - [x] Verification loop + smoke run
-- [ ] Commit thumbnail subsystem milestone
+- [x] Commit thumbnail subsystem milestone
 
 ## B. Gallery UX completion
 
@@ -21,7 +21,7 @@ This checklist tracks the remaining work to reach a usable Librapix MVP.
 - [ ] Add media selection behavior
 - [ ] Add empty-state and loading/status hints
 - [x] Verification loop + smoke run
-- [ ] Commit gallery UX milestone
+- [x] Commit gallery UX milestone
 
 ## C. Timeline UX completion
 
@@ -30,7 +30,7 @@ This checklist tracks the remaining work to reach a usable Librapix MVP.
 - [x] Align timeline route behavior with app state
 - [ ] Add empty-state and loading/status hints
 - [x] Verification loop + smoke run
-- [ ] Commit timeline UX milestone
+- [x] Commit timeline UX milestone
 
 ## D. Media details + actions
 
@@ -59,7 +59,7 @@ This checklist tracks the remaining work to reach a usable Librapix MVP.
 - [x] Ensure ignore rules are visible in user-facing status
 - [ ] Add actionable recoverable error surfaces
 - [x] Verification loop + smoke run
-- [ ] Commit root/indexing UX milestone
+- [x] Commit root/indexing UX milestone
 
 ## G. MVP finalization
 

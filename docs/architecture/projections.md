@@ -7,6 +7,7 @@ Timeline and gallery views are read projections built from indexed media read mo
 - Source rows come from `librapix-storage` read-model queries (`indexed_media` + `tags` joins).
 - Projection builders live in `librapix-projections`.
 - UI consumes projection outputs for gallery/timeline card rendering and selection.
+- App orchestration derives `available_filter_tags` from read-model rows (excluding internal `kind:*` tags) for the tag filter axis.
 
 ## Timeline baseline
 
@@ -35,6 +36,7 @@ Anchor construction is projection-driven (`build_timeline_anchors`) and does not
 
 - Projection supports filtering by:
   - media kind
+  - extension
   - tag
 - Sorting supports:
   - modified timestamp descending

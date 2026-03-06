@@ -4,7 +4,7 @@ Librapix UI uses a Fluent-inspired design system with an app-shell layout.
 
 ## App shell baseline
 
-- Top header with product identity and integrated pill-shaped search bar.
+- Top header with product identity and integrated search bar.
 - Left sidebar with sectioned navigation (browse, library, indexing, ignore rules).
 - Main media pane for gallery grid, timeline groups, and search result cards.
 - Right details pane for preview, file info, tags, and actions.
@@ -28,8 +28,8 @@ All visual presentation is centralized in `librapix-app/src/ui.rs`:
 
 ### Component styles
 - Button styles: primary (accent), subtle (transparent), action (card bg), nav (active/inactive), card (selection border), filter chip (pill radius, accent when active).
-- Text input styles: search (pill radius) and field (standard radius) with focus accent border.
-- Container styles: header, sidebar, details pane, cards, empty states, thumbnail placeholders, dividers, and timeline scrubber surfaces.
+- Text input styles: search and field now share the same rounded-corner language for consistency.
+- Container styles: header, sidebar, details pane, cards, empty states, thumbnail placeholders, dividers, timeline scrubber surfaces, media-kind badges, and in-app announcement panel.
 
 ### Layout helpers
 - `section_heading()`: small-caps section label.
@@ -42,6 +42,7 @@ All visual presentation is centralized in `librapix-app/src/ui.rs`:
 - Double-click opens the media item in the OS default external app.
 - Double-click detection tracks last-click media id and timestamp at app level.
 - Gallery cards and timeline rows are clickable buttons with card styles.
+- New-file detection during live filesystem refresh can surface an in-app announcement card with quick actions (view, open file, copy file, dismiss).
 - Timeline mode includes a fast right-side scrubber:
   - drag/click updates scrub value
   - scrub maps to projection anchors
@@ -54,11 +55,14 @@ All visual presentation is centralized in `librapix-app/src/ui.rs`:
 
 ## Filtering
 
-- Media pane toolbar includes filter chips for type (All / Images / Videos) and extension (PNG, JPG, GIF, WEBP, MP4, MOV, etc.).
+- Media pane toolbar includes three filter axes:
+  - type (All / Images / Videos)
+  - extension (PNG, JPG, GIF, WEBP, MP4, MOV, etc.)
+  - tag (available indexed tags)
 - Extension chip set adjusts based on active type filter: image extensions when type is Images, video extensions when type is Videos, both when All.
 - Changing type resets the extension filter.
 - Filters apply to gallery, timeline, and search projections simultaneously.
-- Filter state lives in app state (`filter_media_kind`, `filter_extension`); presentation is in the media pane toolbar.
+- Filter state lives in app state (`filter_media_kind`, `filter_extension`, `filter_tag`); presentation is in the media pane toolbar.
 - Filter logic is applied at the app orchestration layer, not inside widgets.
 - `All` means no media-kind filter; it includes both images and videos.
 
@@ -73,7 +77,7 @@ All visual presentation is centralized in `librapix-app/src/ui.rs`:
 
 Gallery, timeline, and search views share a unified media-view architecture:
 
-- **BrowseItem**: common data model with `media_id`, `title`, `subtitle`, `thumbnail_path`, `aspect_ratio`, `is_group_header`.
+- **BrowseItem**: common data model with `media_id`, `title`, `media_kind`, `metadata_line`, `thumbnail_path`, `aspect_ratio`, `is_group_header`.
 - **render_media_card()**: shared card rendering primitive used by all views.
 - **resolve_thumbnail()**: unified thumbnail resolution for images (Lanczos3) and videos (ffmpeg).
 - **populate_media_cache()**: caches read-model data alongside browse items to avoid per-click storage queries.
@@ -89,6 +93,8 @@ Gallery, timeline, and search views share a unified media-view architecture:
 - Images maintain their natural aspect ratios; no forced cropping unless the image is inherently mismatched.
 - Thumbnails use `ContentFit::Cover` within their allocated card space.
 - Selected cards show an accent-colored border.
+- Cards include a top-right media-kind badge icon (image/video) for quick scanning.
+- Metadata row under each thumbnail is compact and padded (`kind · size · dimensions`) to avoid clipping.
 - When no thumbnail exists, a placeholder with the filename is shown.
 - Gallery rendering does not apply a hidden hard item cap.
 
@@ -109,7 +115,7 @@ Gallery, timeline, and search views share a unified media-view architecture:
 - File info shows human-readable metadata: type, size (KB/MB/GB), modified date, dimensions, path.
 - Formatting is centralized in `format.rs` with `format_file_size`, `format_timestamp`, `format_dimensions`.
 - Tags section supports add/remove for app tags and game tags.
-- Actions section provides open, show-in-folder, and copy-path commands.
+- Actions section provides open, show-in-folder, copy-file, and copy-path commands.
 
 ## Startup behavior
 
@@ -129,7 +135,7 @@ Gallery, timeline, and search views share a unified media-view architecture:
 
 - Gallery and timeline are auto-refreshed after indexing completes.
 - Gallery is auto-refreshed after adding or removing a library root.
-- Periodic file-system watching is deferred to a future phase.
+- Filesystem watching is active for root changes, and newly indexed files can trigger an in-app announcement panel.
 
 ## Size-based exclusion
 

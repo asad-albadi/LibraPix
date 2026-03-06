@@ -7,7 +7,8 @@ Librapix uses a centralized media-view architecture that underpins gallery, time
 All browsing views consume `BrowseItem` which carries:
 - `media_id`: stable identifier for selection and detail loading.
 - `title`: display filename.
-- `subtitle`: media kind and size or tag summary.
+- `media_kind`: kind discriminator used for card icon badges and actions.
+- `metadata_line`: compact card metadata string (`kind · size · dimensions`).
 - `thumbnail_path`: resolved path to cached thumbnail (image or video).
 - `aspect_ratio`: width/height ratio computed from stored dimensions (default 1.5 for unknown).
 - `is_group_header`: flag for timeline date separators.
@@ -15,6 +16,8 @@ All browsing views consume `BrowseItem` which carries:
 ## Shared primitives
 
 - `render_media_card(item, selected, height)`: renders a single media card at a given row height.
+  - includes top-right media-kind badge icon.
+  - includes padded metadata row below the thumbnail.
 - `resolve_thumbnail(thumbnails_dir, row, max_edge)`: returns a thumbnail path for images (Lanczos3) or videos (ffmpeg), or None.
 - `aspect_ratio_from(width_px, height_px)`: computes aspect ratio from nullable stored dimensions.
 - `populate_media_cache(cache, rows, thumbnails_dir)`: caches read-model data and pre-resolved detail-size thumbnail paths for fast selection without I/O.
@@ -47,6 +50,7 @@ This produces a Google-Photos-style justified layout where images maintain aspec
 ### Search
 - Renders search results as a justified grid using the same layout as gallery.
 - Shown above the main browse content when a search query is active.
+- Search no longer truncates results to an implicit 20-hit cap; full matching set is returned for the current read-model snapshot.
 
 ## Selection model
 

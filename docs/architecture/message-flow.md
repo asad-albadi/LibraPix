@@ -37,10 +37,12 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
   - App runs thumbnail generation for image read-model rows into app-owned thumbnail cache.
 - Run read-model query baseline
   - App queries read models from storage with optional text filtering over path/tag data.
-  - App renders a small preview list for verification, keeping UI logic thin.
+  - App executes fuzzy search over the full in-memory read-model document set (no hidden fixed 20-result cap).
+  - App applies active kind/extension/tag filters to resulting hits.
 - Run timeline projection baseline
   - App loads read-model rows.
   - App delegates grouping to `librapix-projections`.
+  - App applies kind/extension/tag filter state before grouping.
   - App derives `TimelineAnchor` metadata from timeline buckets (`build_timeline_anchors`).
   - UI renders selectable timeline items grouped by route panel.
 - Timeline scrubber interaction
@@ -52,6 +54,7 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
 - Run gallery projection baseline
   - App loads read-model rows.
   - App delegates filtering/sorting to `librapix-projections`.
+  - App applies kind/extension/tag filter state via `GalleryQuery`.
   - UI renders selectable gallery items by route panel.
 - Direct media selection
   - Selection is explicit app state (`selected_media_id`).
@@ -67,6 +70,7 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
 - Open/copy actions
   - App resolves selected media path from storage.
   - App invokes platform-specific open/clipboard commands.
+  - Copy flow supports both path clipboard and file-object clipboard actions.
 - Startup restore
   - `Task::done(Message::StartupRestore)` fires after the first render.
   - If roots exist, spawns background work via `Task::perform` to run indexing, thumbnail generation, and gallery/timeline projections on a background thread.
@@ -83,10 +87,12 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
   - After adding a root, indexing and gallery refresh run automatically.
   - After removing a root, gallery refreshes automatically.
   - After indexing completes, gallery projection refreshes automatically (within StartupRestore flow).
+  - Filesystem-triggered background refresh compares previous and current media cache ids to detect newly indexed files.
+  - New files can trigger a dismissible in-app announcement card with quick actions.
 
 - Background work pattern
   - Heavy operations (indexing, scanning, thumbnail generation, projections) are encapsulated in `do_background_work`.
-  - `spawn_background_work` captures current app inputs and returns a `Task::perform` that runs the work off the UI thread.
+  - `spawn_background_work` captures current app inputs in `BackgroundWorkInput` and returns a `Task::perform` that runs the work off the UI thread.
   - `BackgroundWorkComplete` handler applies all returned state atomically.
   - Multiple handlers share this pattern: `StartupRestore`, `FilesystemChanged`, `RunIndexing`, `ApplyMinFileSize`, `AddRoot`, auto-tag operations.
   - Lightweight projection-only operations (filter changes, manual projection refresh) remain synchronous since they are fast DB queries.

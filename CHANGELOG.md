@@ -34,6 +34,14 @@ All notable changes to this project are documented in this file.
 - Added projection-level timeline anchor model (`TimelineAnchor`) with normalized positions for fast date navigation.
 - Added Timeline-mode fast scrubber UI (right-side control) with drag/click navigation and year markers.
 - Added floating timeline date chip while scrubbing to show active anchor label.
+- Added third browse filter axis for tags with selectable tag chips derived from indexed read-model tags.
+- Added media card corner badges for fast image/video identification.
+- Added compact card metadata row (`kind · size · dimensions`) with padded layout to avoid clipping.
+- Added details action to copy the selected media file object (not only path text).
+- Added in-app new-file announcement card for filesystem-triggered live refresh, with quick actions (view/open/copy file/dismiss).
+- Added Windows packaging/signing baseline under `packaging/windows/`:
+  - MSIX manifest template with publisher identity `CN=Asad`
+  - scripts for dev cert creation, EXE signing, and MSIX pack+sign
 
 ### Changed
 - Added live filesystem watch subscription over active roots using `notify`.
@@ -57,6 +65,8 @@ All notable changes to this project are documented in this file.
 - Added new i18n keys for folder picker, activity status, and metadata labels.
 - Timeline pane scroll is now wired with a stable scrollable `Id` and programmatic jumps via Iced widget operations (`scroll_to` + `snap_to` fallback).
 - Timeline scrubber state now stays synchronized with viewport scroll events and nearest anchor mapping.
+- Search input border radius now matches the standard control radius used by the rest of the design system.
+- Search/galleries/timeline now all consume the same tag-filter state alongside media-kind and extension filters.
 - Redesigned UI with Fluent-inspired design system: comprehensive color palette, spacing scale, typography hierarchy, and component styles.
 - Gallery now renders as a thumbnail-first card grid with selection states instead of a vertical list.
 - Timeline renders with styled group headers and selectable media rows.
@@ -107,6 +117,7 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 - "All" filter now truly includes both images and videos by removing hidden browse truncation layers; no implicit image-only behavior remains in `All`.
+- Removed hidden app-side search truncation (`limit: 20`); search results now return the complete matching set for the current read-model snapshot.
 - Multi-root aggregation now consumes full read-model datasets for browse/index/search hydration via unbounded storage reads, avoiding silent root/media loss from hard SQL limits.
 - Read-model query ordering changed from `ORDER BY absolute_path ASC` to `ORDER BY modified_unix_seconds DESC, absolute_path ASC` so gallery/timeline show most-recent-first across all roots instead of filling the limit with alphabetically-first paths (which favored one or two libraries).
 - Video thumbnails on Windows: use `ffmpeg.exe` explicitly and normalize paths to forward slashes for ffmpeg subprocess compatibility.
@@ -140,6 +151,10 @@ All notable changes to this project are documented in this file.
 - Added ADR `0014` for filtering, exclusion, and thumbnail quality decisions.
 - Added ADR `0015` for media-view architecture, justified layout, and video thumbnail decisions.
 - Added ADR `0018` for projection-driven timeline scrubber architecture.
+- Added ADR `0019` for Windows signing/publisher baseline.
+- Added Windows signing/distribution guide and script usage documentation.
+- Updated architecture docs for UI/media-view/projections/search/actions/message-flow with tag filtering, card metadata/icon design, file-copy action, and live new-file announcement behavior.
+- Added product-updates milestone checklist for tag filter, card metadata polish, copy-file action, announcement flow, search cap fix, and Windows signing setup.
 - Added quality milestone checklist.
 - Added timeline scrubber milestone checklist.
 - Updated architecture docs for thumbnails, UI, indexing, and search.

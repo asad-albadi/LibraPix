@@ -18,6 +18,69 @@
   - Keep timeline anchor generation tied to projection output and avoid widget-derived fallback state.
   - Preserve stable scrollable `Id` wiring (`media-pane-scrollable`) so scrub events can issue scroll operations.
 
+## Search only returns 20 results
+
+- Symptoms
+  - Search appears to stop at 20 items even when more matches exist.
+- Affected area
+  - App-side search query orchestration (`RunSearchQuery`).
+- Confirmed cause
+  - Search query was created with `SearchQuery { limit: 20 }`, truncating hit output after ranking.
+- Resolution
+  - Search now sets limit from current read-model dataset size (`rows.len()`), removing hidden fixed truncation.
+- Prevention guidance
+  - Avoid hard-coded result caps in aggregate browse/search surfaces unless pagination is explicit and user-visible.
+
+## New-file announcement does not appear during live refresh
+
+- Symptoms
+  - Filesystem changes refresh gallery/timeline, but no in-app new-file card is shown.
+- Affected area
+  - Filesystem-triggered background refresh + announcement derivation.
+- Confirmed cause
+  - Announcement is intentionally only emitted for newly indexed media IDs (not edits/removals).
+  - If a created file is ignored/excluded or unsupported, it will not produce a new indexed media row.
+- Resolution
+  - Verify file is supported and not excluded by ignore/min-size filters.
+  - Ensure root is active and filesystem watcher is running.
+- Prevention guidance
+  - Keep new-file notification logic tied to indexed-media deltas to avoid noisy false positives.
+
+## Copy File action fails
+
+- Symptoms
+  - `Copy File` action reports failure.
+- Affected area
+  - Platform clipboard integration for file-object copy.
+- Likely cause
+  - Platform command/runtime support missing:
+    - Linux: `xclip` unavailable.
+    - Windows: PowerShell clipboard command unavailable/restricted.
+    - macOS: AppleScript clipboard call failed.
+- Resolution
+  - Install required host tools (`xclip` on Linux).
+  - Retry with accessible file path and verify filesystem permissions.
+  - Use `Copy Path` as fallback when platform file-clipboard integration is unavailable.
+- Prevention guidance
+  - Keep platform clipboard requirements documented and validated in release notes/testing.
+
+## Windows shows "Unknown publisher"
+
+- Symptoms
+  - Windows launch/install surfaces `Unknown publisher`.
+- Affected area
+  - Distribution/signing pipeline (not UI labels).
+- Confirmed cause
+  - Binary/package is unsigned, signed with an untrusted certificate, or package manifest publisher does not match certificate subject.
+- Resolution
+  - Sign EXE/MSIX using SignTool with a certificate subject matching manifest publisher (`CN=Asad` baseline).
+  - For local testing, generate/import a dev self-signed cert.
+  - For public release, use a trusted OV/EV certificate and timestamp signatures.
+  - See `packaging/windows/README.md`.
+- Prevention guidance
+  - Keep manifest publisher and cert subject synchronized.
+  - Verify signatures in CI/release workflow (`signtool verify /pa /v`).
+
 ## "All" filter misses videos or only shows part of the library
 
 - Symptoms

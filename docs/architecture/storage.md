@@ -70,6 +70,7 @@ This schema is intentionally minimal to avoid overbuilding before indexing and s
   - paginated list of non-missing indexed media
   - search by path/tag text filter
   - media-by-id lookup for details/action orchestration
+- App orchestration derives the tag-filter chip list from read-model tag joins (excluding internal `kind:*` tags).
 - This read layer is UI-agnostic and replaceable by richer search subsystems later.
 
 ## Tag workflow baseline

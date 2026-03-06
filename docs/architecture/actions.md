@@ -6,6 +6,7 @@ Librapix exposes simple file-oriented actions without mutating source media.
 
 - Open selected media with system default app.
 - Open selected media containing folder.
+- Copy selected media file to clipboard (file object copy, not just path text).
 - Copy selected media path to clipboard via platform command.
 
 ## Double-click open
@@ -27,12 +28,15 @@ Librapix exposes simple file-oriented actions without mutating source media.
 
 - macOS:
   - open: `open`
+  - copy file: `osascript` (`set the clipboard to POSIX file ...`)
   - copy path: `pbcopy`
 - Windows:
   - open: `cmd /C start`
+  - copy file: `powershell Set-Clipboard -LiteralPath`
   - copy path: `clip`
 - Linux/other Unix:
   - open: `xdg-open`
+  - copy file: `xclip` with `x-special/gnome-copied-files` payload
   - copy path: `xclip -selection clipboard`
 
 ## Non-destructive guarantee

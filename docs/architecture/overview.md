@@ -11,7 +11,7 @@ Librapix is a desktop-first Rust application with strict internal boundaries.
 - Search subsystem: `librapix-search`.
 - Projection subsystem: `librapix-projections`.
 - Thumbnail subsystem: `librapix-thumbnails`.
-- Media-actions flow: app-orchestrated open/copy workflows over storage read models.
+- Media-actions flow: app-orchestrated open/copy workflows (file + path) over storage read models.
 - UI shell system: app-side shell regions, Fluent-inspired design tokens, and reusable component styles in `librapix-app`.
 - Localization subsystem: `librapix-i18n`.
 - Storage subsystem: `librapix-storage` (SQLite + migrations baseline).

@@ -587,3 +587,6 @@ Do not treat it like a throwaway prototype.
 Do not choose convenience over structure.
 Do not choose cleverness over clarity.
 Do not choose speed over maintainability without documenting the tradeoff.
+
+A technically complete feature set is not enough to declare MVP complete.
+For Librapix, MVP requires a coherent, polished, visually intentional desktop user experience aligned with the project’s UI direction.

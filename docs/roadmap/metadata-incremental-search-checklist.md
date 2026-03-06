@@ -24,4 +24,4 @@ This checklist tracks the metadata extraction and incremental indexing phase.
 - [x] Update README/CHANGELOG/dependencies/architecture docs/ADRs
 - [x] Run final verification loop
 - [x] Run final app smoke test
-- [ ] Commit final docs/ADR checkpoint (if needed)
+- [x] Commit final docs/ADR checkpoint (if needed)

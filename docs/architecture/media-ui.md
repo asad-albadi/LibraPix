@@ -17,7 +17,7 @@ All browsing views consume `BrowseItem` which carries:
 - `render_media_card(item, selected, height)`: renders a single media card at a given row height.
 - `resolve_thumbnail(thumbnails_dir, row, max_edge)`: returns a thumbnail path for images (Lanczos3) or videos (ffmpeg), or None.
 - `aspect_ratio_from(width_px, height_px)`: computes aspect ratio from nullable stored dimensions.
-- `populate_media_cache(cache, rows)`: caches read-model data for fast selection without storage roundtrips.
+- `populate_media_cache(cache, rows, thumbnails_dir)`: caches read-model data and pre-resolved detail-size thumbnail paths for fast selection without I/O.
 
 ## Justified row layout
 
@@ -51,5 +51,6 @@ This produces a Google-Photos-style justified layout where images maintain aspec
 
 - Selection is app-level state (`selected_media_id`).
 - On click, `load_media_details_cached()` checks `media_cache` first, then falls back to storage.
+- Cache hits use pre-resolved `detail_thumbnail_path` — no disk I/O on the click path.
 - Double-click opens the file in the OS default app.
 - Selection changes do not trigger layout recomputation, only a visual update of the selected card border.

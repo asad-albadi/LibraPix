@@ -91,7 +91,16 @@ All notable changes to this project are documented in this file.
 - Refined details pane into explicit preview, metadata, tags, and actions sections with consistent interaction layout.
 - Updated architecture/roadmap docs to include UI shell, visual browsing, and redesign completion tracking.
 
+### Added
+- Root-level automatic tag assignment: tags can be assigned to a library root and automatically applied to all media under that root during indexing.
+- Migration `0006_source_root_tags.sql` with `source_root_tags` table.
+- Storage functions: `upsert_source_root_tag`, `remove_source_root_tag`, `list_source_root_tags`, `ensure_root_tags_exist`, `apply_root_auto_tags`.
+- Auto-tag UI section in sidebar when a root is selected.
+- i18n keys for auto-tag UI labels.
+
 ### Fixed
+- Dimensions now show correctly for files that were initially indexed before dimension extraction was implemented; indexer re-extracts dimensions for unchanged images missing width/height in the database.
+- Media selection lag on first click eliminated by pre-caching detail-size thumbnail paths during projection builds instead of resolving them synchronously on click.
 - Thumbnails now use Lanczos3 resampling instead of nearest-neighbor for substantially sharper results.
 - Thumbnail cache key now includes the requested size, preventing gallery and detail views from sharing a single low-resolution cached file.
 - Refresh button and item count in the media pane are no longer hidden behind the scrollbar; the toolbar is now outside the scrollable region.

@@ -25,6 +25,7 @@ This repository is documentation-driven. Architecture and operational decisions 
 - `docs/architecture/i18n.md`
 - `docs/architecture/ignore-rules.md`
 - `docs/architecture/non-destructive-guarantee.md`
+- `docs/architecture/media-ui.md`
 
 ## Roadmap
 
@@ -40,6 +41,7 @@ This repository is documentation-driven. Architecture and operational decisions 
 - `docs/roadmap/interaction-milestone-checklist.md`
 - `docs/roadmap/quality-milestone-checklist.md`
 - `docs/roadmap/media-view-milestone-checklist.md`
+- `docs/roadmap/selection-dims-autotag-checklist.md`
 
 ## ADRs
 
@@ -58,3 +60,4 @@ This repository is documentation-driven. Architecture and operational decisions 
 - `docs/adrs/0013-interaction-milestone.md`
 - `docs/adrs/0014-quality-filtering-exclusion.md`
 - `docs/adrs/0015-media-view-architecture.md`
+- `docs/adrs/0016-root-level-auto-tags.md`

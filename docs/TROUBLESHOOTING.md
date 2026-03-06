@@ -38,19 +38,39 @@
 ## Dimensions not showing for previously indexed files
 
 - Symptoms
-  - Dimensions display as "—" in details panel for files that were indexed before the fix.
+  - Dimensions display as "—" in details panel for files that were indexed before the dimension extraction feature.
   - Newly indexed files show dimensions correctly.
 - Affected area
-  - Storage upsert SQL for indexed_media.
+  - Storage upsert SQL for indexed_media; indexer dimension extraction logic.
 - Likely cause
-  - The indexer sets width/height to NULL for unchanged files. The upsert SQL overwrites stored values.
+  - The indexer originally skipped dimension extraction for unchanged files. Files indexed before dimensions were supported retained NULL width/height.
 - Confirmed cause
-  - `ON CONFLICT DO UPDATE SET width_px = excluded.width_px` replaces stored dimensions with NULL for unchanged files.
+  - `ON CONFLICT DO UPDATE SET width_px = excluded.width_px` replaced stored dimensions with NULL for unchanged files (fixed with COALESCE).
+  - Indexer only extracted dimensions for new/changed files, never backfilling unchanged files with missing dimensions.
 - Resolution
-  - Changed to `COALESCE(excluded.width_px, indexed_media.width_px)` to preserve existing values.
-  - A re-index of affected files (modify + save, or delete and re-add root) will restore dimensions.
+  - Storage upsert uses `COALESCE(excluded.width_px, indexed_media.width_px)` to preserve existing values.
+  - Indexer now checks for missing dimensions on unchanged images and re-extracts them.
+  - `IndexedMediaSnapshot` and `ExistingIndexedEntry` now carry `width_px`/`height_px` so the indexer can detect missing dimensions.
 - Prevention guidance
-  - Use COALESCE for nullable metadata fields in upsert statements where the incoming value may be intentionally absent.
+  - Use COALESCE for nullable metadata fields in upsert statements.
+  - When adding new metadata extraction, ensure backfill logic for existing records.
+
+## First-click selection lag
+
+- Symptoms
+  - Clicking a thumbnail for the first time causes a visible stutter before details appear.
+  - Subsequent clicks on previously-viewed items feel faster.
+- Affected area
+  - Media selection path, detail-size thumbnail resolution.
+- Confirmed cause
+  - `load_media_details_cached` called `resolve_thumbnail` (which runs `ensure_image_thumbnail` / `ensure_video_thumbnail` I/O) synchronously for the DETAIL_THUMB_SIZE on every cache hit.
+  - This meant disk I/O happened in the click handler path even when the gallery thumbnail was already cached.
+- Resolution
+  - Detail-size thumbnail paths are now pre-resolved during projection builds (alongside gallery thumbnails) and stored in `CachedDetails.detail_thumbnail_path`.
+  - `load_media_details_cached` reads the cached path directly without I/O.
+- Prevention guidance
+  - Keep the click/selection path free of disk I/O, network calls, or expensive computation.
+  - Pre-compute expensive data during batch operations (projections, indexing), not during interactive handlers.
 
 ## Video thumbnails not showing
 

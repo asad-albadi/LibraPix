@@ -29,6 +29,8 @@ pub struct ExistingIndexedEntry {
     pub absolute_path: PathBuf,
     pub file_size_bytes: u64,
     pub modified_unix_seconds: Option<i64>,
+    pub width_px: Option<u32>,
+    pub height_px: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -185,15 +187,18 @@ pub fn scan_roots(
                 Some(_) => ChangeKind::Changed,
             };
 
-            let (width_px, height_px, metadata_status) =
-                if kind == MediaKind::Image && change_kind != ChangeKind::Unchanged {
-                    match extract_image_dimensions(path) {
-                        Some((width, height)) => (Some(width), Some(height), MetadataStatus::Ok),
-                        None => (None, None, MetadataStatus::Partial),
-                    }
-                } else {
-                    (None, None, MetadataStatus::Ok)
-                };
+            let missing_dims =
+                existing.is_some_and(|e| e.width_px.is_none() || e.height_px.is_none());
+            let needs_extraction =
+                kind == MediaKind::Image && (change_kind != ChangeKind::Unchanged || missing_dims);
+            let (width_px, height_px, metadata_status) = if needs_extraction {
+                match extract_image_dimensions(path) {
+                    Some((width, height)) => (Some(width), Some(height), MetadataStatus::Ok),
+                    None => (None, None, MetadataStatus::Partial),
+                }
+            } else {
+                (None, None, MetadataStatus::Ok)
+            };
 
             match change_kind {
                 ChangeKind::New => result.summary.new_files += 1,
@@ -291,6 +296,8 @@ mod tests {
             absolute_path: file.clone(),
             file_size_bytes: metadata.len(),
             modified_unix_seconds: modified,
+            width_px: Some(100),
+            height_px: Some(100),
         }];
         let roots = vec![ScanRoot {
             source_root_id: 1,

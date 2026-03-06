@@ -26,6 +26,7 @@ Indexing is a dedicated subsystem (`librapix-indexer`) isolated from UI renderin
 - Incremental strategy:
   - compare by `absolute_path + file_size_bytes + modified_unix_seconds`
   - classify `new`, `changed`, `unchanged`
+  - re-extract dimensions for unchanged images with missing width/height
   - mark non-seen files under scanned roots as `missing`
 
 ## Baseline pipeline
@@ -38,6 +39,8 @@ Indexing is a dedicated subsystem (`librapix-indexer`) isolated from UI renderin
 6. Detect incremental change class (`new` / `changed` / `unchanged`).
 6. Extract baseline metadata for new/changed entries.
 7. Persist/upsert candidates and mark missing files for scanned roots.
-8. Query read-model rows for verification or downstream browsing/search surfaces.
+8. Ensure media-kind tags are attached (`kind:image`, `kind:video`).
+9. Ensure root-level auto-tags exist in the tags table and apply them to media under their root.
+10. Query read-model rows for verification or downstream browsing/search surfaces.
 
 No indexing logic should be embedded inside view widgets.

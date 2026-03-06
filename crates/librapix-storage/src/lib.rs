@@ -87,6 +87,8 @@ pub struct IndexedMediaSnapshot {
     pub absolute_path: PathBuf,
     pub file_size_bytes: u64,
     pub modified_unix_seconds: Option<i64>,
+    pub width_px: Option<u32>,
+    pub height_px: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -114,7 +116,7 @@ pub enum TagKind {
 }
 
 impl TagKind {
-    fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             TagKind::App => "app",
             TagKind::Game => "game",
@@ -149,6 +151,14 @@ pub struct MediaReadModel {
     pub height_px: Option<u32>,
     pub metadata_status: IndexedMetadataStatus,
     pub tags: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceRootTagRecord {
+    pub id: i64,
+    pub source_root_id: i64,
+    pub tag_name: String,
+    pub tag_kind: TagKind,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -520,7 +530,8 @@ impl Storage {
 
         let placeholders = vec!["?"; root_ids.len()].join(", ");
         let query = format!(
-            "SELECT source_root_id, absolute_path, file_size_bytes, modified_unix_seconds
+            "SELECT source_root_id, absolute_path, file_size_bytes, modified_unix_seconds,
+                    width_px, height_px
              FROM indexed_media
              WHERE source_root_id IN ({placeholders})"
         );
@@ -531,6 +542,12 @@ impl Storage {
                 absolute_path: PathBuf::from(row.get::<usize, String>(1)?),
                 file_size_bytes: row.get::<usize, i64>(2).map_or(0, |v| v.max(0) as u64),
                 modified_unix_seconds: row.get(3)?,
+                width_px: row
+                    .get::<usize, Option<i64>>(4)?
+                    .and_then(|v| u32::try_from(v).ok()),
+                height_px: row
+                    .get::<usize, Option<i64>>(5)?
+                    .and_then(|v| u32::try_from(v).ok()),
             })
         })?;
         let collected: Result<Vec<_>, rusqlite::Error> = rows.collect();
@@ -749,6 +766,81 @@ impl Storage {
         let collected: Result<Vec<_>, rusqlite::Error> = rows.collect();
         Ok(collected?)
     }
+
+    pub fn upsert_source_root_tag(
+        &self,
+        source_root_id: i64,
+        tag_name: &str,
+        tag_kind: TagKind,
+    ) -> Result<(), StorageError> {
+        self.connection.execute(
+            "INSERT INTO source_root_tags (source_root_id, tag_name, tag_kind)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(source_root_id, tag_name) DO UPDATE SET tag_kind = excluded.tag_kind",
+            params![source_root_id, tag_name, tag_kind.as_str()],
+        )?;
+        Ok(())
+    }
+
+    pub fn remove_source_root_tag(
+        &self,
+        source_root_id: i64,
+        tag_name: &str,
+    ) -> Result<(), StorageError> {
+        self.connection.execute(
+            "DELETE FROM source_root_tags WHERE source_root_id = ?1 AND tag_name = ?2",
+            params![source_root_id, tag_name],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_source_root_tags(
+        &self,
+        source_root_id: i64,
+    ) -> Result<Vec<SourceRootTagRecord>, StorageError> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, source_root_id, tag_name, tag_kind
+             FROM source_root_tags
+             WHERE source_root_id = ?1
+             ORDER BY tag_name ASC",
+        )?;
+        let rows = statement.query_map(params![source_root_id], |row| {
+            let kind_str: String = row.get(3)?;
+            let kind = TagKind::from_str(&kind_str)
+                .ok_or_else(|| rusqlite::Error::InvalidParameterName(kind_str))?;
+            Ok(SourceRootTagRecord {
+                id: row.get(0)?,
+                source_root_id: row.get(1)?,
+                tag_name: row.get(2)?,
+                tag_kind: kind,
+            })
+        })?;
+        let collected: Result<Vec<_>, rusqlite::Error> = rows.collect();
+        Ok(collected?)
+    }
+
+    pub fn apply_root_auto_tags(&self) -> Result<usize, StorageError> {
+        let count = self.connection.execute(
+            "INSERT OR IGNORE INTO media_tags (media_id, tag_id)
+             SELECT m.id, t.id
+             FROM indexed_media m
+             JOIN source_root_tags srt ON srt.source_root_id = m.source_root_id
+             JOIN tags t ON t.name = srt.tag_name
+             WHERE m.metadata_status != 'missing'",
+            [],
+        )?;
+        Ok(count)
+    }
+
+    pub fn ensure_root_tags_exist(&self) -> Result<(), StorageError> {
+        self.connection.execute(
+            "INSERT OR IGNORE INTO tags (name, kind)
+             SELECT DISTINCT srt.tag_name, srt.tag_kind
+             FROM source_root_tags srt",
+            [],
+        )?;
+        Ok(())
+    }
 }
 
 fn map_media_read_model_row(row: &rusqlite::Row<'_>) -> Result<MediaReadModel, rusqlite::Error> {
@@ -801,7 +893,7 @@ mod tests {
         let version = storage
             .migration_version()
             .expect("migration version should be queryable");
-        assert_eq!(version, 5);
+        assert_eq!(version, 6);
 
         let _ = std::fs::remove_file(db);
     }

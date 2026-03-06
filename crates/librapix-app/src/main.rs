@@ -74,6 +74,10 @@ enum Message {
     SetFilterExtension(Option<String>),
     MinFileSizeInputChanged(String),
     ApplyMinFileSize,
+    RootTagInputChanged(String),
+    AddRootAppTag,
+    AddRootGameTag,
+    RemoveRootTag(String),
 }
 
 struct Librapix {
@@ -103,6 +107,8 @@ struct Librapix {
     min_file_size_bytes: u64,
     min_file_size_input: String,
     media_cache: std::collections::HashMap<i64, CachedDetails>,
+    root_tag_input: String,
+    root_tags_preview: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone)]
@@ -118,15 +124,14 @@ struct BrowseItem {
 
 #[derive(Debug, Clone)]
 struct CachedDetails {
-    source_root_id: i64,
     absolute_path: PathBuf,
     media_kind: String,
     file_size_bytes: u64,
     modified_unix_seconds: Option<i64>,
     width_px: Option<u32>,
     height_px: Option<u32>,
-    metadata_status: IndexedMetadataStatus,
     tags: Vec<String>,
+    detail_thumbnail_path: Option<PathBuf>,
 }
 
 const GALLERY_THUMB_SIZE: u32 = 400;
@@ -176,6 +181,8 @@ impl Default for Librapix {
             min_file_size_bytes: 0,
             min_file_size_input: String::new(),
             media_cache: std::collections::HashMap::new(),
+            root_tag_input: String::new(),
+            root_tags_preview: Vec::new(),
         };
         refresh_ignore_rules_preview(&mut app);
         app
@@ -278,6 +285,7 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
         Message::SelectRoot(id) => {
             app.state.apply(AppMessage::SetSelectedRoot);
             app.state.set_selected_root(Some(id));
+            refresh_root_tags_preview(app);
         }
         Message::AddRoot => {
             if let Some(path) = normalized_input_path(&app.state.root_input)
@@ -460,6 +468,18 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
             run_indexing(app);
             run_gallery_projection(app);
             run_timeline_projection(app);
+        }
+        Message::RootTagInputChanged(value) => {
+            app.root_tag_input = value;
+        }
+        Message::AddRootAppTag => {
+            add_root_tag(app, TagKind::App);
+        }
+        Message::AddRootGameTag => {
+            add_root_tag(app, TagKind::Game);
+        }
+        Message::RemoveRootTag(tag_name) => {
+            remove_root_tag(app, &tag_name);
         }
     }
 
@@ -694,6 +714,58 @@ fn view(app: &Librapix) -> Element<'_, Message> {
     ]
     .spacing(SPACE_SM);
 
+    // ── Sidebar: Root auto-tags ──
+    let auto_tag_section: Element<'_, Message> = if app.state.selected_root_id.is_some() {
+        let tag_list =
+            app.root_tags_preview
+                .iter()
+                .fold(column![].spacing(SPACE_2XS), |col, (name, kind)| {
+                    col.push(
+                        row![
+                            text(format!("{name} ({kind})"))
+                                .size(FONT_CAPTION)
+                                .color(TEXT_SECONDARY),
+                            Space::new().width(Length::Fill),
+                            button(
+                                text(app.i18n.text(TextKey::RootTagRemoveButton))
+                                    .size(FONT_CAPTION)
+                            )
+                            .on_press(Message::RemoveRootTag(name.clone()))
+                            .style(subtle_button_style)
+                            .padding([SPACE_2XS as u16, SPACE_XS as u16]),
+                        ]
+                        .spacing(SPACE_XS)
+                        .align_y(iced::Alignment::Center),
+                    )
+                });
+
+        column![
+            section_heading(app.i18n.text(TextKey::RootTagsSectionLabel)),
+            text_input(
+                app.i18n.text(TextKey::RootTagInputPlaceholder),
+                &app.root_tag_input,
+            )
+            .on_input(Message::RootTagInputChanged)
+            .style(field_input_style),
+            row![
+                button(text(app.i18n.text(TextKey::RootTagAddButton)).size(FONT_CAPTION))
+                    .on_press(Message::AddRootAppTag)
+                    .style(subtle_button_style)
+                    .padding([SPACE_2XS as u16, SPACE_SM as u16]),
+                button(text(app.i18n.text(TextKey::RootTagGameButton)).size(FONT_CAPTION))
+                    .on_press(Message::AddRootGameTag)
+                    .style(subtle_button_style)
+                    .padding([SPACE_2XS as u16, SPACE_SM as u16]),
+            ]
+            .spacing(SPACE_XS),
+            tag_list,
+        ]
+        .spacing(SPACE_SM)
+        .into()
+    } else {
+        column![].into()
+    };
+
     let sidebar = container(
         scrollable(
             column![
@@ -704,6 +776,8 @@ fn view(app: &Librapix) -> Element<'_, Message> {
                 indexing_section,
                 h_divider(),
                 ignore_section,
+                h_divider(),
+                auto_tag_section,
             ]
             .spacing(SPACE_LG)
             .padding(SPACE_LG as u16),
@@ -1050,6 +1124,7 @@ fn render_timeline_view<'a>(
             i += 1;
         }
     }
+
     sections.into()
 }
 
@@ -1250,6 +1325,54 @@ fn refresh_roots(app: &mut Librapix) {
     refresh_ignore_rules_preview(app);
 }
 
+fn add_root_tag(app: &mut Librapix, kind: TagKind) {
+    let Some(root_id) = app.state.selected_root_id else {
+        return;
+    };
+    let tag = app.root_tag_input.trim().to_owned();
+    if tag.is_empty() {
+        return;
+    }
+    let _ = with_storage(&app.runtime, |storage| {
+        storage.upsert_source_root_tag(root_id, &tag, kind)
+    });
+    app.root_tag_input.clear();
+    refresh_root_tags_preview(app);
+    run_indexing(app);
+    run_gallery_projection(app);
+    run_timeline_projection(app);
+}
+
+fn remove_root_tag(app: &mut Librapix, tag_name: &str) {
+    let Some(root_id) = app.state.selected_root_id else {
+        return;
+    };
+    let _ = with_storage(&app.runtime, |storage| {
+        storage.remove_source_root_tag(root_id, tag_name)
+    });
+    refresh_root_tags_preview(app);
+    run_indexing(app);
+    run_gallery_projection(app);
+    run_timeline_projection(app);
+}
+
+fn refresh_root_tags_preview(app: &mut Librapix) {
+    let Some(root_id) = app.state.selected_root_id else {
+        app.root_tags_preview.clear();
+        return;
+    };
+    let tags = with_storage(&app.runtime, |storage| {
+        storage.list_source_root_tags(root_id)
+    })
+    .map(|rows| {
+        rows.into_iter()
+            .map(|r| (r.tag_name, r.tag_kind.as_str().to_owned()))
+            .collect::<Vec<_>>()
+    })
+    .unwrap_or_default();
+    app.root_tags_preview = tags;
+}
+
 fn refresh_ignore_rules_preview(app: &mut Librapix) {
     let rows = with_storage(&app.runtime, |storage| storage.list_ignore_rules("global"))
         .map(|rows| {
@@ -1317,6 +1440,8 @@ fn run_indexing(app: &mut Librapix) {
                 absolute_path: entry.absolute_path,
                 file_size_bytes: entry.file_size_bytes,
                 modified_unix_seconds: entry.modified_unix_seconds,
+                width_px: entry.width_px,
+                height_px: entry.height_px,
             })
             .collect::<Vec<_>>();
 
@@ -1357,6 +1482,11 @@ fn run_indexing(app: &mut Librapix) {
 
         let _ = with_storage(&app.runtime, |storage| {
             storage.ensure_media_kind_tags_attached()
+        });
+
+        let _ = with_storage(&app.runtime, |storage| {
+            storage.ensure_root_tags_exist()?;
+            storage.apply_root_auto_tags()
         });
 
         let read_models = with_storage(&app.runtime, |storage| {
@@ -1568,7 +1698,7 @@ fn run_timeline_projection(app: &mut Librapix) {
                 });
             }
         }
-        populate_media_cache(&mut app.media_cache, &rows);
+        populate_media_cache(&mut app.media_cache, &rows, &app.runtime.thumbnails_dir);
         (lines, items)
     })
     .unwrap_or_default();
@@ -1626,7 +1756,7 @@ fn run_gallery_projection(app: &mut Librapix) {
                 }
             })
             .collect();
-        populate_media_cache(&mut app.media_cache, &rows);
+        populate_media_cache(&mut app.media_cache, &rows, &app.runtime.thumbnails_dir);
         items
     })
     .unwrap_or_default();
@@ -1896,21 +2026,22 @@ fn resolve_thumbnail(
 fn populate_media_cache(
     cache: &mut std::collections::HashMap<i64, CachedDetails>,
     rows: &[librapix_storage::MediaReadModel],
+    thumbnails_dir: &std::path::Path,
 ) {
     cache.clear();
     for row in rows {
+        let detail_thumbnail_path = resolve_thumbnail(thumbnails_dir, row, DETAIL_THUMB_SIZE);
         cache.insert(
             row.media_id,
             CachedDetails {
-                source_root_id: row.source_root_id,
                 absolute_path: row.absolute_path.clone(),
                 media_kind: row.media_kind.clone(),
                 file_size_bytes: row.file_size_bytes,
                 modified_unix_seconds: row.modified_unix_seconds,
                 width_px: row.width_px,
                 height_px: row.height_px,
-                metadata_status: row.metadata_status,
                 tags: row.tags.clone(),
+                detail_thumbnail_path,
             },
         );
     }
@@ -1930,22 +2061,7 @@ fn load_media_details_cached(app: &mut Librapix) {
             .file_name()
             .map(|name| name.to_string_lossy().to_string())
             .unwrap_or_else(|| cached.absolute_path.display().to_string());
-        app.details_preview_path = resolve_thumbnail(
-            &app.runtime.thumbnails_dir,
-            &librapix_storage::MediaReadModel {
-                media_id,
-                source_root_id: cached.source_root_id,
-                absolute_path: cached.absolute_path.clone(),
-                media_kind: cached.media_kind.clone(),
-                file_size_bytes: cached.file_size_bytes,
-                modified_unix_seconds: cached.modified_unix_seconds,
-                width_px: cached.width_px,
-                height_px: cached.height_px,
-                metadata_status: cached.metadata_status,
-                tags: cached.tags.clone(),
-            },
-            DETAIL_THUMB_SIZE,
-        );
+        app.details_preview_path = cached.detail_thumbnail_path.clone();
         app.details_lines = vec![
             format!(
                 "{}: {}",

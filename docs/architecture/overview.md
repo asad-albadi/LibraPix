@@ -8,7 +8,7 @@ Librapix is a desktop-first Rust application with strict internal boundaries.
 - Config subsystem: `librapix-config`.
 - Domain/app primitives: `librapix-core`.
 - Localization subsystem: `librapix-i18n`.
-- Storage subsystem: `librapix-storage` (baseline introduced, schema to follow in this phase).
+- Storage subsystem: `librapix-storage` (SQLite + migrations baseline).
 - Workspace orchestration: root virtual workspace.
 
 ## Architectural intent

@@ -30,3 +30,5 @@ This repository is documentation-driven. Architecture and operational decisions 
 ## ADRs
 
 - `docs/adrs/0001-workspace-boundaries.md`
+- `docs/adrs/0002-config-path-policy.md`
+- `docs/adrs/0003-sqlite-storage-baseline.md`

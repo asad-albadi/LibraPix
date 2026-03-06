@@ -1512,8 +1512,10 @@ name = "librapix-app"
 version = "0.1.0"
 dependencies = [
  "iced",
+ "librapix-config",
  "librapix-core",
  "librapix-i18n",
+ "librapix-storage",
 ]
 
 [[package]]
@@ -1537,7 +1539,6 @@ version = "0.1.0"
 name = "librapix-storage"
 version = "0.1.0"
 dependencies = [
- "librapix-config",
  "rusqlite",
 ]
 

@@ -27,6 +27,13 @@
 - Paths are lexically normalized (`.` and `..` handling) without requiring file existence.
 - Duplicate normalized source roots are rejected.
 - Unknown schema versions are rejected.
+- Optional path overrides are normalized the same way.
+
+## Path and existence policy
+
+- Config validation does not require source roots to exist at save/load time.
+- Canonicalization through filesystem resolution is deferred to indexing-time checks.
+- This preserves support for removable/offline drives while keeping deterministic normalized path storage.
 
 ## Evolution strategy
 

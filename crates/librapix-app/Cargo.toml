@@ -7,5 +7,7 @@ rust-version.workspace = true
 
 [dependencies]
 iced.workspace = true
+librapix-config = { path = "../librapix-config" }
 librapix-core = { path = "../librapix-core" }
 librapix-i18n = { path = "../librapix-i18n" }
+librapix-storage = { path = "../librapix-storage" }

@@ -24,6 +24,7 @@
   - Platform path resolution for config/data/cache defaults
 - Infrastructure (`librapix-storage` + future crates/modules)
   - SQLite persistence and migrations
+  - Source root and ignore-rule persistence baseline
   - Indexing/scanning and search (future phases)
 
 ## Dependency direction

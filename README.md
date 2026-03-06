@@ -4,7 +4,7 @@ Librapix is a cross-platform, desktop-first, non-destructive local media gallery
 
 ## Status
 
-Project phase: configuration and storage foundation.
+Project phase: configuration and storage foundation (baseline complete).
 
 ## Core Principles
 
@@ -34,6 +34,13 @@ Project phase: configuration and storage foundation.
 - `cargo clippy --workspace --all-targets -- -D warnings`
 - `cargo test --workspace`
 - `cargo run -p librapix-app`
+
+## Foundation behavior
+
+- Config is stored as TOML in the platform config directory (`config.toml`).
+- SQLite database is stored in the platform data directory (`librapix.db`).
+- Thumbnails/cache remain app-owned data under the platform cache directory.
+- Startup bootstrap syncs configured library roots into storage via idempotent upsert.
 
 ## Documentation Index
 

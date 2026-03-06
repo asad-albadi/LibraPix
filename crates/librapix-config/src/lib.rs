@@ -136,6 +136,20 @@ impl AppConfig {
             normalized.push(path);
         }
 
+        let overrides = &mut self.path_overrides;
+        if let Some(path) = &mut overrides.data_dir {
+            *path = lexical_normalize_path(path, &cwd);
+        }
+        if let Some(path) = &mut overrides.cache_dir {
+            *path = lexical_normalize_path(path, &cwd);
+        }
+        if let Some(path) = &mut overrides.thumbnails_dir {
+            *path = lexical_normalize_path(path, &cwd);
+        }
+        if let Some(path) = &mut overrides.database_file {
+            *path = lexical_normalize_path(path, &cwd);
+        }
+
         Ok(())
     }
 }

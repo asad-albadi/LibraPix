@@ -1,8 +1,10 @@
 use iced::widget::{button, column, container, row, text};
 use iced::{Element, Fill, Length, Task, Theme};
+use librapix_config::{LocalePreference, ThemePreference, load_or_create};
 use librapix_core::app::{AppMessage, AppState, Route};
 use librapix_core::domain::non_destructive;
 use librapix_i18n::{Locale, TextKey, Translator};
+use librapix_storage::Storage;
 
 fn main() -> iced::Result {
     iced::application(Librapix::default, update, view)
@@ -20,13 +22,19 @@ enum Message {
 struct Librapix {
     state: AppState,
     i18n: Translator,
+    theme_preference: ThemePreference,
+    registered_roots: usize,
 }
 
 impl Default for Librapix {
     fn default() -> Self {
+        let bootstrap = bootstrap_runtime();
+
         Self {
             state: AppState::default(),
-            i18n: Translator::new(Locale::EnUs),
+            i18n: Translator::new(bootstrap.locale),
+            theme_preference: bootstrap.theme_preference,
+            registered_roots: bootstrap.registered_roots,
         }
     }
 }
@@ -36,8 +44,12 @@ fn title(app: &Librapix) -> String {
     app.i18n.text(TextKey::AppTitle).to_owned()
 }
 
-fn theme(_app: &Librapix) -> Theme {
-    Theme::Dark
+fn theme(app: &Librapix) -> Theme {
+    match app.theme_preference {
+        ThemePreference::System => Theme::TokyoNight,
+        ThemePreference::Dark => Theme::Dark,
+        ThemePreference::Light => Theme::Light,
+    }
 }
 
 fn update(app: &mut Librapix, message: Message) -> Task<Message> {
@@ -70,6 +82,11 @@ fn view(app: &Librapix) -> Element<'_, Message> {
             app.i18n.text(TextKey::ActiveViewLabel),
             active_view_text
         )),
+        text(format!(
+            "{}: {}",
+            app.i18n.text(TextKey::RegisteredRootsLabel),
+            app.registered_roots
+        )),
         text(app.i18n.text(TextKey::NonDestructiveNotice)).size(14),
     ]
     .spacing(16)
@@ -82,4 +99,47 @@ fn view(app: &Librapix) -> Element<'_, Message> {
         .center_y(Fill)
         .padding(24)
         .into()
+}
+
+struct BootstrapRuntime {
+    locale: Locale,
+    theme_preference: ThemePreference,
+    registered_roots: usize,
+}
+
+fn bootstrap_runtime() -> BootstrapRuntime {
+    let mut runtime = BootstrapRuntime {
+        locale: Locale::EnUs,
+        theme_preference: ThemePreference::System,
+        registered_roots: 0,
+    };
+
+    let loaded = match load_or_create() {
+        Ok(config) => config,
+        Err(_) => return runtime,
+    };
+
+    runtime.locale = match loaded.config.locale {
+        LocalePreference::EnUs => Locale::EnUs,
+    };
+    runtime.theme_preference = loaded.config.theme.clone();
+
+    let database_file = loaded
+        .config
+        .path_overrides
+        .database_file
+        .clone()
+        .unwrap_or(loaded.paths.database_file);
+
+    let storage = match Storage::open(&database_file) {
+        Ok(storage) => storage,
+        Err(_) => return runtime,
+    };
+
+    for source in &loaded.config.library_source_roots {
+        let _ = storage.upsert_source_root(&source.path);
+    }
+
+    runtime.registered_roots = storage.list_source_roots().map_or(0, |roots| roots.len());
+    runtime
 }

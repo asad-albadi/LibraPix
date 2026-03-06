@@ -90,6 +90,7 @@ This file tracks major direct dependencies that shape architecture and maintenan
   - [https://docs.rs/rusqlite/latest/rusqlite/](https://docs.rs/rusqlite/latest/rusqlite/)
 - Notes:
   - `bundled` feature avoids system SQLite dependency variance across platforms.
+  - Used in `librapix-storage` with SQL migrations and `schema_migrations` tracking.
 - Risks/tradeoffs:
   - Bundled SQLite increases compile time.
   - Raw SQL requires disciplined migration/version management.

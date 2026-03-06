@@ -10,6 +10,7 @@ pub enum TextKey {
     GalleryTab,
     TimelineTab,
     ActiveViewLabel,
+    RegisteredRootsLabel,
     NonDestructiveNotice,
 }
 
@@ -45,6 +46,7 @@ fn en_us(key: TextKey) -> &'static str {
         TextKey::GalleryTab => "Gallery",
         TextKey::TimelineTab => "Timeline",
         TextKey::ActiveViewLabel => "Active view",
+        TextKey::RegisteredRootsLabel => "Registered library roots",
         TextKey::NonDestructiveNotice => {
             "Source files are always read-only. Librapix metadata stays in app storage."
         }

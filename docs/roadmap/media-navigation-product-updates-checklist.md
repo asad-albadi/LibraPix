@@ -75,7 +75,7 @@ This checklist tracks the required product changes after the timeline scrubber m
 
 ## 12. Commit checkpoints
 
-- [ ] Commit filter + media card improvements
-- [ ] Commit copy-file + announcement flow
-- [ ] Commit search/radius fixes and Windows signing setup docs/scripts
+- [x] Commit filter + media card improvements
+- [x] Commit copy-file + announcement flow
+- [x] Commit search/radius fixes and Windows signing setup docs/scripts
 - [ ] Final clean working tree confirmation

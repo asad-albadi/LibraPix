@@ -133,3 +133,16 @@ This file tracks major direct dependencies that shape architecture and maintenan
   - Used for image-only dimensions; video metadata remains deferred in this phase.
 - Risks/tradeoffs:
   - Not a full metadata parser; richer extraction requires future subsystem expansion.
+
+## `strsim` (0.11.1)
+
+- Purpose: Baseline fuzzy similarity scoring for replaceable search strategy.
+- Why chosen: Small focused crate with normalized Levenshtein/Jaro metrics suitable for simple, explainable ranking.
+- Alternatives considered:
+  - hand-rolled fuzzy scoring: unnecessary complexity and higher bug risk.
+- Official docs consulted:
+  - [https://docs.rs/strsim/latest/strsim/](https://docs.rs/strsim/latest/strsim/)
+- Notes:
+  - Current baseline uses `normalized_levenshtein`.
+- Risks/tradeoffs:
+  - In-memory fuzzy scoring can become expensive at larger scales and may require indexed search later.

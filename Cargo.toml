@@ -5,6 +5,8 @@ members = [
     "crates/librapix-core",
     "crates/librapix-indexer",
     "crates/librapix-i18n",
+    "crates/librapix-projections",
+    "crates/librapix-search",
     "crates/librapix-storage",
 ]
 resolver = "3"
@@ -24,3 +26,5 @@ toml = "1.0.4"
 globset = "0.4.18"
 walkdir = "2.5.0"
 imagesize = "0.14.0"
+chrono = "0.4.44"
+strsim = "0.11.1"

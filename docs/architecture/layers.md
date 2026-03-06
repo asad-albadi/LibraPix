@@ -27,6 +27,9 @@
   - Scan orchestration against eligible source roots
   - Centralized ignore-rule matching
   - Candidate production for storage persistence
+- Search (`librapix-search`)
+  - Replaceable search strategy contracts
+  - Baseline fuzzy-capable ranking over read-model documents
 - Infrastructure (`librapix-storage` + future crates/modules)
   - SQLite persistence and migrations
   - Source root and ignore-rule persistence baseline

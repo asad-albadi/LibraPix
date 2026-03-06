@@ -25,6 +25,7 @@ All notable changes to this project are documented in this file.
 - Added `docs/architecture/metadata.md`.
 - Added ADR `0006` for metadata extraction, incremental indexing policy, and read-model baseline.
 - Added tag-readiness baseline tables (`tags`, `media_tags`) and read-model queries.
+- Added `librapix-search` crate with replaceable search contracts and baseline fuzzy ranking strategy.
 
 ### Changed
 - Migrated from a single-crate starter to a multi-crate workspace.
@@ -36,9 +37,11 @@ All notable changes to this project are documented in this file.
 - Ignore rules are now centrally evaluated through the indexer engine.
 - Indexing now applies incremental change detection (`new` / `changed` / `unchanged`) and marks missing files without destructive deletion.
 - App can run storage read-model queries over indexed media and tags for verification-focused UI output.
+- Search queries now run through the dedicated search subsystem instead of UI-owned matching logic.
 
 ### Docs
 - Established baseline documentation for dependencies, troubleshooting, architecture, and repository map.
 - Recorded dependency decisions for `serde`, `toml`, `directories`, and `rusqlite`.
 - Recorded dependency decisions for `globset` and `walkdir`.
 - Recorded dependency decisions for `imagesize`.
+- Recorded dependency decisions for `strsim`.

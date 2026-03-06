@@ -7,6 +7,7 @@ use librapix_core::app::{
 use librapix_core::domain::non_destructive;
 use librapix_i18n::{Locale, TextKey, Translator};
 use librapix_indexer::{IgnoreEngine, ScanRoot, scan_roots};
+use librapix_search::{FuzzySearchStrategy, SearchDocument, SearchQuery, SearchStrategy};
 use librapix_storage::{IndexedMediaWrite, IndexedMetadataStatus, SourceRootLifecycle, Storage};
 use std::path::PathBuf;
 
@@ -450,18 +451,44 @@ fn run_indexing(app: &mut Librapix) {
 fn run_read_model_query(app: &mut Librapix) {
     let query = app.state.search_query.clone();
     let rows = with_storage(&app.runtime, |storage| {
-        if query.trim().is_empty() {
-            storage.list_media_read_models(20, 0)
-        } else {
-            storage.search_media_read_models(&query, 20)
-        }
+        storage.list_media_read_models(200, 0)
     })
     .map(|rows| {
-        rows.into_iter()
-            .map(|row| {
+        let docs = rows
+            .iter()
+            .map(|row| SearchDocument {
+                media_id: row.media_id,
+                absolute_path: row.absolute_path.display().to_string(),
+                file_name: row
+                    .absolute_path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().to_string())
+                    .unwrap_or_default(),
+                media_kind: row.media_kind.clone(),
+                tags: row.tags.clone(),
+            })
+            .collect::<Vec<_>>();
+
+        let strategy = FuzzySearchStrategy::default();
+        let hits = strategy.search(
+            &docs,
+            &SearchQuery {
+                text: query.clone(),
+                limit: 20,
+            },
+        );
+
+        hits.into_iter()
+            .filter_map(|hit| {
+                rows.iter()
+                    .find(|row| row.media_id == hit.media_id)
+                    .map(|row| (hit, row))
+            })
+            .map(|(hit, row)| {
                 if row.tags.is_empty() {
                     format!(
-                        "{} [{}] {}x{}",
+                        "{:.3} {} [{}] {}x{}",
+                        hit.score,
                         row.absolute_path.display(),
                         row.media_kind,
                         row.width_px.unwrap_or(0),
@@ -469,7 +496,8 @@ fn run_read_model_query(app: &mut Librapix) {
                     )
                 } else {
                     format!(
-                        "{} [{}] tags={}",
+                        "{:.3} {} [{}] tags={}",
+                        hit.score,
                         row.absolute_path.display(),
                         row.media_kind,
                         row.tags.join("|")

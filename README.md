@@ -4,7 +4,7 @@ Librapix is a cross-platform, desktop-first, non-destructive local media gallery
 
 ## Status
 
-Project phase: architecture baseline and workspace bootstrap.
+Project phase: configuration and storage foundation.
 
 ## Core Principles
 
@@ -16,8 +16,10 @@ Project phase: architecture baseline and workspace bootstrap.
 ## Current Workspace Layout
 
 - `crates/librapix-app`: Iced desktop executable (presentation + app bootstrap).
+- `crates/librapix-config`: typed config models, path strategy, TOML loading/saving, and validation.
 - `crates/librapix-core`: domain and application orchestration primitives.
 - `crates/librapix-i18n`: key-based localization layer with locale fallback behavior.
+- `crates/librapix-storage`: SQLite storage and migrations subsystem.
 - `docs/`: architecture, roadmap, dependency records, and repository operational docs.
 
 ## MSRV

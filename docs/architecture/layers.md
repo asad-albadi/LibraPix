@@ -18,13 +18,20 @@
   - Media/tag concepts (expanding in next phases)
 - i18n (`librapix-i18n`)
   - Text keys, locale catalogs, fallback behavior
-- Infrastructure (planned dedicated crates/modules)
-  - Storage, indexing/scanning, search, config
+- Config (`librapix-config`)
+  - Typed config model
+  - Config file persistence and validation
+  - Platform path resolution for config/data/cache defaults
+- Infrastructure (`librapix-storage` + future crates/modules)
+  - SQLite persistence and migrations
+  - Indexing/scanning and search (future phases)
 
 ## Dependency direction
 
-- `librapix-app` -> `librapix-core`, `librapix-i18n`
+- `librapix-app` -> `librapix-core`, `librapix-i18n`, `librapix-config`, `librapix-storage` (orchestration-only usage)
 - `librapix-core` -> no UI/framework dependencies
 - `librapix-i18n` -> no UI/framework dependencies
+- `librapix-config` -> no UI/framework dependencies
+- `librapix-storage` -> no UI/framework dependencies
 
 UI and domain must not depend on persistence implementation details.

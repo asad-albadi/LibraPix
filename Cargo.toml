@@ -1,8 +1,10 @@
 [workspace]
 members = [
     "crates/librapix-app",
+    "crates/librapix-config",
     "crates/librapix-core",
     "crates/librapix-i18n",
+    "crates/librapix-storage",
 ]
 resolver = "3"
 
@@ -14,3 +16,7 @@ rust-version = "1.85"
 
 [workspace.dependencies]
 iced = "0.14.0"
+directories = "6.0.0"
+rusqlite = { version = "0.38.0", features = ["bundled"] }
+serde = { version = "1.0.228", features = ["derive"] }
+toml = "1.0.4"

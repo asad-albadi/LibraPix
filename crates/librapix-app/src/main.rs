@@ -7,6 +7,9 @@ use librapix_core::app::{
 use librapix_core::domain::non_destructive;
 use librapix_i18n::{Locale, TextKey, Translator};
 use librapix_indexer::{IgnoreEngine, ScanRoot, scan_roots};
+use librapix_projections::ProjectionMedia;
+use librapix_projections::gallery::{GalleryQuery, GallerySort, project_gallery};
+use librapix_projections::timeline::{TimelineGranularity, project_timeline};
 use librapix_search::{FuzzySearchStrategy, SearchDocument, SearchQuery, SearchStrategy};
 use librapix_storage::{IndexedMediaWrite, IndexedMetadataStatus, SourceRootLifecycle, Storage};
 use std::path::PathBuf;
@@ -33,6 +36,8 @@ enum Message {
     RunIndexing,
     SearchQueryChanged(String),
     RunSearchQuery,
+    RunTimelineProjection,
+    RunGalleryProjection,
 }
 
 struct Librapix {
@@ -156,6 +161,12 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
         Message::RunSearchQuery => {
             run_read_model_query(app);
         }
+        Message::RunTimelineProjection => {
+            run_timeline_projection(app);
+        }
+        Message::RunGalleryProjection => {
+            run_gallery_projection(app);
+        }
     }
 
     Task::none()
@@ -263,8 +274,30 @@ fn view(app: &Librapix) -> Element<'_, Message> {
             app.i18n.text(TextKey::SearchResultLabel),
             app.state.search_preview.len()
         )),
+        button(app.i18n.text(TextKey::TimelineRunButton)).on_press(Message::RunTimelineProjection),
+        text(format!(
+            "{}: {}",
+            app.i18n.text(TextKey::TimelineResultLabel),
+            app.state.timeline_preview.len()
+        )),
+        button(app.i18n.text(TextKey::GalleryRunButton)).on_press(Message::RunGalleryProjection),
+        text(format!(
+            "{}: {}",
+            app.i18n.text(TextKey::GalleryResultLabel),
+            app.state.gallery_preview.len()
+        )),
         app.state
             .search_preview
+            .iter()
+            .take(5)
+            .fold(column![].spacing(4), |rows, value| rows.push(text(value))),
+        app.state
+            .timeline_preview
+            .iter()
+            .take(5)
+            .fold(column![].spacing(4), |rows, value| rows.push(text(value))),
+        app.state
+            .gallery_preview
             .iter()
             .take(5)
             .fold(column![].spacing(4), |rows, value| rows.push(text(value))),
@@ -510,6 +543,57 @@ fn run_read_model_query(app: &mut Librapix) {
 
     app.state.apply(AppMessage::ReplaceSearchPreview);
     app.state.replace_search_preview(rows);
+}
+
+fn run_timeline_projection(app: &mut Librapix) {
+    let rows = with_storage(&app.runtime, |storage| {
+        storage.list_media_read_models(500, 0)
+    })
+    .map(|rows| {
+        let media = rows_to_projection_media(rows);
+        project_timeline(&media, TimelineGranularity::Day)
+            .into_iter()
+            .map(|bucket| format!("{} ({})", bucket.label, bucket.item_count))
+            .collect::<Vec<_>>()
+    })
+    .unwrap_or_default();
+    app.state.apply(AppMessage::ReplaceTimelinePreview);
+    app.state.replace_timeline_preview(rows);
+}
+
+fn run_gallery_projection(app: &mut Librapix) {
+    let rows = with_storage(&app.runtime, |storage| {
+        storage.list_media_read_models(500, 0)
+    })
+    .map(|rows| {
+        let media = rows_to_projection_media(rows);
+        let query = GalleryQuery {
+            media_kind: None,
+            tag: None,
+            sort: GallerySort::ModifiedDesc,
+            limit: 20,
+            offset: 0,
+        };
+        project_gallery(&media, &query)
+            .into_iter()
+            .map(|item| format!("{} [{}]", item.absolute_path, item.media_kind))
+            .collect::<Vec<_>>()
+    })
+    .unwrap_or_default();
+    app.state.apply(AppMessage::ReplaceGalleryPreview);
+    app.state.replace_gallery_preview(rows);
+}
+
+fn rows_to_projection_media(rows: Vec<librapix_storage::MediaReadModel>) -> Vec<ProjectionMedia> {
+    rows.into_iter()
+        .map(|row| ProjectionMedia {
+            media_id: row.media_id,
+            absolute_path: row.absolute_path.display().to_string(),
+            media_kind: row.media_kind,
+            modified_unix_seconds: row.modified_unix_seconds,
+            tags: row.tags,
+        })
+        .collect()
 }
 
 fn with_storage<T>(

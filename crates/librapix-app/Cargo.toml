@@ -11,5 +11,6 @@ librapix-config = { path = "../librapix-config" }
 librapix-core = { path = "../librapix-core" }
 librapix-indexer = { path = "../librapix-indexer" }
 librapix-i18n = { path = "../librapix-i18n" }
+librapix-projections = { path = "../librapix-projections" }
 librapix-search = { path = "../librapix-search" }
 librapix-storage = { path = "../librapix-storage" }

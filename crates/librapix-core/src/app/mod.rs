@@ -42,6 +42,8 @@ pub struct AppState {
     pub indexing_summary: IndexingSummary,
     pub search_query: String,
     pub search_preview: Vec<String>,
+    pub timeline_preview: Vec<String>,
+    pub gallery_preview: Vec<String>,
 }
 
 impl Default for AppState {
@@ -54,6 +56,8 @@ impl Default for AppState {
             indexing_summary: IndexingSummary::default(),
             search_query: String::new(),
             search_preview: Vec::new(),
+            timeline_preview: Vec::new(),
+            gallery_preview: Vec::new(),
         }
     }
 }
@@ -69,6 +73,8 @@ pub enum AppMessage {
     RecordIndexingSummary,
     SetSearchQuery,
     ReplaceSearchPreview,
+    ReplaceTimelinePreview,
+    ReplaceGalleryPreview,
 }
 
 impl AppState {
@@ -82,7 +88,9 @@ impl AppState {
             | AppMessage::ClearRootSelection
             | AppMessage::RecordIndexingSummary
             | AppMessage::SetSearchQuery
-            | AppMessage::ReplaceSearchPreview => {}
+            | AppMessage::ReplaceSearchPreview
+            | AppMessage::ReplaceTimelinePreview
+            | AppMessage::ReplaceGalleryPreview => {}
         }
     }
 
@@ -126,5 +134,13 @@ impl AppState {
 
     pub fn replace_search_preview(&mut self, rows: Vec<String>) {
         self.search_preview = rows;
+    }
+
+    pub fn replace_timeline_preview(&mut self, rows: Vec<String>) {
+        self.timeline_preview = rows;
+    }
+
+    pub fn replace_gallery_preview(&mut self, rows: Vec<String>) {
+        self.gallery_preview = rows;
     }
 }

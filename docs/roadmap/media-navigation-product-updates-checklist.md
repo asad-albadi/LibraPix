@@ -78,4 +78,4 @@ This checklist tracks the required product changes after the timeline scrubber m
 - [x] Commit filter + media card improvements
 - [x] Commit copy-file + announcement flow
 - [x] Commit search/radius fixes and Windows signing setup docs/scripts
-- [ ] Final clean working tree confirmation
+- [x] Final clean working tree confirmation

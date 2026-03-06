@@ -74,6 +74,7 @@ pub enum TextKey {
     DetailsDetachTagButton,
     DetailsOpenFileButton,
     DetailsOpenFolderButton,
+    DetailsCopyFileButton,
     DetailsCopyPathButton,
     DetailsNoSelectionLabel,
     DetailsActionStatusLabel,
@@ -109,6 +110,8 @@ pub enum TextKey {
     FilterAllLabel,
     FilterImagesLabel,
     FilterVideosLabel,
+    FilterTagsLabel,
+    FilterNoTagsLabel,
     MinFileSizeLabel,
     MinFileSizeKbSuffix,
     ApplyLabel,
@@ -119,6 +122,12 @@ pub enum TextKey {
     RootTagRemoveButton,
     InheritedTagLabel,
     DiagnosticsSectionLabel,
+    MediaKindImageLabel,
+    MediaKindVideoLabel,
+    MediaKindUnknownLabel,
+    NewFileAnnouncementTitle,
+    NewFileAnnouncementMoreLabel,
+    DismissButton,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -217,6 +226,7 @@ fn en_us(key: TextKey) -> &'static str {
         TextKey::DetailsDetachTagButton => "Remove",
         TextKey::DetailsOpenFileButton => "Open",
         TextKey::DetailsOpenFolderButton => "Show in Folder",
+        TextKey::DetailsCopyFileButton => "Copy File",
         TextKey::DetailsCopyPathButton => "Copy Path",
         TextKey::DetailsNoSelectionLabel => "Select a photo to see details.",
         TextKey::DetailsActionStatusLabel => "Action status",
@@ -254,6 +264,8 @@ fn en_us(key: TextKey) -> &'static str {
         TextKey::FilterAllLabel => "All",
         TextKey::FilterImagesLabel => "Images",
         TextKey::FilterVideosLabel => "Videos",
+        TextKey::FilterTagsLabel => "Tags",
+        TextKey::FilterNoTagsLabel => "No tags",
         TextKey::MinFileSizeLabel => "Min size",
         TextKey::MinFileSizeKbSuffix => "KB",
         TextKey::ApplyLabel => "Apply",
@@ -264,5 +276,11 @@ fn en_us(key: TextKey) -> &'static str {
         TextKey::RootTagRemoveButton => "Remove",
         TextKey::InheritedTagLabel => "inherited",
         TextKey::DiagnosticsSectionLabel => "Diagnostics",
+        TextKey::MediaKindImageLabel => "Image",
+        TextKey::MediaKindVideoLabel => "Video",
+        TextKey::MediaKindUnknownLabel => "Media",
+        TextKey::NewFileAnnouncementTitle => "New file detected",
+        TextKey::NewFileAnnouncementMoreLabel => "more new files",
+        TextKey::DismissButton => "Dismiss",
     }
 }

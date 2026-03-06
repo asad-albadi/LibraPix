@@ -217,6 +217,37 @@ pub fn scrubber_chip_style(_theme: &Theme) -> container::Style {
     }
 }
 
+pub fn announcement_panel_style(_theme: &Theme) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(BG_SURFACE)),
+        border: Border {
+            color: ACCENT_SUBTLE,
+            width: 1.0,
+            radius: RADIUS_MD.into(),
+        },
+        ..container::Style::default()
+    }
+}
+
+pub fn media_kind_badge_style(is_video: bool) -> impl Fn(&Theme) -> container::Style {
+    move |_theme| {
+        let (background, border) = if is_video {
+            (ACCENT_SUBTLE, ACCENT)
+        } else {
+            (BG_LAYER, TEXT_TERTIARY)
+        };
+        container::Style {
+            background: Some(Background::Color(background)),
+            border: Border {
+                color: border,
+                width: 1.0,
+                radius: RADIUS_PILL.into(),
+            },
+            ..container::Style::default()
+        }
+    }
+}
+
 pub fn divider_line_style(_theme: &Theme) -> container::Style {
     container::Style {
         background: Some(Background::Color(DIVIDER_COLOR)),
@@ -346,7 +377,7 @@ pub fn search_input_style(_theme: &Theme, status: text_input::Status) -> text_in
         border: Border {
             color: border_color,
             width: 1.0,
-            radius: RADIUS_PILL.into(),
+            radius: RADIUS_MD.into(),
         },
         icon: TEXT_TERTIARY,
         placeholder: TEXT_TERTIARY,

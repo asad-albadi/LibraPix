@@ -15,11 +15,16 @@ All notable changes to this project are documented in this file.
 - Added baseline SQLite migration `0001_baseline.sql` with `source_roots`, `app_settings`, and `ignore_rules`.
 - Added `docs/architecture/config.md` and a phase checklist for config/storage foundation.
 - Added ADR `0002` (config/path policy) and ADR `0003` (SQLite migration baseline).
+- Added ADR `0004` defining source-root lifecycle reconciliation policy.
+- Added storage migrations:
+  - `0002_source_root_lifecycle.sql`
+  - `0003_indexed_media_baseline.sql`
 
 ### Changed
 - Migrated from a single-crate starter to a multi-crate workspace.
 - Declared MSRV `1.85` in workspace metadata and repository docs.
 - App bootstrap now loads persisted config, opens storage, and syncs configured source roots.
+- Storage now tracks root lifecycle states (`active`, `unavailable`, `deactivated`) and supports availability reconciliation.
 
 ### Docs
 - Established baseline documentation for dependencies, troubleshooting, architecture, and repository map.

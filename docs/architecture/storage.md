@@ -28,11 +28,14 @@ SQLite is the primary persistent store for Librapix-owned metadata.
 
 - `source_roots`
   - normalized absolute source paths
-  - active/inactive marker
+  - lifecycle state (`active`, `unavailable`, `deactivated`)
+  - availability check timestamp
 - `app_settings`
   - key/value settings that fit DB-backed storage
 - `ignore_rules`
   - scope + pattern + enabled marker
+- `indexed_media`
+  - minimal indexed path records (`absolute_path`, `media_kind`, `source_root_id`)
 
 This schema is intentionally minimal to avoid overbuilding before indexing and search are implemented.
 
@@ -45,7 +48,9 @@ This schema is intentionally minimal to avoid overbuilding before indexing and s
 ## Missing-file policy baseline
 
 - Missing/deleted files are not treated as fatal startup errors.
-- Source roots remain recorded until an explicit maintenance/indexing pass marks them inactive or removes them.
+- Source roots remain recorded and transition to `unavailable` when the path is missing.
+- User-driven deactivation transitions roots to `deactivated`.
+- Removal is explicit and deletes only Librapix-managed records.
 - Future indexing phases will define lifecycle transitions for missing media under existing roots.
 
 ## Path handling policy baseline

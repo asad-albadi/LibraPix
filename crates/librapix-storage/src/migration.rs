@@ -7,11 +7,23 @@ struct Migration {
     sql: &'static str,
 }
 
-const MIGRATIONS: [Migration; 1] = [Migration {
-    version: 1,
-    name: "baseline_foundation",
-    sql: include_str!("../migrations/0001_baseline.sql"),
-}];
+const MIGRATIONS: [Migration; 3] = [
+    Migration {
+        version: 1,
+        name: "baseline_foundation",
+        sql: include_str!("../migrations/0001_baseline.sql"),
+    },
+    Migration {
+        version: 2,
+        name: "source_root_lifecycle",
+        sql: include_str!("../migrations/0002_source_root_lifecycle.sql"),
+    },
+    Migration {
+        version: 3,
+        name: "indexed_media_baseline",
+        sql: include_str!("../migrations/0003_indexed_media_baseline.sql"),
+    },
+];
 
 pub fn apply_migrations(connection: &Connection) -> Result<(), StorageError> {
     connection.execute_batch(

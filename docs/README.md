@@ -26,9 +26,11 @@ This repository is documentation-driven. Architecture and operational decisions 
 - `docs/roadmap/future.md`
 - `docs/roadmap/bootstrap-checklist.md`
 - `docs/roadmap/config-storage-checklist.md`
+- `docs/roadmap/library-indexing-foundation-checklist.md`
 
 ## ADRs
 
 - `docs/adrs/0001-workspace-boundaries.md`
 - `docs/adrs/0002-config-path-policy.md`
 - `docs/adrs/0003-sqlite-storage-baseline.md`
+- `docs/adrs/0004-source-root-lifecycle-policy.md`

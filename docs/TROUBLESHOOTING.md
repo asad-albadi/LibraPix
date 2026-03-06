@@ -100,7 +100,7 @@
 ## New-file announcement does not appear during live refresh
 
 - Symptoms
-  - Filesystem changes refresh gallery/timeline, but no in-app new-file card is shown.
+  - Filesystem changes refresh gallery/timeline, but no in-app new-file dialog is shown.
 - Affected area
   - Filesystem-triggered background refresh + announcement derivation.
 - Confirmed cause
@@ -118,13 +118,14 @@
   - `Copy File` action reports failure.
 - Affected area
   - Platform clipboard integration for file-object copy.
-- Likely cause
+- Confirmed cause
   - Platform command/runtime support missing:
     - Linux: `xclip` unavailable.
-    - Windows: PowerShell clipboard command unavailable/restricted.
+    - Windows: clipboard command used text/content semantics instead of file-drop payload.
     - macOS: AppleScript clipboard call failed.
 - Resolution
   - Install required host tools (`xclip` on Linux).
+  - On Windows, use file-drop clipboard payload (`powershell -STA` + `System.Windows.Forms.Clipboard.SetFileDropList`) instead of `Set-Clipboard -LiteralPath`.
   - Retry with accessible file path and verify filesystem permissions.
   - Use `Copy Path` as fallback when platform file-clipboard integration is unavailable.
 - Prevention guidance
@@ -261,6 +262,34 @@
   - Never perform blocking I/O (filesystem, SQLite, thumbnail generation) inside the `update` function.
   - Use `Task::perform` for any work that takes more than a few milliseconds.
   - Keep the click/update path free of synchronous heavy operations.
+
+## App stalls during refresh/search/filter on large libraries
+
+- Symptoms
+  - Pressing refresh, running search, or changing filter chips can stall interaction for noticeable periods with large media libraries.
+- Affected area
+  - Projection/search refresh path in app update handlers.
+- Confirmed cause
+  - `RunSearchQuery`, `RunGalleryProjection`, `RunTimelineProjection`, and filter-change handlers previously executed read-model hydration + projection/search + thumbnail resolution synchronously in the UI update path.
+- Resolution
+  - Projection and search refresh now run through background work mode (`Task::perform`) instead of synchronous update execution.
+  - Header activity status now reports projection/search loading while background work runs.
+- Prevention guidance
+  - Treat large read-model projection/search workloads as background tasks, not immediate update-path work.
+  - Keep update handlers limited to state transitions and task scheduling.
+
+## New-file dialog stretches with window height
+
+- Symptoms
+  - Announcement dialog appears to consume too much vertical space and feels like a full-height sheet.
+- Affected area
+  - Modal layout constraints for the in-app new-file dialog.
+- Confirmed cause
+  - Dialog surface lacked explicit vertical constraints and relied on unconstrained layout sizing.
+- Resolution
+  - Modal now uses centered placement with explicit max width/max height and scrollable dialog body.
+- Prevention guidance
+  - Use explicit modal constraints for announcement/detail dialogs so they remain product-like across window sizes.
 
 ## "All" filter shows only images, not videos
 

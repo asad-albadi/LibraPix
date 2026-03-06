@@ -43,6 +43,7 @@ All visual presentation is centralized in `librapix-app/src/ui.rs`:
 - Double-click detection tracks last-click media id and timestamp at app level.
 - Gallery cards and timeline rows are clickable buttons with card styles.
 - New-file detection during live filesystem refresh can surface an in-app modal announcement dialog with preview, metadata, and quick actions (view, open file, copy file, dismiss).
+  - Dialog is centered within a full-screen backdrop and constrained with max width/height for product-like modal sizing.
 - Timeline mode includes a fast right-side scrubber:
   - drag/click updates scrub value
   - scrub maps to projection anchors by stable anchor index
@@ -133,13 +134,14 @@ Gallery, timeline, and search views share a unified media-view architecture:
 - Activity status is tracked as a simple string in app state.
 - When non-empty, a subtle accent-colored caption is shown in the header.
 - Cleared when the active operation completes.
-- Currently surfaces indexing and restore activity.
+- Surfaces indexing, startup restore, projection refresh, and search refresh activity.
 
 ## Auto-refresh
 
 - Gallery and timeline are auto-refreshed after indexing completes.
 - Gallery is auto-refreshed after adding or removing a library root.
-- Filesystem watching is active for root changes, and newly indexed files can trigger an in-app announcement panel.
+- Filesystem watching is active for root changes, and newly indexed files can trigger an in-app announcement dialog.
+- Manual refresh/search/filter updates are also background-task driven so the UI thread remains responsive on large libraries.
 
 ## Size-based exclusion
 

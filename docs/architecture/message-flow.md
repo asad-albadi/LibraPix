@@ -36,15 +36,15 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
   - App persists candidates incrementally to `indexed_media`, marks missing records, and records indexing summary in state.
   - App runs thumbnail generation for image read-model rows into app-owned thumbnail cache.
 - Run read-model query baseline
-  - App queries read models from storage with optional text filtering over path/tag data.
+  - App schedules projection/search background work via `Task::perform`.
+  - Worker queries read models from storage with optional text filtering over path/tag data.
   - App executes fuzzy search over the full in-memory read-model document set (no hidden fixed 20-result cap).
   - App applies active kind/extension/tag filters to resulting hits.
 - Run timeline projection baseline
-  - App loads read-model rows.
-  - App delegates grouping to `librapix-projections`.
-  - App applies kind/extension/tag filter state before grouping.
-  - App derives `TimelineAnchor` metadata from timeline buckets (`build_timeline_anchors`).
-  - UI renders selectable timeline items grouped by route panel.
+  - App schedules projection-only background work.
+  - Worker loads read-model rows, delegates grouping to `librapix-projections`, and applies kind/extension/tag filters.
+  - Worker derives `TimelineAnchor` metadata from timeline buckets (`build_timeline_anchors`).
+  - UI renders selectable timeline items grouped by route panel when `BackgroundWorkComplete` is applied.
 - Timeline scrubber interaction
   - Timeline pane owns a stable scrollable `Id` (`media-pane-scrollable`).
   - Drag/click on scrubber emits `TimelineScrubChanged` (continuous) and `TimelineScrubReleased`.
@@ -52,10 +52,9 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
   - App issues Iced widget operations (`operation::snap_to`) to jump timeline scroll position by relative anchor position.
   - Scroll updates emit `MediaViewportChanged` and keep scrubber state synchronized with manual scrolling.
 - Run gallery projection baseline
-  - App loads read-model rows.
-  - App delegates filtering/sorting to `librapix-projections`.
-  - App applies kind/extension/tag filter state via `GalleryQuery`.
-  - UI renders selectable gallery items by route panel.
+  - App schedules projection-only background work.
+  - Worker loads read-model rows, delegates filtering/sorting to `librapix-projections`, and applies `GalleryQuery`.
+  - UI renders selectable gallery items by route panel when `BackgroundWorkComplete` is applied.
 - Direct media selection
   - Selection is explicit app state (`selected_media_id`).
   - Selecting from search/gallery/timeline loads details and enables actions/tags.
@@ -96,11 +95,13 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
   - New files can trigger a dismissible in-app modal dialog with preview/metadata and quick actions.
 
 - Background work pattern
-  - Heavy operations (indexing, scanning, thumbnail generation, projections) are encapsulated in `do_background_work`.
+  - Heavy operations (indexing, scanning, thumbnail generation, projections, search hydration) are encapsulated in `do_background_work`.
   - `spawn_background_work` captures current app inputs in `BackgroundWorkInput` and returns a `Task::perform` that runs the work off the UI thread.
+  - Work mode is explicit:
+    - `IndexAndProject`: indexing + thumbnails + projections/search
+    - `ProjectOnly`: projections/search refresh without filesystem scan/index writes
   - `BackgroundWorkComplete` handler applies all returned state atomically.
-  - Multiple handlers share this pattern: `StartupRestore`, `FilesystemChanged`, `RunIndexing`, `ApplyMinFileSize`, `AddRoot`, auto-tag operations.
-  - Lightweight projection-only operations (filter changes, manual projection refresh) remain synchronous since they are fast DB queries.
+  - Multiple handlers share this pattern: `StartupRestore`, `FilesystemChanged`, `RunIndexing`, `ApplyMinFileSize`, `AddRoot`, auto-tag operations, manual route refresh, search run, and filter changes.
 
 ## Rules
 

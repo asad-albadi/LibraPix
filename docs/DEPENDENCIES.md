@@ -150,15 +150,15 @@ This file tracks major direct dependencies that shape architecture and maintenan
 ## `chrono` (0.4.44)
 
 - Purpose: Convert indexed timestamps into timeline projection buckets.
-- Why chosen: Stable date/time primitives with straightforward UTC timestamp conversion.
+- Why chosen: Stable date/time primitives with straightforward local/UTC conversion for user-facing day grouping.
 - Alternatives considered:
   - manual timestamp math: less readable and easier to get wrong for calendar grouping.
 - Official docs consulted:
   - [https://docs.rs/chrono/latest/chrono/](https://docs.rs/chrono/latest/chrono/)
 - Notes:
-  - Baseline uses UTC timestamp conversion only; timezone-specific timeline behavior is deferred.
+  - Timeline grouping uses local timezone day boundaries derived from indexed Unix timestamps.
 - Risks/tradeoffs:
-  - Local timezone-aware grouping is intentionally deferred and may change bucket semantics in future phases.
+  - Local timezone behavior can vary around DST/offset transitions; projection tests cover boundary scenarios.
 
 ## `image` (0.25.9)
 
@@ -238,3 +238,19 @@ This file tracks major direct dependencies that shape architecture and maintenan
 - Risks/tradeoffs:
   - Requires `ffmpeg` installed on the user's system and accessible in PATH.
   - Process invocation has startup overhead per video, acceptable for batch indexing.
+
+## Windows clipboard file-copy integration (platform dependency)
+
+- Purpose: Provide Explorer-compatible file-object copy (`Copy File`) on Windows.
+- Why chosen: Native Windows clipboard file transfer expects file-drop payloads (CF_HDROP), which are exposed through .NET `Clipboard.SetFileDropList`.
+- Alternatives considered:
+  - `Set-Clipboard -LiteralPath`: rejected because it copies file contents/text semantics, not file-drop list payloads for paste-as-file workflows.
+  - adding a new Rust clipboard crate for file payloads: deferred; current native PowerShell/.NET path is sufficient and keeps dependency surface stable.
+- Official docs consulted:
+  - [https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.management/set-clipboard](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.management/set-clipboard)
+  - [https://learn.microsoft.com/en-us/dotnet/api/system.windows.forms.clipboard.setfiledroplist](https://learn.microsoft.com/en-us/dotnet/api/system.windows.forms.clipboard.setfiledroplist)
+- Notes:
+  - Implementation uses `powershell -STA` with `System.Windows.Forms.Clipboard.SetFileDropList`.
+  - `Copy Path` remains text clipboard via `clip`.
+- Risks/tradeoffs:
+  - Requires Windows PowerShell/.NET desktop clipboard support in the user environment.

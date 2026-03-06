@@ -51,6 +51,7 @@ Project phase: MVP complete (technical + visual shell baseline).
 - Re-index runs apply incremental change detection and mark missing indexed files without destructive source operations.
 - Search-facing read-model queries are available over indexed media and tag joins.
 - Indexing/galleries now generate and reuse deterministic image thumbnails in app-owned cache.
+- Large browse/search refresh work runs in background tasks (`Task::perform`) so projection/search operations do not block UI interaction.
 - UI uses a desktop shell layout (header/sidebar/main/details) with media-first gallery/timeline browsing.
 - Timeline mode includes a projection-driven fast date scrubber with stable anchor-index mapping for smooth large-library navigation.
 - Timeline day grouping uses local timezone day boundaries from `modified_unix_seconds`.
@@ -61,6 +62,7 @@ Project phase: MVP complete (technical + visual shell baseline).
 - Details action layout is responsive in narrow panels (no clipped final action button).
 - Media header stats show `Shown`, `Images`, and `Videos` counts derived from the currently active browse/search result set.
 - Live filesystem refresh can surface an in-app modal new-file dialog with preview, metadata, and quick actions.
+- Windows `Copy File` uses native file-drop clipboard payload behavior (Explorer-paste compatible), while `Copy Path` remains text clipboard.
 - Windows publisher/signing baseline is documented under `packaging/windows/`.
 
 ## MVP Usage Flow

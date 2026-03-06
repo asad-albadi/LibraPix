@@ -72,6 +72,7 @@ This schema is intentionally minimal to avoid overbuilding before indexing and s
   - media-by-id lookup for details/action orchestration
 - App orchestration derives the tag-filter chip list from read-model tag joins (excluding internal `kind:*` tags).
 - App-level top media stats (`Shown`, `Images`, `Videos`) are derived from the current projected browse/search result set, not from stale persisted counters.
+- Large browse/search refreshes read this query surface from background tasks (`Task::perform`) so SQLite reads/projection hydration do not block the UI thread.
 - This read layer is UI-agnostic and replaceable by richer search subsystems later.
 
 ## Tag workflow baseline

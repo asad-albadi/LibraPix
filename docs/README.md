@@ -48,6 +48,7 @@ This repository is documentation-driven. Architecture and operational decisions 
 - `docs/roadmap/timeline-scrubber-checklist.md`
 - `docs/roadmap/media-navigation-product-updates-checklist.md`
 - `docs/roadmap/timeline-followup-correctness-checklist.md`
+- `docs/roadmap/windows-copy-dialog-background-checklist.md`
 
 ## Packaging
 

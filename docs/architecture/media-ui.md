@@ -52,6 +52,7 @@ This produces a Google-Photos-style justified layout where images maintain aspec
 - Shown above the main browse content when a search query is active.
 - Search no longer truncates results to an implicit 20-hit cap; full matching set is returned for the current read-model snapshot.
 - Top media-pane stats switch to the active search result set while a query is present (`Shown`, `Images`, `Videos`).
+- Search refresh runs through projection background work (`Task::perform`) instead of synchronous UI-thread query execution.
 
 ## Selection model
 
@@ -76,6 +77,7 @@ This produces a Google-Photos-style justified layout where images maintain aspec
 ## New-file announcement UX
 
 - Filesystem-triggered indexing deltas can open a modal in-app dialog for the newest new file.
+- Modal layout is centered and constrained (max width/height) instead of stretching with window height.
 - Dialog content includes preview thumbnail, compact metadata, and path/modification details.
 - Quick actions: view/select, open file, copy file, dismiss.
 - Dialog state is app-level (`new_media_announcement`) and remains outside card/grid rendering primitives.

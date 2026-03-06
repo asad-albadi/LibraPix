@@ -121,6 +121,9 @@ All notable changes to this project are documented in this file.
 - i18n keys for auto-tag UI labels.
 
 ### Fixed
+- Windows `Copy File` now writes an actual Explorer-compatible file-drop clipboard payload (`powershell -STA` + `System.Windows.Forms.Clipboard.SetFileDropList`) instead of using text/content clipboard semantics.
+- New-file announcement modal now renders as a centered, constrained dialog (max width/height with scrollable body) instead of stretching with window height.
+- Large projection/search refresh operations (`RunSearchQuery`, route refresh buttons, and filter changes) no longer run synchronously on the UI thread; they now execute in background task mode to prevent hangs on large libraries.
 - "All" filter now truly includes both images and videos by removing hidden browse truncation layers; no implicit image-only behavior remains in `All`.
 - Timeline grouping now respects local timezone day boundaries, fixing newly added files appearing under the previous day around UTC/local midnight offsets.
 - Timeline fast-scrubber no longer gets stuck on certain dates/years due to weighted anchor mapping and redundant same-anchor scroll operations.
@@ -164,6 +167,8 @@ All notable changes to this project are documented in this file.
 - Added ADR `0019` for Windows signing/publisher baseline.
 - Added Windows signing/distribution guide and script usage documentation.
 - Updated architecture docs for UI/media-view/projections/search/actions/message-flow with tag filtering, card metadata/icon design, file-copy action, and live new-file announcement behavior.
+- Updated architecture and troubleshooting docs for Windows file-drop clipboard behavior, centered announcement dialog constraints, and projection/search background task execution.
+- Added checklist `docs/roadmap/windows-copy-dialog-background-checklist.md` for this platform/correctness milestone.
 - Added product-updates milestone checklist for tag filter, card metadata polish, copy-file action, announcement flow, search cap fix, and Windows signing setup.
 - Added timeline follow-up correctness checklist for scrubber stability, modal announcement UX, copy shortcuts, responsive details actions, stats consistency, and regrouping correctness.
 - Added quality milestone checklist.

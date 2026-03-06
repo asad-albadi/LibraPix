@@ -48,6 +48,7 @@ Indexing is a dedicated subsystem (`librapix-indexer`) isolated from UI renderin
 Indexing runs as background work via `Task::perform`, keeping the UI thread responsive.
 The `do_background_work` function opens its own `Storage` connection and runs the full pipeline (scan, index, thumbnails, projections) off the main thread.
 Results are applied atomically to app state via `BackgroundWorkComplete`.
+The same worker also supports projection-only refresh mode (no filesystem scan/index writes) for search/filter/manual refresh so large read-model work does not block UI updates.
 When triggered by filesystem watch events, app orchestration compares previous/current media ids to surface new-file modal announcements (preview + metadata + actions) without mutating source files.
 
 ## Query limits

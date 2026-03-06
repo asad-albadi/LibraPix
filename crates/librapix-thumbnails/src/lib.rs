@@ -93,6 +93,59 @@ pub fn ensure_image_thumbnail(
     })
 }
 
+pub fn ensure_video_thumbnail(
+    thumbnails_dir: &Path,
+    source_path: &Path,
+    file_size_bytes: u64,
+    modified_unix_seconds: Option<i64>,
+    max_edge: u32,
+) -> Result<ThumbnailOutcome, ThumbnailError> {
+    fs::create_dir_all(thumbnails_dir)?;
+    let output = thumbnail_path(
+        thumbnails_dir,
+        source_path,
+        file_size_bytes,
+        modified_unix_seconds,
+        max_edge,
+    );
+    if output.exists() {
+        return Ok(ThumbnailOutcome {
+            thumbnail_path: output,
+            generated: false,
+        });
+    }
+
+    let scale_filter = format!("scale={max_edge}:{max_edge}:force_original_aspect_ratio=decrease");
+    let output_str = output.display().to_string();
+    let source_str = source_path.display().to_string();
+    let status = std::process::Command::new("ffmpeg")
+        .args([
+            "-y",
+            "-i",
+            &source_str,
+            "-ss",
+            "00:00:01",
+            "-frames:v",
+            "1",
+            "-vf",
+            &scale_filter,
+            &output_str,
+        ])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+
+    match status {
+        Ok(s) if s.success() && output.exists() => Ok(ThumbnailOutcome {
+            thumbnail_path: output,
+            generated: true,
+        }),
+        _ => Err(ThumbnailError::Io(std::io::Error::other(
+            "video thumbnail extraction failed (ffmpeg may not be installed)",
+        ))),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -34,3 +34,34 @@
   - Install `xclip` package and retry copy action.
 - Prevention guidance
   - Keep platform action dependencies documented and validate them in release notes.
+
+## Dimensions not showing for previously indexed files
+
+- Symptoms
+  - Dimensions display as "—" in details panel for files that were indexed before the fix.
+  - Newly indexed files show dimensions correctly.
+- Affected area
+  - Storage upsert SQL for indexed_media.
+- Likely cause
+  - The indexer sets width/height to NULL for unchanged files. The upsert SQL overwrites stored values.
+- Confirmed cause
+  - `ON CONFLICT DO UPDATE SET width_px = excluded.width_px` replaces stored dimensions with NULL for unchanged files.
+- Resolution
+  - Changed to `COALESCE(excluded.width_px, indexed_media.width_px)` to preserve existing values.
+  - A re-index of affected files (modify + save, or delete and re-add root) will restore dimensions.
+- Prevention guidance
+  - Use COALESCE for nullable metadata fields in upsert statements where the incoming value may be intentionally absent.
+
+## Video thumbnails not showing
+
+- Symptoms
+  - Video files show placeholder instead of thumbnail in gallery/timeline.
+- Affected area
+  - Thumbnail pipeline (video extraction).
+- Likely cause
+  - `ffmpeg` is not installed or not in the system PATH.
+- Resolution
+  - Install `ffmpeg` and ensure it's available in PATH: `brew install ffmpeg` (macOS), `apt install ffmpeg` (Linux), or download from ffmpeg.org (Windows).
+  - Re-index library to generate video thumbnails.
+- Prevention guidance
+  - Video thumbnails are optional; the app degrades gracefully to placeholder display.

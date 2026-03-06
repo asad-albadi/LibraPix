@@ -95,9 +95,24 @@ All notable changes to this project are documented in this file.
 - Thumbnails now use Lanczos3 resampling instead of nearest-neighbor for substantially sharper results.
 - Thumbnail cache key now includes the requested size, preventing gallery and detail views from sharing a single low-resolution cached file.
 - Refresh button and item count in the media pane are no longer hidden behind the scrollbar; the toolbar is now outside the scrollable region.
+- Dimensions now display correctly in the details panel; storage no longer overwrites existing dimensions with NULL for unchanged files.
+- Media selection lag reduced by caching read-model data alongside browse items, avoiding per-click storage roundtrips.
+
+### Changed (Media-View Architecture Milestone)
+- Gallery and timeline now share a centralized media-view architecture with unified card rendering, thumbnail resolution, and justified row layout.
+- Gallery rendering replaced with a Google-Photos-style adaptive justified layout using Iced `responsive` widget; images maintain aspect ratios, rows adapt to available width.
+- Timeline rendering redesigned to show date-grouped justified mini-grids using the same card and layout primitives as gallery.
+- Search results rendering unified to use the same justified layout as gallery.
+- Header branding improved: "Libra" + "Pix" split with accent color on "Pix" and subtle "Media Library" subtitle.
+- Minimum file size exclusion moved from Indexing sidebar section to Exclusions/Ignores section where it conceptually belongs.
+- Video thumbnails are now generated via `ffmpeg` during indexing and displayed in gallery, timeline, search, and details views.
+- Gallery projection limit increased from 60 to 120 items.
+- Gallery gap reduced from 6px to 4px for tighter justified grid.
+- Browse items now carry `aspect_ratio` for justified row computation.
 
 ### Docs
 - Added ADR `0014` for filtering, exclusion, and thumbnail quality decisions.
+- Added ADR `0015` for media-view architecture, justified layout, and video thumbnail decisions.
 - Added quality milestone checklist.
 - Updated architecture docs for thumbnails, UI, indexing, and search.
 - Established baseline documentation for dependencies, troubleshooting, architecture, and repository map.

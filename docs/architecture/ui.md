@@ -63,17 +63,33 @@ All visual presentation is centralized in `librapix-app/src/ui.rs`:
 - Only the browse content and search results scroll; the toolbar remains fixed at the top.
 - This prevents the scrollbar from overlapping toolbar controls.
 
+## Centralized media-view architecture
+
+Gallery, timeline, and search views share a unified media-view architecture:
+
+- **BrowseItem**: common data model with `media_id`, `title`, `subtitle`, `thumbnail_path`, `aspect_ratio`, `is_group_header`.
+- **render_media_card()**: shared card rendering primitive used by all views.
+- **resolve_thumbnail()**: unified thumbnail resolution for images (Lanczos3) and videos (ffmpeg).
+- **populate_media_cache()**: caches read-model data alongside browse items to avoid per-click storage queries.
+- **aspect_ratio_from()**: computes aspect ratio from stored dimensions (defaults to 1.5 for unknown).
+
 ## Gallery rendering
 
-- Gallery uses a grid layout with configurable column count (default 4).
-- Each card contains a thumbnail (cover-fit) and caption text.
+- Gallery uses a Google-Photos-style adaptive justified row layout.
+- Uses Iced `responsive` widget to access available width and compute row heights dynamically.
+- Row building algorithm accumulates items until the resulting row height drops to or below the target (200px).
+- Each item receives `FillPortion` proportional to its aspect ratio for correct width distribution.
+- Row heights are clamped between 100px and 350px.
+- Images maintain their natural aspect ratios; no forced cropping unless the image is inherently mismatched.
+- Thumbnails use `ContentFit::Cover` within their allocated card space.
 - Selected cards show an accent-colored border.
-- Empty grid slots are padded with invisible spacers.
+- When no thumbnail exists, a placeholder with the filename is shown.
 
 ## Timeline rendering
 
-- Timeline items are rendered with date group headers and media rows.
-- Each media row contains a thumbnail and metadata text.
+- Timeline renders as date-grouped sections, each with a group header and a justified mini-grid.
+- The mini-grid within each group uses the same justified row algorithm as the gallery.
+- Both gallery and timeline use `render_media_card()` for card rendering.
 - Items are selectable with the same card style as gallery cards.
 
 ## Details pane
@@ -107,10 +123,24 @@ All visual presentation is centralized in `librapix-app/src/ui.rs`:
 
 ## Size-based exclusion
 
-- Sidebar indexing section includes a min-size input (in KB) with Apply button.
+- Min-size exclusion is part of the Exclusions/Ignores sidebar section (not Indexing).
+- Users configure a minimum file size in KB with an Apply button alongside ignore rules.
 - When applied, the next indexing run skips files below the threshold.
 - Files previously indexed that fall below the threshold are marked missing on re-index.
 - The setting is session-local; config persistence is a future extension.
+
+## Header branding
+
+- "Libra" displays in primary text color, "Pix" in accent color, creating a split-color product identity.
+- A subtle "· Media Library" subtitle follows in tertiary text.
+- The header maintains the Fluent-inspired dark theme aesthetic.
+
+## Selection performance
+
+- On media selection, the app first checks a preloaded `media_cache` (HashMap of read-model data).
+- If the selected media is cached, details are loaded from memory without a storage roundtrip.
+- The cache is populated during gallery/timeline projection builds.
+- Only on cache miss does the app fall through to a storage query.
 
 ## UX goals
 

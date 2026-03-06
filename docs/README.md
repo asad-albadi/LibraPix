@@ -39,6 +39,7 @@ This repository is documentation-driven. Architecture and operational decisions 
 - `docs/roadmap/ui-ux-redesign-checklist.md`
 - `docs/roadmap/interaction-milestone-checklist.md`
 - `docs/roadmap/quality-milestone-checklist.md`
+- `docs/roadmap/media-view-milestone-checklist.md`
 
 ## ADRs
 
@@ -56,3 +57,4 @@ This repository is documentation-driven. Architecture and operational decisions 
 - `docs/adrs/0012-fluent-inspired-design-system.md`
 - `docs/adrs/0013-interaction-milestone.md`
 - `docs/adrs/0014-quality-filtering-exclusion.md`
+- `docs/adrs/0015-media-view-architecture.md`

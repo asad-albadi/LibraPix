@@ -169,7 +169,7 @@ This file tracks major direct dependencies that shape architecture and maintenan
 - Official docs consulted:
   - [https://docs.rs/image/latest/image/](https://docs.rs/image/latest/image/)
 - Notes:
-  - Baseline uses image thumbnails only; video thumbnails remain deferred.
+  - Baseline uses image thumbnails via Lanczos3 resampling; video thumbnails use system `ffmpeg`.
 - Risks/tradeoffs:
   - Decoder support breadth can increase compile times and binary size.
 
@@ -220,3 +220,21 @@ This file tracks major direct dependencies that shape architecture and maintenan
 - Risks/tradeoffs:
   - Some network or pseudo filesystems may not emit reliable native events.
   - Event behavior can vary by editor/save strategy and platform backend.
+
+## `ffmpeg` (system dependency, optional)
+
+- Purpose: Extract representative video frames for thumbnail generation.
+- Why chosen: Universal video processing tool available on all desktop platforms; avoids heavy Rust video decoding dependencies.
+- Alternatives considered:
+  - `ffmpeg-next` Rust crate: full FFmpeg bindings, but heavy C dependency and complex build requirements.
+  - `gstreamer` Rust crate: powerful but heavy and platform-variable.
+  - No video thumbnails: poor UX for a media manager.
+- Official docs consulted:
+  - [https://ffmpeg.org/ffmpeg.html](https://ffmpeg.org/ffmpeg.html)
+- Notes:
+  - Invoked via `std::process::Command`; no Rust crate dependency.
+  - Extracts a single frame at 1 second with `scale` filter for size control.
+  - Failure is graceful: videos without thumbnails show a placeholder.
+- Risks/tradeoffs:
+  - Requires `ffmpeg` installed on the user's system and accessible in PATH.
+  - Process invocation has startup overhead per video, acceptable for batch indexing.

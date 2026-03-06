@@ -127,9 +127,7 @@ pub const FONT_CAPTION: u32 = 11;
 pub const SIDEBAR_WIDTH: f32 = 240.0;
 pub const DETAILS_WIDTH: f32 = 300.0;
 pub const HEADER_HEIGHT: f32 = 52.0;
-pub const THUMB_HEIGHT: f32 = 130.0;
-pub const GALLERY_COLUMNS: usize = 4;
-pub const GALLERY_GAP: u32 = 6;
+pub const GALLERY_GAP: u32 = 4;
 
 pub const RADIUS_SM: f32 = 4.0;
 pub const RADIUS_MD: f32 = 6.0;

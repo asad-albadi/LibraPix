@@ -9,10 +9,10 @@ Thumbnail generation is an app-owned, non-destructive cache subsystem.
 - Storage remains source of media metadata; thumbnail files are cache artifacts.
 - Source media files are read-only and never modified.
 
-## Baseline policy
+## Supported media
 
-- Supported now: image thumbnails only.
-- Video thumbnails are deferred until a clean, documented extraction strategy is selected.
+- **Images**: thumbnails generated via `image` crate with Lanczos3 resampling.
+- **Videos**: thumbnails generated via `ffmpeg` command-line extraction (first frame at ~1 second).
 - Cache key includes:
   - absolute source path
   - file size
@@ -23,10 +23,16 @@ Thumbnail generation is an app-owned, non-destructive cache subsystem.
 ## Generation behavior
 
 - If a deterministic thumbnail path already exists, it is reused.
-- If missing, Librapix decodes source image and writes a PNG thumbnail.
-- Resize uses `Lanczos3` filter for high-quality downsampling.
+- For images: decodes source and writes a PNG thumbnail using `Lanczos3` filter for high-quality downsampling.
+- For videos: runs `ffmpeg -ss 00:00:01 -frames:v 1 -vf scale=<max>:<max>:force_original_aspect_ratio=decrease` to extract a representative frame.
 - Gallery thumbnails default to 400px max edge; detail previews default to 800px max edge.
 - Failures are counted for status output but do not abort full indexing flow.
+
+## Video thumbnail requirements
+
+- `ffmpeg` must be installed and available on the system PATH.
+- If `ffmpeg` is not available, video thumbnails fail gracefully (placeholder shown in UI).
+- No Rust dependency on ffmpeg bindings; extraction is via process invocation.
 
 ## Ownership model
 

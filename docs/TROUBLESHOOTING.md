@@ -72,6 +72,45 @@
   - Keep the click/selection path free of disk I/O, network calls, or expensive computation.
   - Pre-compute expensive data during batch operations (projections, indexing), not during interactive handlers.
 
+## App freezes or shows "Not Responding" on startup (Windows)
+
+- Symptoms
+  - App window appears but becomes unresponsive ("Not Responding") for seconds to minutes while indexing runs.
+  - Especially noticeable with large libraries or multiple roots containing thousands of images.
+- Affected area
+  - Startup restore path, indexing, thumbnail generation, projection builds.
+- Confirmed cause
+  - `StartupRestore` handler called `run_indexing`, `run_gallery_projection`, and `run_timeline_projection` synchronously inside the `update` function, blocking the UI thread for the entire duration of filesystem scanning, SQLite writes, thumbnail generation, and projection computation.
+- Resolution
+  - All heavyweight startup work now runs via `Task::perform` on a background thread.
+  - The UI renders immediately with persisted state, and background work results are applied asynchronously via `BackgroundWorkComplete` message.
+  - `FilesystemChanged`, `RunIndexing`, `ApplyMinFileSize`, `AddRoot`, and auto-tag operations also use the async path.
+- Prevention guidance
+  - Never perform blocking I/O (filesystem, SQLite, thumbnail generation) inside the `update` function.
+  - Use `Task::perform` for any work that takes more than a few milliseconds.
+  - Keep the click/update path free of synchronous heavy operations.
+
+## Gallery or timeline shows only a subset of media from multiple libraries
+
+- Symptoms
+  - Only a fraction of indexed media appears in gallery or timeline views.
+  - Adding more library roots does not increase visible media proportionally.
+- Affected area
+  - Read-model query limits, gallery projection limits, thumbnail generation limits.
+- Confirmed cause
+  - Hard-coded query limits truncated results:
+    - `list_media_read_models(200, 0)` during thumbnail generation — only 200 images got thumbnails.
+    - `list_media_read_models(500, 0)` for projections — only 500 items in timeline/gallery source data.
+    - `GalleryQuery.limit: 120` — gallery display truncated to 120 items regardless of how many matched.
+    - `list_media_read_models(200, 0)` for search — only 200 items searchable.
+- Resolution
+  - All query limits increased to 50,000 (`MEDIA_QUERY_LIMIT`), effectively removing artificial truncation.
+  - Gallery display limit also uses `MEDIA_QUERY_LIMIT`.
+- Prevention guidance
+  - Do not hard-code low query limits for aggregate views.
+  - When limits are needed for performance, make them configurable or document them clearly.
+  - Multi-library aggregation is a core product requirement; limits must not silently exclude data.
+
 ## Video thumbnails not showing
 
 - Symptoms

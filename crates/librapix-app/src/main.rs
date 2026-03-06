@@ -78,6 +78,23 @@ enum Message {
     AddRootAppTag,
     AddRootGameTag,
     RemoveRootTag(String),
+    BackgroundWorkComplete(Box<BackgroundWorkResult>),
+}
+
+#[derive(Debug, Clone, Default)]
+struct BackgroundWorkResult {
+    roots: Vec<LibraryRootView>,
+    indexing_summary: Option<IndexingSummary>,
+    thumbnail_status: String,
+    indexing_status: String,
+    gallery_items: Vec<BrowseItem>,
+    timeline_items: Vec<BrowseItem>,
+    gallery_preview_lines: Vec<String>,
+    timeline_preview_lines: Vec<String>,
+    media_cache: std::collections::HashMap<i64, CachedDetails>,
+    ignore_rules_preview: Vec<String>,
+    root_tags_preview: Vec<(String, String)>,
+    browse_status: String,
 }
 
 struct Librapix {
@@ -138,6 +155,7 @@ const GALLERY_THUMB_SIZE: u32 = 400;
 const DETAIL_THUMB_SIZE: u32 = 800;
 const TARGET_ROW_HEIGHT: f32 = 200.0;
 const MAX_ROW_HEIGHT: f32 = 350.0;
+const MEDIA_QUERY_LIMIT: usize = 50_000;
 
 #[derive(Debug, Clone)]
 struct RuntimeContext {
@@ -294,8 +312,8 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
                 refresh_roots(app);
                 app.state.clear_selection_and_input();
                 app.root_status = app.i18n.text(TextKey::RootActionSuccess).to_owned();
-                run_indexing(app);
-                run_gallery_projection(app);
+                app.activity_status = app.i18n.text(TextKey::LoadingIndexingLabel).to_owned();
+                return spawn_background_work(app);
             } else {
                 app.root_status = app.i18n.text(TextKey::ErrorInvalidRootPathLabel).to_owned();
             }
@@ -352,7 +370,8 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
             refresh_roots(app);
         }
         Message::RunIndexing => {
-            run_indexing(app);
+            app.activity_status = app.i18n.text(TextKey::LoadingIndexingLabel).to_owned();
+            return spawn_background_work(app);
         }
         Message::SearchQueryChanged(value) => {
             app.state.apply(AppMessage::SetSearchQuery);
@@ -415,13 +434,11 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
             set_ignore_rule_enabled(app, false);
         }
         Message::StartupRestore => {
-            app.activity_status = app.i18n.text(TextKey::StatusRestoringLabel).to_owned();
-            if !app.state.library_roots.is_empty() {
-                run_indexing(app);
-                run_gallery_projection(app);
-                run_timeline_projection(app);
+            if app.state.library_roots.is_empty() {
+                return Task::none();
             }
-            app.activity_status.clear();
+            app.activity_status = app.i18n.text(TextKey::StatusRestoringLabel).to_owned();
+            return spawn_background_work(app);
         }
         Message::BrowseFolder => {
             if let Some(path) = rfd::FileDialog::new().pick_folder() {
@@ -431,13 +448,7 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
         }
         Message::FilesystemChanged => {
             app.activity_status = app.i18n.text(TextKey::LoadingIndexingLabel).to_owned();
-            run_indexing(app);
-            run_gallery_projection(app);
-            run_timeline_projection(app);
-            if !app.state.search_query.trim().is_empty() {
-                run_read_model_query(app);
-            }
-            app.activity_status.clear();
+            return spawn_background_work(app);
         }
         Message::SetFilterMediaKind(kind) => {
             app.filter_media_kind = kind;
@@ -465,21 +476,29 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
             } else if app.min_file_size_input.trim().is_empty() {
                 app.min_file_size_bytes = 0;
             }
-            run_indexing(app);
-            run_gallery_projection(app);
-            run_timeline_projection(app);
+            app.activity_status = app.i18n.text(TextKey::LoadingIndexingLabel).to_owned();
+            return spawn_background_work(app);
         }
         Message::RootTagInputChanged(value) => {
             app.root_tag_input = value;
         }
         Message::AddRootAppTag => {
-            add_root_tag(app, TagKind::App);
+            if add_root_tag(app, TagKind::App) {
+                return spawn_background_work(app);
+            }
         }
         Message::AddRootGameTag => {
-            add_root_tag(app, TagKind::Game);
+            if add_root_tag(app, TagKind::Game) {
+                return spawn_background_work(app);
+            }
         }
         Message::RemoveRootTag(tag_name) => {
-            remove_root_tag(app, &tag_name);
+            if remove_root_tag(app, &tag_name) {
+                return spawn_background_work(app);
+            }
+        }
+        Message::BackgroundWorkComplete(result) => {
+            apply_background_result(app, *result);
         }
     }
 
@@ -1325,35 +1344,31 @@ fn refresh_roots(app: &mut Librapix) {
     refresh_ignore_rules_preview(app);
 }
 
-fn add_root_tag(app: &mut Librapix, kind: TagKind) {
+fn add_root_tag(app: &mut Librapix, kind: TagKind) -> bool {
     let Some(root_id) = app.state.selected_root_id else {
-        return;
+        return false;
     };
     let tag = app.root_tag_input.trim().to_owned();
     if tag.is_empty() {
-        return;
+        return false;
     }
     let _ = with_storage(&app.runtime, |storage| {
         storage.upsert_source_root_tag(root_id, &tag, kind)
     });
     app.root_tag_input.clear();
     refresh_root_tags_preview(app);
-    run_indexing(app);
-    run_gallery_projection(app);
-    run_timeline_projection(app);
+    true
 }
 
-fn remove_root_tag(app: &mut Librapix, tag_name: &str) {
+fn remove_root_tag(app: &mut Librapix, tag_name: &str) -> bool {
     let Some(root_id) = app.state.selected_root_id else {
-        return;
+        return false;
     };
     let _ = with_storage(&app.runtime, |storage| {
         storage.remove_source_root_tag(root_id, tag_name)
     });
     refresh_root_tags_preview(app);
-    run_indexing(app);
-    run_gallery_projection(app);
-    run_timeline_projection(app);
+    true
 }
 
 fn refresh_root_tags_preview(app: &mut Librapix) {
@@ -1402,169 +1417,11 @@ fn set_ignore_rule_enabled(app: &mut Librapix, is_enabled: bool) {
     refresh_ignore_rules_preview(app);
 }
 
-fn run_indexing(app: &mut Librapix) {
-    app.activity_status = app.i18n.text(TextKey::LoadingIndexingLabel).to_owned();
-    app.indexing_status = app.i18n.text(TextKey::LoadingIndexingLabel).to_owned();
-    let prep = with_storage(&app.runtime, |storage| {
-        storage.reconcile_source_root_availability()?;
-        storage.ensure_default_ignore_rules()?;
-
-        let roots = storage.list_eligible_source_roots()?;
-        let roots_for_scan = roots
-            .iter()
-            .map(|root| ScanRoot {
-                source_root_id: root.id,
-                normalized_path: root.normalized_path.clone(),
-            })
-            .collect::<Vec<_>>();
-
-        let patterns = storage.list_enabled_ignore_patterns("global")?;
-        Ok((roots_for_scan, patterns))
-    });
-
-    let summary = prep.ok().and_then(|(roots_for_scan, patterns)| {
-        let ignore = IgnoreEngine::new(&patterns).ok()?;
-        let root_ids = roots_for_scan
-            .iter()
-            .map(|root| root.source_root_id)
-            .collect::<Vec<_>>();
-        let existing = with_storage(&app.runtime, |storage| {
-            storage.list_existing_indexed_media_snapshots(&root_ids)
-        })
-        .ok()?;
-
-        let existing_for_indexer = existing
-            .into_iter()
-            .map(|entry| librapix_indexer::ExistingIndexedEntry {
-                source_root_id: entry.source_root_id,
-                absolute_path: entry.absolute_path,
-                file_size_bytes: entry.file_size_bytes,
-                modified_unix_seconds: entry.modified_unix_seconds,
-                width_px: entry.width_px,
-                height_px: entry.height_px,
-            })
-            .collect::<Vec<_>>();
-
-        let scan_options = ScanOptions {
-            min_file_size_bytes: app.min_file_size_bytes,
-        };
-        let result = scan_roots(
-            &roots_for_scan,
-            &ignore,
-            &existing_for_indexer,
-            &scan_options,
-        );
-        let writes = result
-            .candidates
-            .iter()
-            .map(|candidate| IndexedMediaWrite {
-                source_root_id: candidate.source_root_id,
-                absolute_path: candidate.absolute_path.clone(),
-                media_kind: candidate.media_kind.as_str().to_owned(),
-                file_size_bytes: candidate.file_size_bytes,
-                modified_unix_seconds: candidate.modified_unix_seconds,
-                width_px: candidate.width_px,
-                height_px: candidate.height_px,
-                metadata_status: match candidate.metadata_status {
-                    librapix_indexer::MetadataStatus::Ok => IndexedMetadataStatus::Ok,
-                    librapix_indexer::MetadataStatus::Partial => IndexedMetadataStatus::Partial,
-                    librapix_indexer::MetadataStatus::Unreadable => {
-                        IndexedMetadataStatus::Unreadable
-                    }
-                },
-            })
-            .collect::<Vec<_>>();
-
-        let apply_summary = with_storage(&app.runtime, |storage| {
-            storage.apply_incremental_index(&writes, &result.scanned_root_ids)
-        })
-        .ok()?;
-
-        let _ = with_storage(&app.runtime, |storage| {
-            storage.ensure_media_kind_tags_attached()
-        });
-
-        let _ = with_storage(&app.runtime, |storage| {
-            storage.ensure_root_tags_exist()?;
-            storage.apply_root_auto_tags()
-        });
-
-        let read_models = with_storage(&app.runtime, |storage| {
-            storage.list_media_read_models(200, 0)
-        })
-        .ok()?;
-
-        let mut generated = 0usize;
-        let mut reused = 0usize;
-        let mut failed = 0usize;
-        for row in &read_models {
-            let result = if row.media_kind == "image" {
-                ensure_image_thumbnail(
-                    &app.runtime.thumbnails_dir,
-                    &row.absolute_path,
-                    row.file_size_bytes,
-                    row.modified_unix_seconds,
-                    GALLERY_THUMB_SIZE,
-                )
-            } else if row.media_kind == "video" {
-                ensure_video_thumbnail(
-                    &app.runtime.thumbnails_dir,
-                    &row.absolute_path,
-                    row.file_size_bytes,
-                    row.modified_unix_seconds,
-                    GALLERY_THUMB_SIZE,
-                )
-            } else {
-                continue;
-            };
-            match result {
-                Ok(outcome) => {
-                    if outcome.generated {
-                        generated += 1;
-                    } else {
-                        reused += 1;
-                    }
-                }
-                Err(_) => failed += 1,
-            }
-        }
-        app.thumbnail_status = format!(
-            "{}: {}={generated}, {}={reused}, {}={failed}",
-            app.i18n.text(TextKey::ThumbnailStatusLabel),
-            app.i18n.text(TextKey::ThumbnailGeneratedLabel),
-            app.i18n.text(TextKey::ThumbnailReusedLabel),
-            app.i18n.text(TextKey::ThumbnailFailedLabel),
-        );
-
-        Some(IndexingSummary {
-            scanned_roots: result.summary.scanned_roots,
-            candidate_files: result.summary.candidate_files,
-            ignored_entries: result.summary.ignored_entries,
-            unreadable_entries: result.summary.unreadable_entries,
-            new_files: result.summary.new_files,
-            changed_files: result.summary.changed_files,
-            unchanged_files: result.summary.unchanged_files,
-            missing_marked: apply_summary.missing_marked_count,
-            read_model_count: read_models.len(),
-        })
-    });
-
-    if let Some(summary) = summary {
-        app.state.apply(AppMessage::RecordIndexingSummary);
-        app.state.record_indexing_summary(summary);
-        app.indexing_status = app.i18n.text(TextKey::IndexingCompletedLabel).to_owned();
-    } else {
-        app.indexing_status = app.i18n.text(TextKey::ErrorIndexingFailedLabel).to_owned();
-    }
-    app.activity_status.clear();
-    refresh_roots(app);
-}
-
 fn run_read_model_query(app: &mut Librapix) {
     app.browse_status = app.i18n.text(TextKey::LoadingSearchLabel).to_owned();
     let query = app.state.search_query.clone();
     let rows = with_storage(&app.runtime, |storage| {
-        storage.list_media_read_models(200, 0)
+        storage.list_media_read_models(MEDIA_QUERY_LIMIT, 0)
     })
     .map(|rows| {
         let docs = rows
@@ -1642,7 +1499,7 @@ fn run_read_model_query(app: &mut Librapix) {
 fn run_timeline_projection(app: &mut Librapix) {
     app.browse_status = app.i18n.text(TextKey::LoadingTimelineLabel).to_owned();
     let rows = with_storage(&app.runtime, |storage| {
-        storage.list_media_read_models(500, 0)
+        storage.list_media_read_models(MEDIA_QUERY_LIMIT, 0)
     })
     .map(|rows| {
         let media = rows_to_projection_media(&rows);
@@ -1711,7 +1568,7 @@ fn run_timeline_projection(app: &mut Librapix) {
 fn run_gallery_projection(app: &mut Librapix) {
     app.browse_status = app.i18n.text(TextKey::LoadingGalleryLabel).to_owned();
     let rows = with_storage(&app.runtime, |storage| {
-        storage.list_media_read_models(500, 0)
+        storage.list_media_read_models(MEDIA_QUERY_LIMIT, 0)
     })
     .map(|rows| {
         let media = rows_to_projection_media(&rows);
@@ -1720,7 +1577,7 @@ fn run_gallery_projection(app: &mut Librapix) {
             extension: app.filter_extension.clone(),
             tag: None,
             sort: GallerySort::ModifiedDesc,
-            limit: 120,
+            limit: MEDIA_QUERY_LIMIT,
             offset: 0,
         };
         let items: Vec<BrowseItem> = project_gallery(&media, &query)
@@ -2112,6 +1969,355 @@ fn rows_to_projection_media(rows: &[librapix_storage::MediaReadModel]) -> Vec<Pr
             tags: row.tags.clone(),
         })
         .collect()
+}
+
+fn spawn_background_work(app: &Librapix) -> Task<Message> {
+    let db_file = app.runtime.database_file.clone();
+    let thumbs_dir = app.runtime.thumbnails_dir.clone();
+    let min_size = app.min_file_size_bytes;
+    let kind_filter = app.filter_media_kind.clone();
+    let ext_filter = app.filter_extension.clone();
+    let i18n = app.i18n;
+    let selected_root_id = app.state.selected_root_id;
+
+    Task::perform(
+        async move {
+            do_background_work(
+                db_file,
+                thumbs_dir,
+                min_size,
+                kind_filter,
+                ext_filter,
+                i18n,
+                selected_root_id,
+            )
+        },
+        |result| Message::BackgroundWorkComplete(Box::new(result)),
+    )
+}
+
+fn do_background_work(
+    database_file: PathBuf,
+    thumbnails_dir: PathBuf,
+    min_file_size_bytes: u64,
+    filter_media_kind: Option<String>,
+    filter_extension: Option<String>,
+    i18n: Translator,
+    selected_root_id: Option<i64>,
+) -> BackgroundWorkResult {
+    let mut out = BackgroundWorkResult::default();
+
+    let mut storage = match Storage::open(&database_file) {
+        Ok(s) => s,
+        Err(_) => {
+            out.indexing_status = i18n.text(TextKey::ErrorIndexingFailedLabel).to_owned();
+            return out;
+        }
+    };
+
+    let _ = storage.reconcile_source_root_availability();
+    let _ = storage.ensure_default_ignore_rules();
+
+    out.ignore_rules_preview = storage
+        .list_ignore_rules("global")
+        .map(|rows| {
+            rows.into_iter()
+                .map(|row| {
+                    let status = if row.is_enabled {
+                        i18n.text(TextKey::IgnoreRuleEnabled)
+                    } else {
+                        i18n.text(TextKey::IgnoreRuleDisabled)
+                    };
+                    format!("{} ({status})", row.pattern)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    if let Some(root_id) = selected_root_id {
+        out.root_tags_preview = storage
+            .list_source_root_tags(root_id)
+            .map(|rows| {
+                rows.into_iter()
+                    .map(|r| (r.tag_name, r.tag_kind.as_str().to_owned()))
+                    .collect()
+            })
+            .unwrap_or_default();
+    }
+
+    let eligible_roots = storage.list_eligible_source_roots().unwrap_or_default();
+    let roots_for_scan: Vec<ScanRoot> = eligible_roots
+        .iter()
+        .map(|root| ScanRoot {
+            source_root_id: root.id,
+            normalized_path: root.normalized_path.clone(),
+        })
+        .collect();
+
+    let patterns = storage
+        .list_enabled_ignore_patterns("global")
+        .unwrap_or_default();
+
+    let indexing_summary = (|| -> Option<IndexingSummary> {
+        let ignore = IgnoreEngine::new(&patterns).ok()?;
+        let root_ids: Vec<i64> = roots_for_scan.iter().map(|r| r.source_root_id).collect();
+        let existing = storage
+            .list_existing_indexed_media_snapshots(&root_ids)
+            .ok()?;
+
+        let existing_for_indexer: Vec<librapix_indexer::ExistingIndexedEntry> = existing
+            .into_iter()
+            .map(|entry| librapix_indexer::ExistingIndexedEntry {
+                source_root_id: entry.source_root_id,
+                absolute_path: entry.absolute_path,
+                file_size_bytes: entry.file_size_bytes,
+                modified_unix_seconds: entry.modified_unix_seconds,
+                width_px: entry.width_px,
+                height_px: entry.height_px,
+            })
+            .collect();
+
+        let scan_options = ScanOptions {
+            min_file_size_bytes,
+        };
+        let result = scan_roots(
+            &roots_for_scan,
+            &ignore,
+            &existing_for_indexer,
+            &scan_options,
+        );
+
+        let writes: Vec<IndexedMediaWrite> = result
+            .candidates
+            .iter()
+            .map(|c| IndexedMediaWrite {
+                source_root_id: c.source_root_id,
+                absolute_path: c.absolute_path.clone(),
+                media_kind: c.media_kind.as_str().to_owned(),
+                file_size_bytes: c.file_size_bytes,
+                modified_unix_seconds: c.modified_unix_seconds,
+                width_px: c.width_px,
+                height_px: c.height_px,
+                metadata_status: match c.metadata_status {
+                    librapix_indexer::MetadataStatus::Ok => IndexedMetadataStatus::Ok,
+                    librapix_indexer::MetadataStatus::Partial => IndexedMetadataStatus::Partial,
+                    librapix_indexer::MetadataStatus::Unreadable => {
+                        IndexedMetadataStatus::Unreadable
+                    }
+                },
+            })
+            .collect();
+
+        let apply_summary = storage
+            .apply_incremental_index(&writes, &result.scanned_root_ids)
+            .ok()?;
+        let _ = storage.ensure_media_kind_tags_attached();
+        let _ = storage.ensure_root_tags_exist();
+        let _ = storage.apply_root_auto_tags();
+
+        let read_models = storage.list_media_read_models(MEDIA_QUERY_LIMIT, 0).ok()?;
+
+        let mut generated = 0usize;
+        let mut reused = 0usize;
+        let mut failed = 0usize;
+        for row in &read_models {
+            let thumb = if row.media_kind == "image" {
+                ensure_image_thumbnail(
+                    &thumbnails_dir,
+                    &row.absolute_path,
+                    row.file_size_bytes,
+                    row.modified_unix_seconds,
+                    GALLERY_THUMB_SIZE,
+                )
+            } else if row.media_kind == "video" {
+                ensure_video_thumbnail(
+                    &thumbnails_dir,
+                    &row.absolute_path,
+                    row.file_size_bytes,
+                    row.modified_unix_seconds,
+                    GALLERY_THUMB_SIZE,
+                )
+            } else {
+                continue;
+            };
+            match thumb {
+                Ok(o) if o.generated => generated += 1,
+                Ok(_) => reused += 1,
+                Err(_) => failed += 1,
+            }
+        }
+
+        out.thumbnail_status = format!(
+            "{}: {}={generated}, {}={reused}, {}={failed}",
+            i18n.text(TextKey::ThumbnailStatusLabel),
+            i18n.text(TextKey::ThumbnailGeneratedLabel),
+            i18n.text(TextKey::ThumbnailReusedLabel),
+            i18n.text(TextKey::ThumbnailFailedLabel),
+        );
+
+        Some(IndexingSummary {
+            scanned_roots: result.summary.scanned_roots,
+            candidate_files: result.summary.candidate_files,
+            ignored_entries: result.summary.ignored_entries,
+            unreadable_entries: result.summary.unreadable_entries,
+            new_files: result.summary.new_files,
+            changed_files: result.summary.changed_files,
+            unchanged_files: result.summary.unchanged_files,
+            missing_marked: apply_summary.missing_marked_count,
+            read_model_count: read_models.len(),
+        })
+    })();
+
+    if indexing_summary.is_some() {
+        out.indexing_summary = indexing_summary;
+        out.indexing_status = i18n.text(TextKey::IndexingCompletedLabel).to_owned();
+    } else {
+        out.indexing_status = i18n.text(TextKey::ErrorIndexingFailedLabel).to_owned();
+    }
+
+    let _ = storage.reconcile_source_root_availability();
+    out.roots = storage
+        .list_source_roots()
+        .map(map_roots_from_storage)
+        .unwrap_or_default();
+
+    let all_rows = storage
+        .list_media_read_models(MEDIA_QUERY_LIMIT, 0)
+        .unwrap_or_default();
+
+    let media = rows_to_projection_media(&all_rows);
+
+    let gallery_query = GalleryQuery {
+        media_kind: filter_media_kind.clone(),
+        extension: filter_extension.clone(),
+        tag: None,
+        sort: GallerySort::ModifiedDesc,
+        limit: MEDIA_QUERY_LIMIT,
+        offset: 0,
+    };
+    out.gallery_items = project_gallery(&media, &gallery_query)
+        .into_iter()
+        .map(|item| {
+            let original = PathBuf::from(&item.absolute_path);
+            let matched_row = all_rows.iter().find(|row| row.media_id == item.media_id);
+            let thumbnail_path = matched_row
+                .and_then(|row| resolve_thumbnail(&thumbnails_dir, row, GALLERY_THUMB_SIZE));
+            let (aspect_ratio, subtitle) = matched_row
+                .map(|row| {
+                    let ar = aspect_ratio_from(row.width_px, row.height_px);
+                    let sub = format!(
+                        "{} \u{00B7} {}",
+                        row.media_kind,
+                        format::format_file_size(row.file_size_bytes)
+                    );
+                    (ar, sub)
+                })
+                .unwrap_or((1.5, item.media_kind.clone()));
+            BrowseItem {
+                media_id: item.media_id,
+                title: original
+                    .file_name()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_else(|| original.display().to_string()),
+                subtitle,
+                thumbnail_path,
+                is_group_header: false,
+                line: format!("{} [{}]", original.display(), item.media_kind),
+                aspect_ratio,
+            }
+        })
+        .collect();
+
+    out.gallery_preview_lines = out.gallery_items.iter().map(|i| i.line.clone()).collect();
+
+    let filtered_media: Vec<ProjectionMedia> = media
+        .into_iter()
+        .filter(|m| {
+            filter_media_kind
+                .as_ref()
+                .is_none_or(|k| m.media_kind.eq_ignore_ascii_case(k))
+        })
+        .filter(|m| {
+            filter_extension.as_ref().is_none_or(|ext| {
+                m.absolute_path
+                    .rsplit('.')
+                    .next()
+                    .is_some_and(|e| e.eq_ignore_ascii_case(ext))
+            })
+        })
+        .collect();
+
+    let buckets = project_timeline(&filtered_media, TimelineGranularity::Day);
+    let mut timeline_lines = Vec::new();
+    let mut timeline_items = Vec::new();
+    for bucket in buckets {
+        timeline_lines.push(format!("{} ({})", bucket.label, bucket.item_count));
+        timeline_items.push(BrowseItem {
+            media_id: 0,
+            title: bucket.label.clone(),
+            subtitle: String::new(),
+            thumbnail_path: None,
+            is_group_header: true,
+            line: bucket.label.clone(),
+            aspect_ratio: 1.5,
+        });
+        for tl_item in bucket.items {
+            let matched_row = all_rows.iter().find(|r| r.media_id == tl_item.media_id);
+            let thumbnail_path = matched_row
+                .and_then(|row| resolve_thumbnail(&thumbnails_dir, row, GALLERY_THUMB_SIZE));
+            let ar = matched_row
+                .map(|r| aspect_ratio_from(r.width_px, r.height_px))
+                .unwrap_or(1.5);
+            timeline_items.push(BrowseItem {
+                media_id: tl_item.media_id,
+                title: PathBuf::from(&tl_item.absolute_path)
+                    .file_name()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or(tl_item.absolute_path.clone()),
+                subtitle: tl_item.media_kind.clone(),
+                thumbnail_path,
+                is_group_header: false,
+                line: format!("{} [{}]", tl_item.absolute_path, tl_item.media_kind),
+                aspect_ratio: ar,
+            });
+        }
+    }
+    out.timeline_items = timeline_items;
+    out.timeline_preview_lines = timeline_lines;
+
+    populate_media_cache(&mut out.media_cache, &all_rows, &thumbnails_dir);
+
+    out.browse_status = i18n.text(TextKey::GalleryCompletedLabel).to_owned();
+    out
+}
+
+fn apply_background_result(app: &mut Librapix, result: BackgroundWorkResult) {
+    app.state.apply(AppMessage::ReplaceLibraryRoots);
+    app.state.replace_library_roots(result.roots);
+
+    if let Some(summary) = result.indexing_summary {
+        app.state.apply(AppMessage::RecordIndexingSummary);
+        app.state.record_indexing_summary(summary);
+    }
+
+    app.thumbnail_status = result.thumbnail_status;
+    app.indexing_status = result.indexing_status;
+
+    app.state.apply(AppMessage::ReplaceGalleryPreview);
+    app.state
+        .replace_gallery_preview(result.gallery_preview_lines);
+    app.gallery_items = result.gallery_items;
+
+    app.state.apply(AppMessage::ReplaceTimelinePreview);
+    app.state
+        .replace_timeline_preview(result.timeline_preview_lines);
+    app.timeline_items = result.timeline_items;
+
+    app.media_cache = result.media_cache;
+    app.browse_status = result.browse_status;
+    app.ignore_rules_preview = result.ignore_rules_preview;
+    app.root_tags_preview = result.root_tags_preview;
+    app.activity_status.clear();
 }
 
 fn with_storage<T>(

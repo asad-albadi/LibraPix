@@ -99,6 +99,10 @@ All notable changes to this project are documented in this file.
 - i18n keys for auto-tag UI labels.
 
 ### Fixed
+- Startup no longer blocks the UI ("Not Responding" on Windows) while indexing/thumbnails run; all heavy work now executes via `Task::perform` on a background thread, keeping the UI interactive immediately.
+- Gallery and timeline now aggregate all active libraries; removed hard query limits (200/500/120) that truncated multi-library results to a fraction of actual media.
+- All valid media across registered roots are now indexed and displayed; thumbnail generation query limit raised from 200 to 50,000, gallery display limit from 120 to 50,000, timeline and search limits similarly increased.
+- `FilesystemChanged`, `RunIndexing`, `ApplyMinFileSize`, `AddRoot`, and auto-tag operations now run indexing/projections asynchronously instead of blocking the UI thread.
 - Dimensions now show correctly for files that were initially indexed before dimension extraction was implemented; indexer re-extracts dimensions for unchanged images missing width/height in the database.
 - Media selection lag on first click eliminated by pre-caching detail-size thumbnail paths during projection builds instead of resolving them synchronously on click.
 - Thumbnails now use Lanczos3 resampling instead of nearest-neighbor for substantially sharper results.

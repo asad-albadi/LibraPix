@@ -43,4 +43,15 @@ Indexing is a dedicated subsystem (`librapix-indexer`) isolated from UI renderin
 9. Ensure root-level auto-tags exist in the tags table and apply them to media under their root.
 10. Query read-model rows for verification or downstream browsing/search surfaces.
 
+## Execution model
+
+Indexing runs as background work via `Task::perform`, keeping the UI thread responsive.
+The `do_background_work` function opens its own `Storage` connection and runs the full pipeline (scan, index, thumbnails, projections) off the main thread.
+Results are applied atomically to app state via `BackgroundWorkComplete`.
+
+## Query limits
+
+All read-model queries use `MEDIA_QUERY_LIMIT` (50,000) to avoid artificially truncating multi-library results.
+Thumbnail generation, gallery projection, timeline projection, and search all share this limit.
+
 No indexing logic should be embedded inside view widgets.

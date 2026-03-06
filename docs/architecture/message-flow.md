@@ -62,8 +62,9 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
   - App invokes platform-specific open/clipboard commands.
 - Startup restore
   - `Task::done(Message::StartupRestore)` fires after the first render.
-  - If roots exist, auto-runs indexing and gallery/timeline projection.
-  - Activity status is shown during restore.
+  - If roots exist, spawns background work via `Task::perform` to run indexing, thumbnail generation, and gallery/timeline projections on a background thread.
+  - UI remains interactive while background work proceeds; activity status shown in header.
+  - On completion, `BackgroundWorkComplete` message applies all results to app state atomically.
 - Folder picker
   - `Message::BrowseFolder` opens a native OS folder picker via `rfd::FileDialog`.
   - Selected path is written into root input state.
@@ -76,9 +77,17 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
   - After removing a root, gallery refreshes automatically.
   - After indexing completes, gallery projection refreshes automatically (within StartupRestore flow).
 
+- Background work pattern
+  - Heavy operations (indexing, scanning, thumbnail generation, projections) are encapsulated in `do_background_work`.
+  - `spawn_background_work` captures current app inputs and returns a `Task::perform` that runs the work off the UI thread.
+  - `BackgroundWorkComplete` handler applies all returned state atomically.
+  - Multiple handlers share this pattern: `StartupRestore`, `FilesystemChanged`, `RunIndexing`, `ApplyMinFileSize`, `AddRoot`, auto-tag operations.
+  - Lightweight projection-only operations (filter changes, manual projection refresh) remain synchronous since they are fast DB queries.
+
 ## Rules
 
 - Message handling remains explicit and testable.
 - Side effects are introduced as tasks intentionally, not hidden in widgets.
+- Heavy operations use `Task::perform` to avoid blocking the UI thread.
 - Storage/indexing/search side effects will be delegated to dedicated subsystems in future phases.
 - Double-click detection is app-level state, not widget-level behavior.

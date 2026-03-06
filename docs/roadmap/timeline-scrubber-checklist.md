@@ -65,5 +65,5 @@ This checklist tracks the fast date-navigation scrubber milestone for Timeline m
 
 - [x] `feat: add timeline anchor model for fast date navigation`
 - [x] `feat: add timeline scrubber with date chip and scroll integration`
-- [ ] `docs: record fast timeline navigation architecture`
-- [ ] Final clean working tree check
+- [x] `docs: record fast timeline navigation architecture`
+- [x] Final clean working tree check

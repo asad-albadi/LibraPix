@@ -38,10 +38,15 @@ All visual presentation is centralized in `librapix-app/src/ui.rs`:
 ## Interaction model
 
 - Selection is explicit app state (`selected_media_id`).
+- Single click selects a media item and loads details.
+- Double-click opens the media item in the OS default external app.
+- Double-click detection tracks last-click media id and timestamp at app level.
 - Gallery cards and timeline rows are clickable buttons with card styles.
 - Search is triggered via Enter key in the header search bar.
 - Root selection uses styled nav buttons with status dot indicators.
 - Root management controls appear contextually when a root is selected.
+- Library root addition supports native folder picker dialog via Browse button.
+- Manual path input is available as a secondary flow.
 
 ## Gallery rendering
 
@@ -60,8 +65,30 @@ All visual presentation is centralized in `librapix-app/src/ui.rs`:
 
 - Shows preview, filename, file info, tags, and actions as distinct sections.
 - Sections are separated by horizontal dividers.
+- File info shows human-readable metadata: type, size (KB/MB/GB), modified date, dimensions, path.
+- Formatting is centralized in `format.rs` with `format_file_size`, `format_timestamp`, `format_dimensions`.
 - Tags section supports add/remove for app tags and game tags.
 - Actions section provides open, show-in-folder, and copy-path commands.
+
+## Startup behavior
+
+- On launch, app restores persisted state from storage and config.
+- If library roots exist, the app auto-indexes and loads gallery/timeline projections.
+- Startup restore is triggered via `Task::done(Message::StartupRestore)` from the init function.
+- Activity status indicator is shown in the header during restore.
+
+## Background activity
+
+- Activity status is tracked as a simple string in app state.
+- When non-empty, a subtle accent-colored caption is shown in the header.
+- Cleared when the active operation completes.
+- Currently surfaces indexing and restore activity.
+
+## Auto-refresh
+
+- Gallery and timeline are auto-refreshed after indexing completes.
+- Gallery is auto-refreshed after adding or removing a library root.
+- Periodic file-system watching is deferred to a future phase.
 
 ## UX goals
 
@@ -70,3 +97,4 @@ All visual presentation is centralized in `librapix-app/src/ui.rs`:
 - Low-clutter desktop workflow.
 - Coherent action placement.
 - Product-oriented language throughout.
+- Desktop-native interactions (double-click, folder picker, human-readable metadata).

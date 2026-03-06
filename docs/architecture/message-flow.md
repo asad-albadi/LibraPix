@@ -60,9 +60,25 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
 - Open/copy actions
   - App resolves selected media path from storage.
   - App invokes platform-specific open/clipboard commands.
+- Startup restore
+  - `Task::done(Message::StartupRestore)` fires after the first render.
+  - If roots exist, auto-runs indexing and gallery/timeline projection.
+  - Activity status is shown during restore.
+- Folder picker
+  - `Message::BrowseFolder` opens a native OS folder picker via `rfd::FileDialog`.
+  - Selected path is written into root input state.
+- Double-click open
+  - `Message::SelectMedia(id)` detects double-click by comparing click timestamp.
+  - If the same media is clicked within 400ms, opens the file in the default external app.
+  - Otherwise, performs normal selection and detail loading.
+- Auto-refresh
+  - After adding a root, indexing and gallery refresh run automatically.
+  - After removing a root, gallery refreshes automatically.
+  - After indexing completes, gallery projection refreshes automatically (within StartupRestore flow).
 
 ## Rules
 
 - Message handling remains explicit and testable.
 - Side effects are introduced as tasks intentionally, not hidden in widgets.
 - Storage/indexing/search side effects will be delegated to dedicated subsystems in future phases.
+- Double-click detection is app-level state, not widget-level behavior.

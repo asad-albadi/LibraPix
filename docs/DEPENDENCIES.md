@@ -185,3 +185,21 @@ This file tracks major direct dependencies that shape architecture and maintenan
   - Baseline uses SHA-256 digest of source path and fingerprint fields.
 - Risks/tradeoffs:
   - Cryptographic hashing is slightly heavier than non-crypto hashes, but acceptable for baseline cache keying.
+
+## `rfd` (0.15)
+
+- Purpose: Cross-platform native file/folder dialog for library root management.
+- Why chosen: Mature Rust-native crate providing system-native open/save/folder dialogs on macOS, Windows, and Linux.
+- Alternatives considered:
+  - `native-dialog`: similar purpose, less actively maintained and lower download count.
+  - `tinyfiledialogs`: C library wrapper, weaker Rust integration and maintainability.
+  - manual path typing only: poor UX for a desktop media application.
+- Official docs consulted:
+  - [https://docs.rs/rfd/latest/rfd/](https://docs.rs/rfd/latest/rfd/)
+  - [https://github.com/PolyMeilex/rfd](https://github.com/PolyMeilex/rfd)
+- Notes:
+  - Synchronous `FileDialog::pick_folder()` is used since the OS dialog is naturally modal.
+  - On macOS uses Cocoa dialogs, on Windows uses COM, on Linux uses GTK3 or xdg-desktop-portal.
+- Risks/tradeoffs:
+  - On Linux, requires either GTK3 or xdg-desktop-portal runtime support.
+  - Synchronous API blocks the main thread during dialog interaction, which is acceptable for modal folder selection.

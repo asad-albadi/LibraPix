@@ -1,3 +1,4 @@
+mod format;
 mod ui;
 
 use iced::widget::{Space, button, column, container, image, row, scrollable, text, text_input};
@@ -20,13 +21,18 @@ use librapix_thumbnails::ensure_image_thumbnail;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::time::Instant;
 use ui::*;
 
 fn main() -> iced::Result {
-    iced::application(Librapix::default, update, view)
+    iced::application(init, update, view)
         .title(title)
         .theme(theme)
         .run()
+}
+
+fn init() -> (Librapix, Task<Message>) {
+    (Librapix::default(), Task::done(Message::StartupRestore))
 }
 
 #[derive(Debug, Clone)]
@@ -57,6 +63,8 @@ enum Message {
     IgnoreRuleInputChanged(String),
     EnableIgnoreRule,
     DisableIgnoreRule,
+    StartupRestore,
+    BrowseFolder,
 }
 
 struct Librapix {
@@ -78,6 +86,9 @@ struct Librapix {
     indexing_status: String,
     browse_status: String,
     root_status: String,
+    last_click_media_id: Option<i64>,
+    last_click_time: Option<Instant>,
+    activity_status: String,
 }
 
 #[derive(Debug, Clone)]
@@ -124,6 +135,9 @@ impl Default for Librapix {
             indexing_status: String::new(),
             browse_status: String::new(),
             root_status: String::new(),
+            last_click_media_id: None,
+            last_click_time: None,
+            activity_status: String::new(),
         };
         refresh_ignore_rules_preview(&mut app);
         app
@@ -166,6 +180,8 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
                 refresh_roots(app);
                 app.state.clear_selection_and_input();
                 app.root_status = app.i18n.text(TextKey::RootActionSuccess).to_owned();
+                run_indexing(app);
+                run_gallery_projection(app);
             } else {
                 app.root_status = app.i18n.text(TextKey::ErrorInvalidRootPathLabel).to_owned();
             }
@@ -215,6 +231,7 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
                 app.state.apply(AppMessage::ClearRootSelection);
                 app.state.clear_selection_and_input();
                 app.root_status = app.i18n.text(TextKey::RootActionSuccess).to_owned();
+                run_gallery_projection(app);
             }
         }
         Message::RefreshRoots => {
@@ -237,9 +254,21 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
             run_gallery_projection(app);
         }
         Message::SelectMedia(media_id) => {
-            app.state.apply(AppMessage::SetSelectedMedia);
-            app.state.set_selected_media(Some(media_id));
-            load_media_details(app);
+            let now = Instant::now();
+            let is_double_click = app.last_click_media_id == Some(media_id)
+                && app
+                    .last_click_time
+                    .is_some_and(|t| now.duration_since(t).as_millis() < 400);
+            app.last_click_media_id = Some(media_id);
+            app.last_click_time = Some(now);
+
+            if is_double_click {
+                open_selected_path(app, false);
+            } else {
+                app.state.apply(AppMessage::SetSelectedMedia);
+                app.state.set_selected_media(Some(media_id));
+                load_media_details(app);
+            }
         }
         Message::DetailsTagInputChanged(value) => {
             app.details_tag_input = value;
@@ -271,6 +300,21 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
         Message::DisableIgnoreRule => {
             set_ignore_rule_enabled(app, false);
         }
+        Message::StartupRestore => {
+            app.activity_status = app.i18n.text(TextKey::StatusRestoringLabel).to_owned();
+            if !app.state.library_roots.is_empty() {
+                run_indexing(app);
+                run_gallery_projection(app);
+                run_timeline_projection(app);
+            }
+            app.activity_status.clear();
+        }
+        Message::BrowseFolder => {
+            if let Some(path) = rfd::FileDialog::new().pick_folder() {
+                app.state.apply(AppMessage::SetRootInput);
+                app.state.set_root_input(path.display().to_string());
+            }
+        }
     }
 
     Task::none()
@@ -297,6 +341,9 @@ fn view(app: &Librapix) -> Element<'_, Message> {
             .width(Length::Fixed(400.0))
             .style(search_input_style),
             Space::new().width(Length::Fill),
+            text(app.activity_status.clone())
+                .size(FONT_CAPTION)
+                .color(ACCENT),
         ]
         .align_y(iced::Alignment::Center),
     )
@@ -399,16 +446,14 @@ fn view(app: &Librapix) -> Element<'_, Message> {
     let library_section = column![
         section_heading(app.i18n.text(TextKey::LibrarySectionLabel)),
         roots_list,
-        text_input(
-            app.i18n.text(TextKey::FolderPathPlaceholder),
-            &app.state.root_input
-        )
-        .on_input(Message::RootInputChanged)
-        .style(field_input_style),
         row![
+            button(text(app.i18n.text(TextKey::BrowseFolderButton)).size(FONT_BODY))
+                .on_press(Message::BrowseFolder)
+                .style(primary_button_style)
+                .padding([SPACE_XS as u16, SPACE_MD as u16]),
             button(text(app.i18n.text(TextKey::RootAddButton)).size(FONT_BODY))
                 .on_press(Message::AddRoot)
-                .style(primary_button_style)
+                .style(action_button_style)
                 .padding([SPACE_XS as u16, SPACE_MD as u16]),
             button(text(app.i18n.text(TextKey::RootRefreshButton)).size(FONT_BODY))
                 .on_press(Message::RefreshRoots)
@@ -416,6 +461,12 @@ fn view(app: &Librapix) -> Element<'_, Message> {
                 .padding([SPACE_XS as u16, SPACE_MD as u16]),
         ]
         .spacing(SPACE_XS),
+        text_input(
+            app.i18n.text(TextKey::FolderPathPlaceholder),
+            &app.state.root_input
+        )
+        .on_input(Message::RootInputChanged)
+        .style(field_input_style),
         selected_root_actions,
         text(app.root_status.clone())
             .size(FONT_CAPTION)
@@ -953,6 +1004,7 @@ fn set_ignore_rule_enabled(app: &mut Librapix, is_enabled: bool) {
 }
 
 fn run_indexing(app: &mut Librapix) {
+    app.activity_status = app.i18n.text(TextKey::LoadingIndexingLabel).to_owned();
     app.indexing_status = app.i18n.text(TextKey::LoadingIndexingLabel).to_owned();
     let prep = with_storage(&app.runtime, |storage| {
         storage.reconcile_source_root_availability()?;
@@ -1080,6 +1132,7 @@ fn run_indexing(app: &mut Librapix) {
     } else {
         app.indexing_status = app.i18n.text(TextKey::ErrorIndexingFailedLabel).to_owned();
     }
+    app.activity_status.clear();
     refresh_roots(app);
 }
 
@@ -1231,55 +1284,40 @@ fn run_gallery_projection(app: &mut Librapix) {
             .into_iter()
             .map(|item| {
                 let original = PathBuf::from(&item.absolute_path);
-                let thumbnail_text = rows
-                    .iter()
-                    .find(|row| row.media_id == item.media_id)
-                    .and_then(|row| {
-                        if row.media_kind != "image" {
-                            return None;
-                        }
-                        ensure_image_thumbnail(
-                            &app.runtime.thumbnails_dir,
-                            &row.absolute_path,
-                            row.file_size_bytes,
-                            row.modified_unix_seconds,
-                            256,
+                let matched_row = rows.iter().find(|row| row.media_id == item.media_id);
+                let thumbnail_path = matched_row.and_then(|row| {
+                    if row.media_kind != "image" {
+                        return None;
+                    }
+                    ensure_image_thumbnail(
+                        &app.runtime.thumbnails_dir,
+                        &row.absolute_path,
+                        row.file_size_bytes,
+                        row.modified_unix_seconds,
+                        256,
+                    )
+                    .ok()
+                    .map(|outcome| outcome.thumbnail_path)
+                });
+                let subtitle = matched_row
+                    .map(|row| {
+                        format!(
+                            "{} \u{00B7} {}",
+                            row.media_kind,
+                            format::format_file_size(row.file_size_bytes)
                         )
-                        .ok()
-                        .map(|outcome| outcome.thumbnail_path.display().to_string())
                     })
-                    .unwrap_or_else(|| app.i18n.text(TextKey::ThumbnailUnavailable).to_owned());
+                    .unwrap_or_else(|| item.media_kind.clone());
                 BrowseItem {
                     media_id: item.media_id,
                     title: original
                         .file_name()
                         .map(|s| s.to_string_lossy().to_string())
                         .unwrap_or_else(|| original.display().to_string()),
-                    subtitle: item.media_kind.clone(),
-                    thumbnail_path: rows
-                        .iter()
-                        .find(|row| row.media_id == item.media_id)
-                        .and_then(|row| {
-                            if row.media_kind != "image" {
-                                return None;
-                            }
-                            ensure_image_thumbnail(
-                                &app.runtime.thumbnails_dir,
-                                &row.absolute_path,
-                                row.file_size_bytes,
-                                row.modified_unix_seconds,
-                                256,
-                            )
-                            .ok()
-                            .map(|outcome| outcome.thumbnail_path)
-                        }),
+                    subtitle,
+                    thumbnail_path,
                     is_group_header: false,
-                    line: format!(
-                        "{} [{}] {}={thumbnail_text}",
-                        original.display(),
-                        item.media_kind,
-                        app.i18n.text(TextKey::ThumbnailStatusLabel),
-                    ),
+                    line: format!("{} [{}]", original.display(), item.media_kind),
                 }
             })
             .collect::<Vec<_>>()
@@ -1324,26 +1362,30 @@ fn load_media_details(app: &mut Librapix) {
             None
         };
         app.details_lines = vec![
-            format!("id={}", details.media_id),
-            format!("path={}", details.absolute_path.display()),
-            format!("kind={}", details.media_kind),
-            format!("size={}", details.file_size_bytes),
             format!(
-                "modified={}",
-                details.modified_unix_seconds.unwrap_or_default()
+                "{}: {}",
+                app.i18n.text(TextKey::DetailsKindLabel),
+                details.media_kind
             ),
             format!(
-                "dimensions={}x{}",
-                details.width_px.unwrap_or(0),
-                details.height_px.unwrap_or(0)
+                "{}: {}",
+                app.i18n.text(TextKey::DetailsSizeLabel),
+                format::format_file_size(details.file_size_bytes)
             ),
             format!(
-                "tags={}",
-                if details.tags.is_empty() {
-                    app.i18n.text(TextKey::EmptyTagsLabel).to_owned()
-                } else {
-                    details.tags.join("|")
-                }
+                "{}: {}",
+                app.i18n.text(TextKey::DetailsModifiedLabel),
+                format::format_timestamp(details.modified_unix_seconds)
+            ),
+            format!(
+                "{}: {}",
+                app.i18n.text(TextKey::DetailsDimensionsLabel),
+                format::format_dimensions(details.width_px, details.height_px)
+            ),
+            format!(
+                "{}: {}",
+                app.i18n.text(TextKey::DetailsPathLabel),
+                details.absolute_path.display()
             ),
         ];
         app.details_action_status = app.i18n.text(TextKey::DetailsActionSuccess).to_owned();

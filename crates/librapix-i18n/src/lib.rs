@@ -99,6 +99,13 @@ pub enum TextKey {
     SelectPhotoTitle,
     SelectPhotoSubtitle,
     ItemsLabel,
+    BrowseFolderButton,
+    StatusRestoringLabel,
+    DetailsKindLabel,
+    DetailsSizeLabel,
+    DetailsModifiedLabel,
+    DetailsDimensionsLabel,
+    DetailsPathLabel,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -224,5 +231,12 @@ fn en_us(key: TextKey) -> &'static str {
         TextKey::SelectPhotoTitle => "Select a photo",
         TextKey::SelectPhotoSubtitle => "Choose a photo to see its details.",
         TextKey::ItemsLabel => "items",
+        TextKey::BrowseFolderButton => "Browse\u{2026}",
+        TextKey::StatusRestoringLabel => "Restoring library\u{2026}",
+        TextKey::DetailsKindLabel => "Type",
+        TextKey::DetailsSizeLabel => "Size",
+        TextKey::DetailsModifiedLabel => "Modified",
+        TextKey::DetailsDimensionsLabel => "Dimensions",
+        TextKey::DetailsPathLabel => "Path",
     }
 }

@@ -7,6 +7,8 @@ rust-version.workspace = true
 
 [dependencies]
 iced.workspace = true
+chrono.workspace = true
+rfd.workspace = true
 librapix-config = { path = "../librapix-config" }
 librapix-core = { path = "../librapix-core" }
 librapix-indexer = { path = "../librapix-indexer" }

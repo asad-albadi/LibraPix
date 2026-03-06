@@ -31,6 +31,22 @@ All notable changes to this project are documented in this file.
 - Added media-details action baseline (load metadata, open file/folder, copy path).
 
 ### Changed
+- App now auto-indexes and loads gallery/timeline on startup from persisted state.
+- App now auto-indexes and refreshes gallery after adding a library root.
+- Gallery now refreshes after removing a library root.
+- Library root management now supports a native folder picker dialog (Browse button).
+- Manual path input remains as a secondary/advanced flow below the Browse button.
+- Double-clicking a media item in gallery or timeline opens it in the OS default external app.
+- Single-click remains selection-focused; double-click is open-focused.
+- File sizes in details panel now display as human-readable values (KB, MB, GB).
+- Dates in details panel now display as human-readable local timestamps.
+- Dimensions in details panel now display as formatted width × height.
+- Details metadata now uses labeled key-value pairs (Type, Size, Modified, Dimensions, Path).
+- Gallery card subtitles now show media kind and formatted file size.
+- Gallery projection row lookup consolidated to single pass per item.
+- Activity status indicator shows in the header during indexing and restore operations.
+- Added centralized formatting module with format_file_size, format_timestamp, and format_dimensions helpers.
+- Added new i18n keys for folder picker, activity status, and metadata labels.
 - Redesigned UI with Fluent-inspired design system: comprehensive color palette, spacing scale, typography hierarchy, and component styles.
 - Gallery now renders as a thumbnail-first card grid with selection states instead of a vertical list.
 - Timeline renders with styled group headers and selectable media rows.
@@ -74,3 +90,6 @@ All notable changes to this project are documented in this file.
 - Recorded dependency decisions for `strsim`.
 - Recorded dependency decisions for `chrono`.
 - Recorded dependency decisions for `image` and `sha2`.
+- Recorded dependency decision for `rfd` (native file dialog).
+- Added ADR `0013` for interaction milestone architecture decisions.
+- Added interaction milestone checklist.

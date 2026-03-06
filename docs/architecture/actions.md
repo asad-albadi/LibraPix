@@ -8,6 +8,13 @@ Librapix exposes simple file-oriented actions without mutating source media.
 - Open selected media containing folder.
 - Copy selected media path to clipboard via platform command.
 
+## Double-click open
+
+- Double-clicking a media item in gallery or timeline opens it in the OS default external app.
+- Single click selects the item and loads its details.
+- Double-click is detected at app level by tracking last-click media id and timestamp.
+- Threshold: 400ms between clicks on the same media item.
+
 ## Orchestration boundary
 
 - Action commands are triggered from app orchestration handlers.

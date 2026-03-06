@@ -90,6 +90,19 @@
   - Use `Task::perform` for any work that takes more than a few milliseconds.
   - Keep the click/update path free of synchronous heavy operations.
 
+## Gallery or timeline shows media from only one or two libraries
+
+- Symptoms
+  - Multiple library roots are registered, but gallery/timeline appear to show media from only one or two of them.
+- Affected area
+  - Read-model query ordering.
+- Confirmed cause
+  - Query used `ORDER BY absolute_path ASC` with a 50,000-row limit. Paths sort alphabetically, so roots whose paths sort first (e.g. `C:\A\...` before `C:\B\...`) filled the limit before media from other roots appeared.
+- Resolution
+  - Changed to `ORDER BY modified_unix_seconds DESC, absolute_path ASC` so the 50,000 most recent files across all roots are shown, naturally interleaving multiple libraries.
+- Prevention guidance
+  - Ordering for unified multi-library views should prioritize recency or interleaving, not alphabetical path order.
+
 ## Gallery or timeline shows only a subset of media from multiple libraries
 
 - Symptoms
@@ -110,6 +123,23 @@
   - Do not hard-code low query limits for aggregate views.
   - When limits are needed for performance, make them configurable or document them clearly.
   - Multi-library aggregation is a core product requirement; limits must not silently exclude data.
+
+## Video thumbnails not showing on Windows
+
+- Symptoms
+  - Video files show placeholder instead of thumbnail in gallery/timeline/details.
+  - Images show thumbnails correctly.
+- Affected area
+  - Video thumbnail generation via ffmpeg subprocess.
+- Likely cause
+  - ffmpeg not in PATH when app is launched from Explorer/Start Menu.
+  - Path format (backslashes) causing ffmpeg to fail on Windows.
+- Resolution
+  - App now uses `ffmpeg.exe` explicitly on Windows.
+  - Paths are normalized to forward slashes before passing to ffmpeg (ffmpeg accepts these on Windows).
+- Prevention guidance
+  - Install ffmpeg and add to system PATH, or ensure it is in PATH for GUI-launched apps.
+  - See "Video thumbnails not showing" below for general ffmpeg requirements.
 
 ## Video thumbnails not showing
 

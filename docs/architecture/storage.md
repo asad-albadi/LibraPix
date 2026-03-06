@@ -2,6 +2,12 @@
 
 SQLite is the primary persistent store for Librapix-owned metadata.
 
+## Read-model query ordering
+
+The `list_media_read_models` / `query_media_read_models` functions order results by `modified_unix_seconds DESC, absolute_path ASC` so that:
+- The most recent files across all roots appear first.
+- Multi-library aggregation is meaningful: the 50,000-row limit yields a mix from all active roots, not just alphabetically-first paths.
+
 ## Scope of app-managed storage
 
 - Library registrations

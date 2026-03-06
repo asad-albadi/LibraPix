@@ -99,6 +99,10 @@ All notable changes to this project are documented in this file.
 - i18n keys for auto-tag UI labels.
 
 ### Fixed
+- Read-model query ordering changed from `ORDER BY absolute_path ASC` to `ORDER BY modified_unix_seconds DESC, absolute_path ASC` so gallery/timeline show most-recent-first across all roots instead of filling the limit with alphabetically-first paths (which favored one or two libraries).
+- Video thumbnails on Windows: use `ffmpeg.exe` explicitly and normalize paths to forward slashes for ffmpeg subprocess compatibility.
+- Extension filter chips for "All" type now include mkv and webm; video type includes avi.
+- Roots added via UI are now persisted to config file so they survive restarts and bootstrap correctly.
 - Startup no longer blocks the UI ("Not Responding" on Windows) while indexing/thumbnails run; all heavy work now executes via `Task::perform` on a background thread, keeping the UI interactive immediately.
 - Gallery and timeline now aggregate all active libraries; removed hard query limits (200/500/120) that truncated multi-library results to a fraction of actual media.
 - All valid media across registered roots are now indexed and displayed; thumbnail generation query limit raised from 200 to 50,000, gallery display limit from 120 to 50,000, timeline and search limits similarly increased.

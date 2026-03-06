@@ -733,7 +733,7 @@ impl Storage {
             WHERE m.metadata_status != 'missing'
               AND (m.absolute_path LIKE '%' || ?1 || '%' OR t.name LIKE '%' || ?1 || '%')
             GROUP BY m.id
-            ORDER BY m.absolute_path ASC
+            ORDER BY m.modified_unix_seconds DESC, m.absolute_path ASC
             LIMIT ?2 OFFSET ?3";
 
         let sql_without_filter = "
@@ -745,7 +745,7 @@ impl Storage {
             LEFT JOIN tags t ON t.id = mt.tag_id
             WHERE m.metadata_status != 'missing'
             GROUP BY m.id
-            ORDER BY m.absolute_path ASC
+            ORDER BY m.modified_unix_seconds DESC, m.absolute_path ASC
             LIMIT ?1 OFFSET ?2";
 
         let mut statement = self.connection.prepare(if query.is_some() {

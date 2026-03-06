@@ -43,6 +43,7 @@ This repository is documentation-driven. Architecture and operational decisions 
 - `docs/roadmap/media-view-milestone-checklist.md`
 - `docs/roadmap/selection-dims-autotag-checklist.md`
 - `docs/roadmap/startup-aggregation-ingestion-checklist.md`
+- `docs/roadmap/all-videos-aggregation-thumbnails-checklist.md`
 
 ## ADRs
 

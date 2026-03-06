@@ -33,6 +33,7 @@ Thumbnail generation is an app-owned, non-destructive cache subsystem.
 - `ffmpeg` must be installed and available on the system PATH.
 - If `ffmpeg` is not available, video thumbnails fail gracefully (placeholder shown in UI).
 - No Rust dependency on ffmpeg bindings; extraction is via process invocation.
+- **Windows**: The app invokes `ffmpeg.exe` explicitly. Paths are normalized to forward slashes before passing to ffmpeg, since ffmpeg accepts these on Windows and avoids backslash escaping issues.
 
 ## Ownership model
 

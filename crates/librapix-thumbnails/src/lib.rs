@@ -93,6 +93,20 @@ pub fn ensure_image_thumbnail(
     })
 }
 
+/// Normalize path for ffmpeg subprocess. On Windows, use forward slashes
+/// since ffmpeg accepts them and they avoid backslash escaping issues.
+fn path_for_ffmpeg(p: &Path) -> String {
+    let s = p.display().to_string();
+    #[cfg(windows)]
+    {
+        s.replace('\\', "/")
+    }
+    #[cfg(not(windows))]
+    {
+        s
+    }
+}
+
 pub fn ensure_video_thumbnail(
     thumbnails_dir: &Path,
     source_path: &Path,
@@ -116,9 +130,15 @@ pub fn ensure_video_thumbnail(
     }
 
     let scale_filter = format!("scale={max_edge}:{max_edge}:force_original_aspect_ratio=decrease");
-    let output_str = output.display().to_string();
-    let source_str = source_path.display().to_string();
-    let status = std::process::Command::new("ffmpeg")
+    let source_str = path_for_ffmpeg(source_path);
+    let output_str = path_for_ffmpeg(&output);
+
+    #[cfg(windows)]
+    let ffmpeg_cmd = "ffmpeg.exe";
+    #[cfg(not(windows))]
+    let ffmpeg_cmd = "ffmpeg";
+
+    let status = std::process::Command::new(ffmpeg_cmd)
         .args([
             "-y",
             "-i",
@@ -141,7 +161,7 @@ pub fn ensure_video_thumbnail(
             generated: true,
         }),
         _ => Err(ThumbnailError::Io(std::io::Error::other(
-            "video thumbnail extraction failed (ffmpeg may not be installed)",
+            "video thumbnail extraction failed (ffmpeg may not be installed or in PATH)",
         ))),
     }
 }

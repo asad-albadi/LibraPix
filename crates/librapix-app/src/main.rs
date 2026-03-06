@@ -5,7 +5,10 @@ use iced::widget::{
     Space, button, column, container, image, responsive, row, scrollable, text, text_input,
 };
 use iced::{ContentFit, Element, Length, Size, Subscription, Task, Theme};
-use librapix_config::{LocalePreference, ThemePreference, lexical_normalize_path, load_or_create};
+use librapix_config::{
+    lexical_normalize_path, load_from_path, load_or_create, save_to_path, LocalePreference,
+    ThemePreference,
+};
 use librapix_core::app::{
     AppMessage, AppState, IndexingSummary, LibraryRootView, RootLifecycle, Route,
 };
@@ -22,7 +25,7 @@ use librapix_storage::{
 use librapix_thumbnails::{ensure_image_thumbnail, ensure_video_thumbnail};
 use notify::{EventKind, RecursiveMode, Watcher};
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Instant;
 use ui::*;
@@ -161,6 +164,7 @@ const MEDIA_QUERY_LIMIT: usize = 50_000;
 struct RuntimeContext {
     database_file: PathBuf,
     thumbnails_dir: PathBuf,
+    config_file: PathBuf,
 }
 
 impl Default for Librapix {
@@ -176,6 +180,7 @@ impl Default for Librapix {
             runtime: RuntimeContext {
                 database_file: bootstrap.database_file,
                 thumbnails_dir: bootstrap.thumbnails_dir,
+                config_file: bootstrap.config_file,
             },
             thumbnail_status: String::new(),
             details_tag_input: String::new(),
@@ -309,6 +314,7 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
             if let Some(path) = normalized_input_path(&app.state.root_input)
                 && with_storage(&app.runtime, |storage| storage.upsert_source_root(&path)).is_ok()
             {
+                persist_root_to_config(&app.runtime.config_file, &path);
                 refresh_roots(app);
                 app.state.clear_selection_and_input();
                 app.root_status = app.i18n.text(TextKey::RootActionSuccess).to_owned();
@@ -892,8 +898,8 @@ fn render_media_panel(app: &Librapix) -> (Element<'_, Message>, Element<'_, Mess
 
     let ext_list: &[&str] = match app.filter_media_kind.as_deref() {
         Some("image") => &["png", "jpg", "gif", "webp"],
-        Some("video") => &["mp4", "mov", "mkv", "webm"],
-        _ => &["png", "jpg", "gif", "webp", "mp4", "mov"],
+        Some("video") => &["mp4", "mov", "mkv", "webm", "avi"],
+        _ => &["png", "jpg", "gif", "webp", "mp4", "mov", "mkv", "webm"],
     };
     let mut ext_chips = row![
         button(text(app.i18n.text(TextKey::FilterAllLabel)).size(FONT_CAPTION))
@@ -1270,6 +1276,7 @@ struct BootstrapRuntime {
     theme_preference: ThemePreference,
     database_file: PathBuf,
     thumbnails_dir: PathBuf,
+    config_file: PathBuf,
     roots: Vec<LibraryRootView>,
 }
 
@@ -1279,6 +1286,7 @@ fn bootstrap_runtime() -> BootstrapRuntime {
         theme_preference: ThemePreference::System,
         database_file: PathBuf::from("librapix.db"),
         thumbnails_dir: PathBuf::from("thumbnails"),
+        config_file: PathBuf::new(),
         roots: Vec::new(),
     };
 
@@ -1305,6 +1313,7 @@ fn bootstrap_runtime() -> BootstrapRuntime {
         .thumbnails_dir
         .clone()
         .unwrap_or(loaded.paths.thumbnails_dir);
+    runtime.config_file = loaded.paths.config_file.clone();
 
     let storage = match Storage::open(&database_file) {
         Ok(storage) => storage,
@@ -1321,6 +1330,24 @@ fn bootstrap_runtime() -> BootstrapRuntime {
         .list_source_roots()
         .map_or_else(|_| Vec::new(), map_roots_from_storage);
     runtime
+}
+
+fn persist_root_to_config(config_file: &Path, path: &Path) {
+    let Ok(mut config) = load_from_path(config_file) else {
+        return;
+    };
+    let path_buf = path.to_path_buf();
+    if config
+        .library_source_roots
+        .iter()
+        .any(|r| r.path == path_buf)
+    {
+        return;
+    }
+    config
+        .library_source_roots
+        .push(librapix_config::LibrarySourceRoot { path: path_buf });
+    let _ = save_to_path(config_file, &config);
 }
 
 fn normalized_input_path(value: &str) -> Option<PathBuf> {

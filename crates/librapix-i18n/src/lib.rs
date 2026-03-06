@@ -112,6 +112,12 @@ pub enum TextKey {
     MinFileSizeLabel,
     MinFileSizeKbSuffix,
     ApplyLabel,
+    RootTagsSectionLabel,
+    RootTagInputPlaceholder,
+    RootTagAddButton,
+    RootTagGameButton,
+    RootTagRemoveButton,
+    InheritedTagLabel,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -250,5 +256,11 @@ fn en_us(key: TextKey) -> &'static str {
         TextKey::MinFileSizeLabel => "Min size",
         TextKey::MinFileSizeKbSuffix => "KB",
         TextKey::ApplyLabel => "Apply",
+        TextKey::RootTagsSectionLabel => "AUTO TAGS",
+        TextKey::RootTagInputPlaceholder => "Tag name\u{2026}",
+        TextKey::RootTagAddButton => "Add Tag",
+        TextKey::RootTagGameButton => "Game Tag",
+        TextKey::RootTagRemoveButton => "Remove",
+        TextKey::InheritedTagLabel => "inherited",
     }
 }

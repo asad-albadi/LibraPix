@@ -71,6 +71,15 @@ This schema is intentionally minimal to avoid overbuilding before indexing and s
 - Tag kind supports `app` and `game`.
 - Tag mutations affect only Librapix-managed storage.
 
+## Root-level auto-tags
+
+- The `source_root_tags` table stores per-root default tags.
+- Each root can have zero or more auto-tags with a name and kind (`app` or `game`).
+- During indexing, `ensure_root_tags_exist()` creates any missing tag records, then `apply_root_auto_tags()` attaches them to all non-missing media under the corresponding root.
+- Auto-tags are applied via `INSERT OR IGNORE`, so they do not duplicate existing manual tags with the same name.
+- Root tags are managed through the sidebar UI when a root is selected.
+- This design is non-destructive: removing a root tag removes the rule but does not strip existing tags from media.
+
 ## Missing-file policy baseline
 
 - Missing/deleted files are not treated as fatal startup errors.

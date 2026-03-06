@@ -99,6 +99,8 @@ All notable changes to this project are documented in this file.
 - i18n keys for auto-tag UI labels.
 
 ### Fixed
+- "All" filter now truly includes both images and videos: read-model query uses per-root and per-media-kind caps (10k per root, 5k per kind per root) so neither images nor videos dominate when sorted by date.
+- All active roots now represented in gallery/timeline: ROW_NUMBER() window with PARTITION BY source_root_id ensures up to 10k items per root, preventing one or two roots from filling the 50k limit.
 - Read-model query ordering changed from `ORDER BY absolute_path ASC` to `ORDER BY modified_unix_seconds DESC, absolute_path ASC` so gallery/timeline show most-recent-first across all roots instead of filling the limit with alphabetically-first paths (which favored one or two libraries).
 - Video thumbnails on Windows: use `ffmpeg.exe` explicitly and normalize paths to forward slashes for ffmpeg subprocess compatibility.
 - Extension filter chips for "All" type now include mkv and webm; video type includes avi.

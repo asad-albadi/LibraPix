@@ -724,28 +724,72 @@ impl Storage {
         offset: usize,
     ) -> Result<Vec<MediaReadModel>, StorageError> {
         let sql_with_filter = "
-            SELECT m.id, m.source_root_id, m.absolute_path, m.media_kind,
-                   m.file_size_bytes, m.modified_unix_seconds, m.width_px, m.height_px,
-                   m.metadata_status, COALESCE(GROUP_CONCAT(t.name, ','), '')
-            FROM indexed_media m
-            LEFT JOIN media_tags mt ON mt.media_id = m.id
-            LEFT JOIN tags t ON t.id = mt.tag_id
-            WHERE m.metadata_status != 'missing'
-              AND (m.absolute_path LIKE '%' || ?1 || '%' OR t.name LIKE '%' || ?1 || '%')
-            GROUP BY m.id
-            ORDER BY m.modified_unix_seconds DESC, m.absolute_path ASC
+            WITH media_with_tags AS (
+                SELECT m.id, m.source_root_id, m.absolute_path, m.media_kind,
+                       m.file_size_bytes, m.modified_unix_seconds, m.width_px, m.height_px,
+                       m.metadata_status, COALESCE(GROUP_CONCAT(t.name, ','), '') AS tags
+                FROM indexed_media m
+                LEFT JOIN media_tags mt ON mt.media_id = m.id
+                LEFT JOIN tags t ON t.id = mt.tag_id
+                WHERE m.metadata_status != 'missing'
+                  AND (m.absolute_path LIKE '%' || ?1 || '%' OR t.name LIKE '%' || ?1 || '%')
+                GROUP BY m.id
+            ),
+            ranked_by_root AS (
+                SELECT *, ROW_NUMBER() OVER (
+                    PARTITION BY source_root_id
+                    ORDER BY modified_unix_seconds DESC, absolute_path ASC
+                ) AS rn_root
+                FROM media_with_tags
+            ),
+            ranked_by_kind AS (
+                SELECT *, ROW_NUMBER() OVER (
+                    PARTITION BY source_root_id, media_kind
+                    ORDER BY modified_unix_seconds DESC, absolute_path ASC
+                ) AS rn_kind
+                FROM ranked_by_root
+                WHERE rn_root <= 10000
+            )
+            SELECT id, source_root_id, absolute_path, media_kind,
+                   file_size_bytes, modified_unix_seconds, width_px, height_px,
+                   metadata_status, tags
+            FROM ranked_by_kind
+            WHERE rn_kind <= 5000
+            ORDER BY modified_unix_seconds DESC, absolute_path ASC
             LIMIT ?2 OFFSET ?3";
 
         let sql_without_filter = "
-            SELECT m.id, m.source_root_id, m.absolute_path, m.media_kind,
-                   m.file_size_bytes, m.modified_unix_seconds, m.width_px, m.height_px,
-                   m.metadata_status, COALESCE(GROUP_CONCAT(t.name, ','), '')
-            FROM indexed_media m
-            LEFT JOIN media_tags mt ON mt.media_id = m.id
-            LEFT JOIN tags t ON t.id = mt.tag_id
-            WHERE m.metadata_status != 'missing'
-            GROUP BY m.id
-            ORDER BY m.modified_unix_seconds DESC, m.absolute_path ASC
+            WITH media_with_tags AS (
+                SELECT m.id, m.source_root_id, m.absolute_path, m.media_kind,
+                       m.file_size_bytes, m.modified_unix_seconds, m.width_px, m.height_px,
+                       m.metadata_status, COALESCE(GROUP_CONCAT(t.name, ','), '') AS tags
+                FROM indexed_media m
+                LEFT JOIN media_tags mt ON mt.media_id = m.id
+                LEFT JOIN tags t ON t.id = mt.tag_id
+                WHERE m.metadata_status != 'missing'
+                GROUP BY m.id
+            ),
+            ranked_by_root AS (
+                SELECT *, ROW_NUMBER() OVER (
+                    PARTITION BY source_root_id
+                    ORDER BY modified_unix_seconds DESC, absolute_path ASC
+                ) AS rn_root
+                FROM media_with_tags
+            ),
+            ranked_by_kind AS (
+                SELECT *, ROW_NUMBER() OVER (
+                    PARTITION BY source_root_id, media_kind
+                    ORDER BY modified_unix_seconds DESC, absolute_path ASC
+                ) AS rn_kind
+                FROM ranked_by_root
+                WHERE rn_root <= 10000
+            )
+            SELECT id, source_root_id, absolute_path, media_kind,
+                   file_size_bytes, modified_unix_seconds, width_px, height_px,
+                   metadata_status, tags
+            FROM ranked_by_kind
+            WHERE rn_kind <= 5000
+            ORDER BY modified_unix_seconds DESC, absolute_path ASC
             LIMIT ?1 OFFSET ?2";
 
         let mut statement = self.connection.prepare(if query.is_some() {

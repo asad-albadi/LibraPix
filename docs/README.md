@@ -44,6 +44,7 @@ This repository is documentation-driven. Architecture and operational decisions 
 - `docs/roadmap/selection-dims-autotag-checklist.md`
 - `docs/roadmap/startup-aggregation-ingestion-checklist.md`
 - `docs/roadmap/all-videos-aggregation-thumbnails-checklist.md`
+- `docs/roadmap/browse-model-correctness-checklist.md`
 
 ## ADRs
 

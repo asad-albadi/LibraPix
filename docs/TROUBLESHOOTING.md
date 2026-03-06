@@ -90,6 +90,19 @@
   - Use `Task::perform` for any work that takes more than a few milliseconds.
   - Keep the click/update path free of synchronous heavy operations.
 
+## "All" filter shows only images, not videos
+
+- Symptoms
+  - Clicking "All" shows only images; videos appear only when "Videos" filter is selected.
+- Affected area
+  - Read-model query ordering and limits.
+- Confirmed cause
+  - Query used `ORDER BY modified_unix_seconds DESC` with a 50k limit. When images vastly outnumber videos and have more recent timestamps, the top 50k by date were all images.
+- Resolution
+  - Read-model query now uses per-root and per-media-kind caps: up to 10k items per root, and up to 5k images and 5k videos per root. This guarantees both kinds appear in "All" when both exist.
+- Prevention guidance
+  - For "All" browse mode, ensure query design balances representation across media kinds and roots.
+
 ## Gallery or timeline shows media from only one or two libraries
 
 - Symptoms
@@ -99,7 +112,7 @@
 - Confirmed cause
   - Query used `ORDER BY absolute_path ASC` with a 50,000-row limit. Paths sort alphabetically, so roots whose paths sort first (e.g. `C:\A\...` before `C:\B\...`) filled the limit before media from other roots appeared.
 - Resolution
-  - Changed to `ORDER BY modified_unix_seconds DESC, absolute_path ASC` so the 50,000 most recent files across all roots are shown, naturally interleaving multiple libraries.
+  - Query now uses ROW_NUMBER() with PARTITION BY source_root_id to cap at 10,000 items per root, then orders by modified_unix_seconds DESC. This guarantees all active roots are represented in the 50k result set.
 - Prevention guidance
   - Ordering for unified multi-library views should prioritize recency or interleaving, not alphabetical path order.
 

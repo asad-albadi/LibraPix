@@ -2,11 +2,12 @@
 
 SQLite is the primary persistent store for Librapix-owned metadata.
 
-## Read-model query ordering
+## Read-model query ordering and caps
 
-The `list_media_read_models` / `query_media_read_models` functions order results by `modified_unix_seconds DESC, absolute_path ASC` so that:
-- The most recent files across all roots appear first.
-- Multi-library aggregation is meaningful: the 50,000-row limit yields a mix from all active roots, not just alphabetically-first paths.
+The `list_media_read_models` / `query_media_read_models` functions use a balanced query to ensure:
+- **Per-root cap**: Up to 10,000 items per source root (via ROW_NUMBER() PARTITION BY source_root_id), so all active roots are represented.
+- **Per-kind cap**: Up to 5,000 images and 5,000 videos per root (via ROW_NUMBER() PARTITION BY source_root_id, media_kind), so "All" includes both when both exist.
+- **Ordering**: Results ordered by `modified_unix_seconds DESC, absolute_path ASC` for most-recent-first display.
 
 ## Scope of app-managed storage
 

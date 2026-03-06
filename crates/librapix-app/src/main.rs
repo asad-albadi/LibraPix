@@ -6,8 +6,8 @@ use iced::widget::{
 };
 use iced::{ContentFit, Element, Length, Size, Subscription, Task, Theme};
 use librapix_config::{
-    lexical_normalize_path, load_from_path, load_or_create, save_to_path, LocalePreference,
-    ThemePreference,
+    LocalePreference, ThemePreference, lexical_normalize_path, load_from_path, load_or_create,
+    save_to_path,
 };
 use librapix_core::app::{
     AppMessage, AppState, IndexingSummary, LibraryRootView, RootLifecycle, Route,

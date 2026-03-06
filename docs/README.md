@@ -1,0 +1,30 @@
+# Documentation Index
+
+This repository is documentation-driven. Architecture and operational decisions must be documented in this directory as part of implementation.
+
+## Core
+
+- `docs/REPOSITORY_RULES.md`: repository-wide engineering rules.
+- `docs/DEPENDENCIES.md`: major dependency decisions and official documentation references.
+- `docs/TROUBLESHOOTING.md`: recurring issues, causes, and resolutions.
+
+## Architecture
+
+- `docs/architecture/overview.md`
+- `docs/architecture/layers.md`
+- `docs/architecture/message-flow.md`
+- `docs/architecture/indexing.md`
+- `docs/architecture/storage.md`
+- `docs/architecture/i18n.md`
+- `docs/architecture/ignore-rules.md`
+- `docs/architecture/non-destructive-guarantee.md`
+
+## Roadmap
+
+- `docs/roadmap/mvp.md`
+- `docs/roadmap/future.md`
+- `docs/roadmap/bootstrap-checklist.md`
+
+## ADRs
+
+- `docs/adrs/0001-workspace-boundaries.md`

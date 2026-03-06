@@ -1,7 +1,16 @@
-[package]
-name = "librapix"
-version = "0.1.0"
-edition = "2024"
+[workspace]
+members = [
+    "crates/librapix-app",
+    "crates/librapix-core",
+    "crates/librapix-i18n",
+]
+resolver = "3"
 
-[dependencies]
+[workspace.package]
+edition = "2024"
+version = "0.1.0"
+license = "MIT"
+rust-version = "1.85"
+
+[workspace.dependencies]
 iced = "0.14.0"

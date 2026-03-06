@@ -45,6 +45,7 @@ This repository is documentation-driven. Architecture and operational decisions 
 - `docs/roadmap/startup-aggregation-ingestion-checklist.md`
 - `docs/roadmap/all-videos-aggregation-thumbnails-checklist.md`
 - `docs/roadmap/browse-model-correctness-checklist.md`
+- `docs/roadmap/timeline-scrubber-checklist.md`
 
 ## ADRs
 
@@ -65,3 +66,4 @@ This repository is documentation-driven. Architecture and operational decisions 
 - `docs/adrs/0015-media-view-architecture.md`
 - `docs/adrs/0016-root-level-auto-tags.md`
 - `docs/adrs/0017-async-startup-and-background-work.md`
+- `docs/adrs/0018-timeline-scrubber-anchor-navigation.md`

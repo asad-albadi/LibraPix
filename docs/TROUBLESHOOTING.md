@@ -1,5 +1,23 @@
 # Troubleshooting
 
+## Timeline scrubber is hidden or appears inactive
+
+- Symptoms
+  - Right-side fast date scrubber does not appear.
+  - Scrubber appears but does not move timeline content.
+- Affected area
+  - Timeline media pane (anchor generation + scroll operation wiring).
+- Confirmed cause
+  - Scrubber only renders in `Timeline` route and only when timeline anchors exist.
+  - When timeline has no grouped media (empty index, restrictive filters, or all results excluded), no anchors are produced.
+- Resolution
+  - Switch to `Timeline` tab.
+  - Clear restrictive type/extension filters and verify indexed media exists.
+  - Run indexing/refresh to repopulate timeline groups.
+- Prevention guidance
+  - Keep timeline anchor generation tied to projection output and avoid widget-derived fallback state.
+  - Preserve stable scrollable `Id` wiring (`media-pane-scrollable`) so scrub events can issue scroll operations.
+
 ## "All" filter misses videos or only shows part of the library
 
 - Symptoms

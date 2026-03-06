@@ -29,7 +29,7 @@ All visual presentation is centralized in `librapix-app/src/ui.rs`:
 ### Component styles
 - Button styles: primary (accent), subtle (transparent), action (card bg), nav (active/inactive), card (selection border), filter chip (pill radius, accent when active).
 - Text input styles: search (pill radius) and field (standard radius) with focus accent border.
-- Container styles: header, sidebar, details pane, cards, empty states, thumbnail placeholders, dividers.
+- Container styles: header, sidebar, details pane, cards, empty states, thumbnail placeholders, dividers, and timeline scrubber surfaces.
 
 ### Layout helpers
 - `section_heading()`: small-caps section label.
@@ -42,6 +42,10 @@ All visual presentation is centralized in `librapix-app/src/ui.rs`:
 - Double-click opens the media item in the OS default external app.
 - Double-click detection tracks last-click media id and timestamp at app level.
 - Gallery cards and timeline rows are clickable buttons with card styles.
+- Timeline mode includes a fast right-side scrubber:
+  - drag/click updates scrub value
+  - scrub maps to projection anchors
+  - a date chip is shown while dragging
 - Search is triggered via Enter key in the header search bar.
 - Root selection uses styled nav buttons with status dot indicators.
 - Root management controls appear contextually when a root is selected.
@@ -63,6 +67,7 @@ All visual presentation is centralized in `librapix-app/src/ui.rs`:
 - Media pane toolbar (title, refresh, item count, filter chips) is rendered outside the scrollable region.
 - Only the browse content and search results scroll; the toolbar remains fixed at the top.
 - This prevents the scrollbar from overlapping toolbar controls.
+- Timeline mode keeps this layout and adds a side scrubber column inside the media pane body (without changing shell structure).
 
 ## Centralized media-view architecture
 
@@ -94,6 +99,8 @@ Gallery, timeline, and search views share a unified media-view architecture:
 - Both gallery and timeline use `render_media_card()` for card rendering.
 - Items are selectable with the same card style as gallery cards.
 - Timeline rendering does not apply a hidden hard item cap.
+- Timeline scrubber uses precomputed anchor metadata; it does not inspect rendered rows.
+- Programmatic scrolling uses Iced widget operations (`operation::scroll_to` with `operation::snap_to` fallback).
 
 ## Details pane
 

@@ -41,7 +41,14 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
 - Run timeline projection baseline
   - App loads read-model rows.
   - App delegates grouping to `librapix-projections`.
+  - App derives `TimelineAnchor` metadata from timeline buckets (`build_timeline_anchors`).
   - UI renders selectable timeline items grouped by route panel.
+- Timeline scrubber interaction
+  - Timeline pane owns a stable scrollable `Id` (`media-pane-scrollable`).
+  - Drag/click on scrubber emits `TimelineScrubChanged` (continuous) and `TimelineScrubReleased`.
+  - Scrub value maps to nearest projection anchor (by `normalized_position`), not widget inspection.
+  - App issues Iced widget operations (`operation::scroll_to` / `operation::snap_to`) to jump the timeline scroll position.
+  - Scroll updates emit `MediaViewportChanged` and keep scrubber state synchronized with manual scrolling.
 - Run gallery projection baseline
   - App loads read-model rows.
   - App delegates filtering/sorting to `librapix-projections`.

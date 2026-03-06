@@ -36,12 +36,13 @@ This produces a Google-Photos-style justified layout where images maintain aspec
 ### Gallery
 - Renders a single flat justified grid of all non-header browse items.
 - No group headers.
-- Up to 120 items displayed.
+- Uses full projected item set (no hidden UI cap).
 
 ### Timeline
 - Renders date-grouped sections.
 - Each section has a group header (date label) followed by a justified mini-grid.
-- Up to 200 items (including headers) displayed.
+- Uses full projected item set (no hidden UI cap).
+- Timeline mode includes a right-side fast scrubber driven by projection anchors.
 
 ### Search
 - Renders search results as a justified grid using the same layout as gallery.
@@ -54,3 +55,11 @@ This produces a Google-Photos-style justified layout where images maintain aspec
 - Cache hits use pre-resolved `detail_thumbnail_path` — no disk I/O on the click path.
 - Double-click opens the file in the OS default app.
 - Selection changes do not trigger layout recomputation, only a visual update of the selected card border.
+
+## Timeline scrubber model
+
+- Scrubber anchors are precomputed from timeline projection buckets (`TimelineAnchor`).
+- Anchor model includes date label + date parts + stable group index + normalized position.
+- Scrub interactions map to nearest anchor index and trigger programmatic scroll through Iced scroll operations.
+- While dragging, UI shows a floating date chip sourced from the active anchor label.
+- Scrub interactions do not rebuild projections; they reuse cached timeline anchors.

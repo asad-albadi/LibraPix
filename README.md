@@ -52,6 +52,7 @@ Project phase: MVP complete (technical + visual shell baseline).
 - Search-facing read-model queries are available over indexed media and tag joins.
 - Indexing/galleries now generate and reuse deterministic image thumbnails in app-owned cache.
 - UI uses a desktop shell layout (header/sidebar/main/details) with media-first gallery/timeline browsing.
+- Timeline mode includes a projection-driven fast date scrubber for large-library navigation.
 
 ## MVP Usage Flow
 

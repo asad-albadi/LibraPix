@@ -31,6 +31,9 @@ All notable changes to this project are documented in this file.
 - Added `librapix-projections` crate for timeline and gallery read projections.
 - Added `librapix-thumbnails` crate for deterministic image thumbnail cache generation.
 - Added media-details action baseline (load metadata, open file/folder, copy path).
+- Added projection-level timeline anchor model (`TimelineAnchor`) with normalized positions for fast date navigation.
+- Added Timeline-mode fast scrubber UI (right-side control) with drag/click navigation and year markers.
+- Added floating timeline date chip while scrubbing to show active anchor label.
 
 ### Changed
 - Added live filesystem watch subscription over active roots using `notify`.
@@ -52,6 +55,8 @@ All notable changes to this project are documented in this file.
 - Activity status indicator shows in the header during indexing and restore operations.
 - Added centralized formatting module with format_file_size, format_timestamp, and format_dimensions helpers.
 - Added new i18n keys for folder picker, activity status, and metadata labels.
+- Timeline pane scroll is now wired with a stable scrollable `Id` and programmatic jumps via Iced widget operations (`scroll_to` + `snap_to` fallback).
+- Timeline scrubber state now stays synchronized with viewport scroll events and nearest anchor mapping.
 - Redesigned UI with Fluent-inspired design system: comprehensive color palette, spacing scale, typography hierarchy, and component styles.
 - Gallery now renders as a thumbnail-first card grid with selection states instead of a vertical list.
 - Timeline renders with styled group headers and selectable media rows.
@@ -134,7 +139,9 @@ All notable changes to this project are documented in this file.
 ### Docs
 - Added ADR `0014` for filtering, exclusion, and thumbnail quality decisions.
 - Added ADR `0015` for media-view architecture, justified layout, and video thumbnail decisions.
+- Added ADR `0018` for projection-driven timeline scrubber architecture.
 - Added quality milestone checklist.
+- Added timeline scrubber milestone checklist.
 - Updated architecture docs for thumbnails, UI, indexing, and search.
 - Established baseline documentation for dependencies, troubleshooting, architecture, and repository map.
 - Recorded dependency decisions for `serde`, `toml`, `directories`, and `rusqlite`.

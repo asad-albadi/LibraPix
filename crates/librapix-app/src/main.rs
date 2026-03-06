@@ -2,6 +2,8 @@ mod format;
 mod ui;
 
 use chrono::Local;
+use iced::keyboard;
+use iced::keyboard::key;
 use iced::widget::{
     Id, Space, button, column, container, image, operation, responsive, row, scrollable, stack,
     text, text_input, vertical_slider,
@@ -91,6 +93,7 @@ enum Message {
     TimelineScrubReleased,
     JumpToTimelineAnchor(usize),
     MediaViewportChanged { absolute_y: f32, max_y: f32 },
+    KeyboardEvent(keyboard::Event),
     BackgroundWorkComplete(Box<BackgroundWorkResult>),
     OpenMediaById(i64),
     CopyMediaFileById(i64),
@@ -195,7 +198,27 @@ struct NewMediaAnnouncement {
     media_id: i64,
     title: String,
     metadata_line: String,
+    preview_path: Option<PathBuf>,
+    media_kind: String,
+    file_size_bytes: u64,
+    modified_unix_seconds: Option<i64>,
+    width_px: Option<u32>,
+    height_px: Option<u32>,
+    absolute_path: PathBuf,
     additional_count: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KeyboardShortcutAction {
+    CopyFile,
+    CopyPath,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct BrowseStats {
+    shown_items: usize,
+    image_count: usize,
+    video_count: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -301,6 +324,8 @@ struct WatchSubscriptionConfig {
 }
 
 fn subscription(app: &Librapix) -> Subscription<Message> {
+    let keyboard_subscription = keyboard::listen().map(Message::KeyboardEvent);
+
     let roots = app
         .state
         .library_roots
@@ -310,9 +335,12 @@ fn subscription(app: &Librapix) -> Subscription<Message> {
         .collect::<Vec<_>>();
 
     if roots.is_empty() {
-        Subscription::none()
+        keyboard_subscription
     } else {
-        Subscription::run_with(WatchSubscriptionConfig { roots }, watch_filesystem)
+        Subscription::batch(vec![
+            keyboard_subscription,
+            Subscription::run_with(WatchSubscriptionConfig { roots }, watch_filesystem),
+        ])
     }
 }
 
@@ -410,6 +438,7 @@ fn message_event_label(msg: &Message) -> String {
         Message::MediaViewportChanged { absolute_y, max_y } => {
             format!("MediaViewportChanged({absolute_y:.1}/{max_y:.1})")
         }
+        Message::KeyboardEvent(_) => "KeyboardEvent".into(),
         Message::BackgroundWorkComplete(_) => "BackgroundWorkComplete".into(),
         Message::OpenMediaById(id) => format!("OpenMediaById({id})"),
         Message::CopyMediaFileById(id) => format!("CopyMediaFileById({id})"),
@@ -532,6 +561,13 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
             run_gallery_projection(app);
         }
         Message::SelectMedia(media_id) => {
+            if app
+                .new_media_announcement
+                .as_ref()
+                .is_some_and(|announcement| announcement.media_id == media_id)
+            {
+                app.new_media_announcement = None;
+            }
             let now = Instant::now();
             let is_double_click = app.last_click_media_id == Some(media_id)
                 && app
@@ -669,6 +705,14 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
         }
         Message::MediaViewportChanged { absolute_y, max_y } => {
             sync_timeline_scrub_from_viewport(app, absolute_y, max_y);
+        }
+        Message::KeyboardEvent(event) => {
+            if let Some(action) = shortcut_action_from_keyboard_event(&event) {
+                match action {
+                    KeyboardShortcutAction::CopyFile => copy_selected_file(app),
+                    KeyboardShortcutAction::CopyPath => copy_selected_path(app),
+                }
+            }
         }
         Message::BackgroundWorkComplete(result) => {
             apply_background_result(app, *result);
@@ -1094,10 +1138,9 @@ fn view(app: &Librapix) -> Element<'_, Message> {
     let details_content = render_details_panel(app);
 
     // ── Body ──
-    let media_announcement = render_new_media_announcement(app);
     let body = row![
         sidebar,
-        container(column![media_header, media_announcement, media_body,].spacing(SPACE_SM),)
+        container(column![media_header, media_body,].spacing(SPACE_SM),)
             .padding(SPACE_LG as u16)
             .width(Length::Fill),
         container(scrollable(details_content).height(Length::Fill))
@@ -1107,11 +1150,20 @@ fn view(app: &Librapix) -> Element<'_, Message> {
     ]
     .height(Length::Fill);
 
-    container(column![header, body])
+    let shell: Element<'_, Message> = container(column![header, body])
         .width(Length::Fill)
         .height(Length::Fill)
         .style(app_bg_style)
-        .into()
+        .into();
+
+    if app.new_media_announcement.is_some() {
+        stack([shell, render_new_media_dialog(app)])
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+    } else {
+        shell
+    }
 }
 
 fn render_media_panel(app: &Librapix) -> (Element<'_, Message>, Element<'_, Message>) {
@@ -1127,7 +1179,12 @@ fn render_media_panel(app: &Librapix) -> (Element<'_, Message>, Element<'_, Mess
         Route::Gallery => &app.gallery_items,
         Route::Timeline => &app.timeline_items,
     };
-    let item_count = browse_items.iter().filter(|i| !i.is_group_header).count();
+    let stats_source = if app.state.search_query.trim().is_empty() {
+        browse_items
+    } else {
+        &app.search_items
+    };
+    let stats = compute_browse_stats(stats_source);
 
     let content_header = row![
         text(route_title).size(FONT_TITLE).color(TEXT_PRIMARY),
@@ -1137,8 +1194,13 @@ fn render_media_panel(app: &Librapix) -> (Element<'_, Message>, Element<'_, Mess
             .style(subtle_button_style)
             .padding([SPACE_XS as u16, SPACE_MD as u16]),
         text(format!(
-            "{item_count} {}",
-            app.i18n.text(TextKey::ItemsLabel)
+            "{}: {} \u{00B7} {}: {} \u{00B7} {}: {}",
+            app.i18n.text(TextKey::StatsShownLabel),
+            stats.shown_items,
+            app.i18n.text(TextKey::StatsImagesLabel),
+            stats.image_count,
+            app.i18n.text(TextKey::StatsVideosLabel),
+            stats.video_count
         ))
         .size(FONT_BODY)
         .color(TEXT_SECONDARY),
@@ -1417,6 +1479,21 @@ fn media_kind_icon_symbol(media_kind: &str) -> &'static str {
     }
 }
 
+fn compute_browse_stats(items: &[BrowseItem]) -> BrowseStats {
+    items.iter().filter(|item| !item.is_group_header).fold(
+        BrowseStats::default(),
+        |mut acc, item| {
+            acc.shown_items += 1;
+            if item.media_kind.eq_ignore_ascii_case("image") {
+                acc.image_count += 1;
+            } else if item.media_kind.eq_ignore_ascii_case("video") {
+                acc.video_count += 1;
+            }
+            acc
+        },
+    )
+}
+
 fn render_timeline_view<'a>(
     items: &'a [BrowseItem],
     selected_id: Option<i64>,
@@ -1569,7 +1646,7 @@ fn render_timeline_scrubber(app: &Librapix) -> Element<'_, Message> {
     .into()
 }
 
-fn render_new_media_announcement(app: &Librapix) -> Element<'_, Message> {
+fn render_new_media_dialog(app: &Librapix) -> Element<'_, Message> {
     let Some(announcement) = &app.new_media_announcement else {
         return column![].into();
     };
@@ -1587,49 +1664,137 @@ fn render_new_media_announcement(app: &Librapix) -> Element<'_, Message> {
         column![].into()
     };
 
-    container(
-        row![
+    let preview: Element<'_, Message> = if let Some(path) = &announcement.preview_path {
+        container(
+            image(image::Handle::from_path(path))
+                .width(Length::Fill)
+                .height(Length::Fixed(220.0))
+                .content_fit(ContentFit::Contain),
+        )
+        .style(card_style)
+        .into()
+    } else {
+        container(
+            text(announcement.title.as_str())
+                .size(FONT_CAPTION)
+                .color(TEXT_TERTIARY),
+        )
+        .height(Length::Fixed(180.0))
+        .center_y(Length::Shrink)
+        .style(thumb_placeholder_style)
+        .into()
+    };
+
+    let metadata_lines = column![
+        text(format!(
+            "{}: {}",
+            app.i18n.text(TextKey::DetailsKindLabel),
+            localized_media_kind_label(app.i18n, &announcement.media_kind),
+        ))
+        .size(FONT_CAPTION)
+        .color(TEXT_SECONDARY),
+        text(format!(
+            "{}: {}",
+            app.i18n.text(TextKey::DetailsSizeLabel),
+            format::format_file_size(announcement.file_size_bytes)
+        ))
+        .size(FONT_CAPTION)
+        .color(TEXT_SECONDARY),
+        text(format!(
+            "{}: {}",
+            app.i18n.text(TextKey::DetailsModifiedLabel),
+            format::format_timestamp(announcement.modified_unix_seconds)
+        ))
+        .size(FONT_CAPTION)
+        .color(TEXT_SECONDARY),
+        text(format!(
+            "{}: {}",
+            app.i18n.text(TextKey::DetailsDimensionsLabel),
+            format::format_dimensions(announcement.width_px, announcement.height_px),
+        ))
+        .size(FONT_CAPTION)
+        .color(TEXT_SECONDARY),
+        text(format!(
+            "{}: {}",
+            app.i18n.text(TextKey::DetailsPathLabel),
+            announcement.absolute_path.display()
+        ))
+        .size(FONT_CAPTION)
+        .color(TEXT_TERTIARY),
+    ]
+    .spacing(SPACE_2XS);
+
+    let actions = responsive(move |size: Size| {
+        let primary_padding = [SPACE_XS as u16, SPACE_MD as u16];
+        let subtle_padding = [SPACE_XS as u16, SPACE_MD as u16];
+
+        let view = button(text(app.i18n.text(TextKey::MediaSelectButton)).size(FONT_BODY))
+            .on_press(Message::SelectMedia(announcement.media_id))
+            .width(Length::Fill)
+            .style(subtle_button_style)
+            .padding(subtle_padding);
+        let open = button(text(app.i18n.text(TextKey::DetailsOpenFileButton)).size(FONT_BODY))
+            .on_press(Message::OpenMediaById(announcement.media_id))
+            .width(Length::Fill)
+            .style(action_button_style)
+            .padding(primary_padding);
+        let copy_file = button(text(app.i18n.text(TextKey::DetailsCopyFileButton)).size(FONT_BODY))
+            .on_press(Message::CopyMediaFileById(announcement.media_id))
+            .width(Length::Fill)
+            .style(action_button_style)
+            .padding(primary_padding);
+        let dismiss = button(text(app.i18n.text(TextKey::DismissButton)).size(FONT_BODY))
+            .on_press(Message::DismissNewMediaAnnouncement)
+            .width(Length::Fill)
+            .style(subtle_button_style)
+            .padding(subtle_padding);
+
+        if size.width < 460.0 {
             column![
-                text(app.i18n.text(TextKey::NewFileAnnouncementTitle))
-                    .size(FONT_CAPTION)
-                    .color(ACCENT),
-                text(announcement.title.as_str())
-                    .size(FONT_BODY)
-                    .color(TEXT_PRIMARY),
-                text(announcement.metadata_line.as_str())
-                    .size(FONT_CAPTION)
-                    .color(TEXT_SECONDARY),
-                more_line,
-            ]
-            .spacing(SPACE_2XS)
-            .width(Length::Fill),
-            row![
-                button(text(app.i18n.text(TextKey::MediaSelectButton)).size(FONT_CAPTION))
-                    .on_press(Message::SelectMedia(announcement.media_id))
-                    .style(subtle_button_style)
-                    .padding([SPACE_2XS as u16, SPACE_SM as u16]),
-                button(text(app.i18n.text(TextKey::DetailsOpenFileButton)).size(FONT_CAPTION))
-                    .on_press(Message::OpenMediaById(announcement.media_id))
-                    .style(action_button_style)
-                    .padding([SPACE_2XS as u16, SPACE_SM as u16]),
-                button(text(app.i18n.text(TextKey::DetailsCopyFileButton)).size(FONT_CAPTION))
-                    .on_press(Message::CopyMediaFileById(announcement.media_id))
-                    .style(action_button_style)
-                    .padding([SPACE_2XS as u16, SPACE_SM as u16]),
-                button(text(app.i18n.text(TextKey::DismissButton)).size(FONT_CAPTION))
-                    .on_press(Message::DismissNewMediaAnnouncement)
-                    .style(subtle_button_style)
-                    .padding([SPACE_2XS as u16, SPACE_SM as u16]),
+                row![view, open].spacing(SPACE_XS),
+                row![copy_file, dismiss].spacing(SPACE_XS),
             ]
             .spacing(SPACE_XS)
-            .align_y(iced::Alignment::Center),
+            .into()
+        } else {
+            row![view, open, copy_file, dismiss]
+                .spacing(SPACE_XS)
+                .into()
+        }
+    });
+
+    let dialog = container(
+        column![
+            text(app.i18n.text(TextKey::NewFileAnnouncementTitle))
+                .size(FONT_CAPTION)
+                .color(ACCENT),
+            text(announcement.title.as_str())
+                .size(FONT_SUBTITLE)
+                .color(TEXT_PRIMARY),
+            text(announcement.metadata_line.as_str())
+                .size(FONT_CAPTION)
+                .color(TEXT_SECONDARY),
+            more_line,
+            h_divider(),
+            preview,
+            metadata_lines,
+            actions,
         ]
-        .spacing(SPACE_SM)
-        .align_y(iced::Alignment::Center),
+        .spacing(SPACE_SM),
+    )
+    .width(Length::Fixed(560.0))
+    .max_width(680.0)
+    .padding(SPACE_LG as u16)
+    .style(modal_dialog_style);
+
+    container(
+        container(dialog)
+            .center_x(Length::Fill)
+            .center_y(Length::Fill),
     )
     .width(Length::Fill)
-    .padding([SPACE_XS as u16, SPACE_SM as u16])
-    .style(announcement_panel_style)
+    .height(Length::Fill)
+    .style(modal_backdrop_style)
     .into()
 }
 
@@ -1890,25 +2055,10 @@ fn render_details_panel(app: &Librapix) -> Element<'_, Message> {
         h_divider(),
         column![
             section_heading(app.i18n.text(TextKey::DetailsActionsSectionLabel)),
-            row![
-                button(text(app.i18n.text(TextKey::DetailsOpenFileButton)).size(FONT_BODY))
-                    .on_press(Message::OpenSelectedFile)
-                    .style(action_button_style)
-                    .padding([SPACE_XS as u16, SPACE_MD as u16]),
-                button(text(app.i18n.text(TextKey::DetailsOpenFolderButton)).size(FONT_BODY))
-                    .on_press(Message::OpenSelectedFolder)
-                    .style(action_button_style)
-                    .padding([SPACE_XS as u16, SPACE_MD as u16]),
-                button(text(app.i18n.text(TextKey::DetailsCopyFileButton)).size(FONT_BODY))
-                    .on_press(Message::CopySelectedFile)
-                    .style(action_button_style)
-                    .padding([SPACE_XS as u16, SPACE_MD as u16]),
-                button(text(app.i18n.text(TextKey::DetailsCopyPathButton)).size(FONT_BODY))
-                    .on_press(Message::CopySelectedPath)
-                    .style(subtle_button_style)
-                    .padding([SPACE_XS as u16, SPACE_MD as u16]),
-            ]
-            .spacing(SPACE_XS),
+            render_details_actions(app),
+            text(app.i18n.text(TextKey::DetailsCopyShortcutHint))
+                .size(FONT_CAPTION)
+                .color(TEXT_TERTIARY),
         ]
         .spacing(SPACE_SM),
         text(app.details_action_status.clone())
@@ -1919,6 +2069,50 @@ fn render_details_panel(app: &Librapix) -> Element<'_, Message> {
             .color(TEXT_TERTIARY),
     ]
     .spacing(SPACE_LG)
+    .into()
+}
+
+fn render_details_actions(app: &Librapix) -> Element<'_, Message> {
+    responsive(move |size: Size| {
+        let open = button(text(app.i18n.text(TextKey::DetailsOpenFileButton)).size(FONT_BODY))
+            .on_press(Message::OpenSelectedFile)
+            .width(Length::Fill)
+            .style(action_button_style)
+            .padding([SPACE_XS as u16, SPACE_MD as u16]);
+        let open_folder =
+            button(text(app.i18n.text(TextKey::DetailsOpenFolderButton)).size(FONT_BODY))
+                .on_press(Message::OpenSelectedFolder)
+                .width(Length::Fill)
+                .style(action_button_style)
+                .padding([SPACE_XS as u16, SPACE_MD as u16]);
+        let copy_file = button(text(app.i18n.text(TextKey::DetailsCopyFileButton)).size(FONT_BODY))
+            .on_press(Message::CopySelectedFile)
+            .width(Length::Fill)
+            .style(action_button_style)
+            .padding([SPACE_XS as u16, SPACE_MD as u16]);
+        let copy_path = button(text(app.i18n.text(TextKey::DetailsCopyPathButton)).size(FONT_BODY))
+            .on_press(Message::CopySelectedPath)
+            .width(Length::Fill)
+            .style(subtle_button_style)
+            .padding([SPACE_XS as u16, SPACE_MD as u16]);
+
+        if size.width < 220.0 {
+            column![open, open_folder, copy_file, copy_path]
+                .spacing(SPACE_XS)
+                .into()
+        } else if size.width < 420.0 {
+            column![
+                row![open, open_folder].spacing(SPACE_XS),
+                row![copy_file, copy_path].spacing(SPACE_XS),
+            ]
+            .spacing(SPACE_XS)
+            .into()
+        } else {
+            row![open, open_folder, copy_file, copy_path]
+                .spacing(SPACE_XS)
+                .into()
+        }
+    })
     .into()
 }
 
@@ -2642,6 +2836,38 @@ fn copy_file_to_clipboard(path: &Path) -> Result<(), std::io::Error> {
     }
 }
 
+fn shortcut_action_from_keyboard_event(event: &keyboard::Event) -> Option<KeyboardShortcutAction> {
+    let keyboard::Event::KeyPressed {
+        key,
+        modifiers,
+        repeat,
+        ..
+    } = event
+    else {
+        return None;
+    };
+
+    if *repeat || !modifiers.command() {
+        return None;
+    }
+
+    let is_copy_key = match key.as_ref() {
+        keyboard::Key::Character(value) => value.eq_ignore_ascii_case("c"),
+        keyboard::Key::Named(key::Named::Copy) => true,
+        _ => false,
+    };
+
+    if !is_copy_key {
+        return None;
+    }
+
+    if modifiers.shift() {
+        Some(KeyboardShortcutAction::CopyPath)
+    } else {
+        Some(KeyboardShortcutAction::CopyFile)
+    }
+}
+
 #[cfg(all(unix, not(target_os = "macos")))]
 fn path_to_file_uri(path: &Path) -> String {
     let mut uri = String::from("file://");
@@ -3294,6 +3520,13 @@ fn build_new_media_announcement(
             details.width_px,
             details.height_px,
         ),
+        preview_path: details.detail_thumbnail_path.clone(),
+        media_kind: details.media_kind.clone(),
+        file_size_bytes: details.file_size_bytes,
+        modified_unix_seconds: details.modified_unix_seconds,
+        width_px: details.width_px,
+        height_px: details.height_px,
+        absolute_path: details.absolute_path.clone(),
         additional_count: new_items.len().saturating_sub(1),
     })
 }
@@ -3395,6 +3628,22 @@ mod tests {
         }
     }
 
+    fn key_pressed_event(
+        key: keyboard::Key,
+        modifiers: keyboard::Modifiers,
+        repeat: bool,
+    ) -> keyboard::Event {
+        keyboard::Event::KeyPressed {
+            key: key.clone(),
+            modified_key: key,
+            physical_key: key::Physical::Unidentified(key::NativeCode::Unidentified),
+            location: keyboard::Location::Standard,
+            modifiers,
+            text: None,
+            repeat,
+        }
+    }
+
     #[test]
     fn scrub_value_to_anchor_index_maps_across_anchor_span() {
         let anchors = vec![
@@ -3428,6 +3677,30 @@ mod tests {
                 ("unknown".to_owned(), 4),
             ]
         );
+    }
+
+    #[test]
+    fn shortcut_mapping_uses_command_c_and_shift_variant() {
+        let file_copy = shortcut_action_from_keyboard_event(&key_pressed_event(
+            keyboard::Key::Character("c".into()),
+            keyboard::Modifiers::COMMAND,
+            false,
+        ));
+        assert_eq!(file_copy, Some(KeyboardShortcutAction::CopyFile));
+
+        let path_copy = shortcut_action_from_keyboard_event(&key_pressed_event(
+            keyboard::Key::Character("c".into()),
+            keyboard::Modifiers::COMMAND | keyboard::Modifiers::SHIFT,
+            false,
+        ));
+        assert_eq!(path_copy, Some(KeyboardShortcutAction::CopyPath));
+
+        let ignored_repeat = shortcut_action_from_keyboard_event(&key_pressed_event(
+            keyboard::Key::Character("c".into()),
+            keyboard::Modifiers::COMMAND,
+            true,
+        ));
+        assert_eq!(ignored_repeat, None);
     }
 
     #[test]

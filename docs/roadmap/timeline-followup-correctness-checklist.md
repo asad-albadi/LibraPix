@@ -11,31 +11,31 @@ This checklist tracks the correctness + UX fixes requested after the media-navig
 
 ## 2. New-file dialog redesign
 
-- [ ] Replace top-of-grid announcement card with modal dialog overlay
-- [ ] Show media preview in dialog
-- [ ] Show useful metadata in dialog
-- [ ] Provide quick actions (open, copy file, view/select, dismiss)
+- [x] Replace top-of-grid announcement card with modal dialog overlay
+- [x] Show media preview in dialog
+- [x] Show useful metadata in dialog
+- [x] Provide quick actions (open, copy file, view/select, dismiss)
 
 ## 3. Keyboard shortcuts for copy actions
 
-- [ ] Add keyboard shortcut for copy selected file
-- [ ] Add keyboard shortcut for copy selected path
-- [ ] Ensure shortcuts do not fire while text inputs handle key events
+- [x] Add keyboard shortcut for copy selected file
+- [x] Add keyboard shortcut for copy selected path
+- [x] Ensure shortcuts do not fire while text inputs handle key events
 - [ ] Document shortcut behavior in architecture/UI docs
 
 ## 4. Details action layout responsiveness
 
-- [ ] Fix details action row clipping/cutoff on narrow widths
-- [ ] Use responsive action layout without spacing hacks
-- [ ] Keep action styling consistent with current design system
+- [x] Fix details action row clipping/cutoff on narrow widths
+- [x] Use responsive action layout without spacing hacks
+- [x] Keep action styling consistent with current design system
 
 ## 5. Top browse statistics correctness
 
-- [ ] Replace inconsistent top count with derived current-result stats
-- [ ] Show total shown count
-- [ ] Show image count
-- [ ] Show video count
-- [ ] Ensure stats use active view/filter/search result source consistently
+- [x] Replace inconsistent top count with derived current-result stats
+- [x] Show total shown count
+- [x] Show image count
+- [x] Show video count
+- [x] Ensure stats use active view/filter/search result source consistently
 
 ## 6. Timeline regrouping for new files
 
@@ -68,7 +68,7 @@ This checklist tracks the correctness + UX fixes requested after the media-navig
 
 ## 10. Commit checkpoints
 
-- [ ] Commit timeline scrubber + regrouping fixes
+ - [x] Commit timeline scrubber + regrouping fixes
 - [ ] Commit dialog + shortcut + details/stats fixes
 - [ ] Commit docs reconciliation
 - [ ] Final clean working tree check

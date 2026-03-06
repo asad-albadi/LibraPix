@@ -217,13 +217,25 @@ pub fn scrubber_chip_style(_theme: &Theme) -> container::Style {
     }
 }
 
-pub fn announcement_panel_style(_theme: &Theme) -> container::Style {
+pub fn modal_backdrop_style(_theme: &Theme) -> container::Style {
     container::Style {
-        background: Some(Background::Color(BG_SURFACE)),
+        background: Some(Background::Color(Color {
+            r: 0.0,
+            g: 0.0,
+            b: 0.0,
+            a: 0.60,
+        })),
+        ..container::Style::default()
+    }
+}
+
+pub fn modal_dialog_style(_theme: &Theme) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(BG_LAYER)),
         border: Border {
             color: ACCENT_SUBTLE,
             width: 1.0,
-            radius: RADIUS_MD.into(),
+            radius: RADIUS_LG.into(),
         },
         ..container::Style::default()
     }

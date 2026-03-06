@@ -21,6 +21,8 @@ All notable changes to this project are documented in this file.
   - `0003_indexed_media_baseline.sql`
 - Added `librapix-indexer` crate with scan roots pipeline, media candidate generation, and ignore engine tests.
 - Added ADR `0005` for indexing + ignore-rule baseline.
+- Added metadata extraction baseline for indexed media (size, modified time, image dimensions where supported).
+- Added `docs/architecture/metadata.md`.
 
 ### Changed
 - Migrated from a single-crate starter to a multi-crate workspace.
@@ -30,8 +32,10 @@ All notable changes to this project are documented in this file.
 - App orchestration now supports explicit root management flows (add, update, deactivate/reactivate, remove, refresh, select).
 - App now runs an indexing baseline flow against persisted roots and stores candidates in `indexed_media`.
 - Ignore rules are now centrally evaluated through the indexer engine.
+- Indexing now applies incremental change detection (`new` / `changed` / `unchanged`) and marks missing files without destructive deletion.
 
 ### Docs
 - Established baseline documentation for dependencies, troubleshooting, architecture, and repository map.
 - Recorded dependency decisions for `serde`, `toml`, `directories`, and `rusqlite`.
 - Recorded dependency decisions for `globset` and `walkdir`.
+- Recorded dependency decisions for `imagesize`.

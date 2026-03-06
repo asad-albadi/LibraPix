@@ -25,6 +25,12 @@ pub struct IndexingSummary {
     pub scanned_roots: usize,
     pub candidate_files: usize,
     pub ignored_entries: usize,
+    pub unreadable_entries: usize,
+    pub new_files: usize,
+    pub changed_files: usize,
+    pub unchanged_files: usize,
+    pub missing_marked: usize,
+    pub read_model_count: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -34,6 +40,8 @@ pub struct AppState {
     pub selected_root_id: Option<i64>,
     pub library_roots: Vec<LibraryRootView>,
     pub indexing_summary: IndexingSummary,
+    pub search_query: String,
+    pub search_preview: Vec<String>,
 }
 
 impl Default for AppState {
@@ -44,6 +52,8 @@ impl Default for AppState {
             selected_root_id: None,
             library_roots: Vec::new(),
             indexing_summary: IndexingSummary::default(),
+            search_query: String::new(),
+            search_preview: Vec::new(),
         }
     }
 }
@@ -57,6 +67,8 @@ pub enum AppMessage {
     ReplaceLibraryRoots,
     ClearRootSelection,
     RecordIndexingSummary,
+    SetSearchQuery,
+    ReplaceSearchPreview,
 }
 
 impl AppState {
@@ -68,7 +80,9 @@ impl AppState {
             | AppMessage::SetSelectedRoot
             | AppMessage::ReplaceLibraryRoots
             | AppMessage::ClearRootSelection
-            | AppMessage::RecordIndexingSummary => {}
+            | AppMessage::RecordIndexingSummary
+            | AppMessage::SetSearchQuery
+            | AppMessage::ReplaceSearchPreview => {}
         }
     }
 
@@ -104,5 +118,13 @@ impl AppState {
 
     pub fn record_indexing_summary(&mut self, summary: IndexingSummary) {
         self.indexing_summary = summary;
+    }
+
+    pub fn set_search_query(&mut self, query: String) {
+        self.search_query = query;
+    }
+
+    pub fn replace_search_preview(&mut self, rows: Vec<String>) {
+        self.search_preview = rows;
     }
 }

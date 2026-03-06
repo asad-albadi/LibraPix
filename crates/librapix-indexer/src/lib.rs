@@ -1,11 +1,14 @@
 mod ignore;
 mod media;
 
-use std::path::{Path, PathBuf};
+use std::collections::HashMap;
+use std::fs;
+use std::path::PathBuf;
+use std::time::UNIX_EPOCH;
 use walkdir::WalkDir;
 
 pub use ignore::{IgnoreEngine, IgnorePatternError};
-pub use media::{MediaKind, classify_media_kind};
+pub use media::{MediaKind, classify_media_kind, extract_image_dimensions};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScanRoot {
@@ -20,6 +23,51 @@ pub struct IndexCandidate {
     pub media_kind: MediaKind,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExistingIndexedEntry {
+    pub source_root_id: i64,
+    pub absolute_path: PathBuf,
+    pub file_size_bytes: u64,
+    pub modified_unix_seconds: Option<i64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChangeKind {
+    New,
+    Changed,
+    Unchanged,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MetadataStatus {
+    Ok,
+    Partial,
+    Unreadable,
+}
+
+impl MetadataStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            MetadataStatus::Ok => "ok",
+            MetadataStatus::Partial => "partial",
+            MetadataStatus::Unreadable => "unreadable",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IndexedMediaUpsert {
+    pub source_root_id: i64,
+    pub absolute_path: PathBuf,
+    pub media_kind: MediaKind,
+    pub file_size_bytes: u64,
+    pub modified_unix_seconds: Option<i64>,
+    pub width_px: Option<u32>,
+    pub height_px: Option<u32>,
+    pub metadata_status: MetadataStatus,
+    pub change_kind: ChangeKind,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct IndexingSummary {
     pub scanned_roots: usize,
@@ -27,16 +75,29 @@ pub struct IndexingSummary {
     pub missing_roots: usize,
     pub candidate_files: usize,
     pub ignored_entries: usize,
+    pub unreadable_entries: usize,
+    pub new_files: usize,
+    pub changed_files: usize,
+    pub unchanged_files: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct IndexingResult {
     pub summary: IndexingSummary,
-    pub candidates: Vec<IndexCandidate>,
+    pub candidates: Vec<IndexedMediaUpsert>,
+    pub scanned_root_ids: Vec<i64>,
 }
 
-pub fn scan_roots(roots: &[ScanRoot], ignore_engine: &IgnoreEngine) -> IndexingResult {
+pub fn scan_roots(
+    roots: &[ScanRoot],
+    ignore_engine: &IgnoreEngine,
+    existing_entries: &[ExistingIndexedEntry],
+) -> IndexingResult {
     let mut result = IndexingResult::default();
+    let existing_by_path: HashMap<PathBuf, &ExistingIndexedEntry> = existing_entries
+        .iter()
+        .map(|entry| (entry.absolute_path.clone(), entry))
+        .collect();
 
     for root in roots {
         if !root.normalized_path.is_dir() {
@@ -46,6 +107,7 @@ pub fn scan_roots(roots: &[ScanRoot], ignore_engine: &IgnoreEngine) -> IndexingR
         }
 
         result.summary.scanned_roots += 1;
+        result.scanned_root_ids.push(root.source_root_id);
 
         for entry in WalkDir::new(&root.normalized_path)
             .follow_links(false)
@@ -69,31 +131,81 @@ pub fn scan_roots(roots: &[ScanRoot], ignore_engine: &IgnoreEngine) -> IndexingR
             let Some(kind) = classify_media_kind(path) else {
                 continue;
             };
+            let path_buf = path.to_path_buf();
 
-            result.candidates.push(IndexCandidate {
+            let fs_meta = fs::metadata(path);
+            let (file_size_bytes, modified_unix_seconds) = match fs_meta {
+                Ok(meta) => {
+                    let modified = meta
+                        .modified()
+                        .ok()
+                        .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
+                        .map(|duration| duration.as_secs() as i64);
+                    (meta.len(), modified)
+                }
+                Err(_) => {
+                    result.summary.unreadable_entries += 1;
+                    result.candidates.push(IndexedMediaUpsert {
+                        source_root_id: root.source_root_id,
+                        absolute_path: path_buf,
+                        media_kind: kind,
+                        file_size_bytes: 0,
+                        modified_unix_seconds: None,
+                        width_px: None,
+                        height_px: None,
+                        metadata_status: MetadataStatus::Unreadable,
+                        change_kind: ChangeKind::Changed,
+                    });
+                    result.summary.candidate_files += 1;
+                    result.summary.changed_files += 1;
+                    continue;
+                }
+            };
+
+            let existing = existing_by_path.get(&path_buf).copied();
+            let change_kind = match existing {
+                None => ChangeKind::New,
+                Some(previous)
+                    if previous.file_size_bytes == file_size_bytes
+                        && previous.modified_unix_seconds == modified_unix_seconds =>
+                {
+                    ChangeKind::Unchanged
+                }
+                Some(_) => ChangeKind::Changed,
+            };
+
+            let (width_px, height_px, metadata_status) =
+                if kind == MediaKind::Image && change_kind != ChangeKind::Unchanged {
+                    match extract_image_dimensions(path) {
+                        Some((width, height)) => (Some(width), Some(height), MetadataStatus::Ok),
+                        None => (None, None, MetadataStatus::Partial),
+                    }
+                } else {
+                    (None, None, MetadataStatus::Ok)
+                };
+
+            match change_kind {
+                ChangeKind::New => result.summary.new_files += 1,
+                ChangeKind::Changed => result.summary.changed_files += 1,
+                ChangeKind::Unchanged => result.summary.unchanged_files += 1,
+            }
+
+            result.candidates.push(IndexedMediaUpsert {
                 source_root_id: root.source_root_id,
-                absolute_path: path.to_path_buf(),
+                absolute_path: path_buf,
                 media_kind: kind,
+                file_size_bytes,
+                modified_unix_seconds,
+                width_px,
+                height_px,
+                metadata_status,
+                change_kind,
             });
             result.summary.candidate_files += 1;
         }
     }
 
     result
-}
-
-pub fn candidates_for_storage(result: &IndexingResult) -> Vec<(i64, &Path, &'static str)> {
-    result
-        .candidates
-        .iter()
-        .map(|candidate| {
-            (
-                candidate.source_root_id,
-                candidate.absolute_path.as_path(),
-                candidate.media_kind.as_str(),
-            )
-        })
-        .collect()
 }
 
 #[cfg(test)]
@@ -129,10 +241,11 @@ mod tests {
             normalized_path: root.clone(),
         }];
 
-        let result = scan_roots(&roots, &ignore);
+        let result = scan_roots(&roots, &ignore, &[]);
         assert_eq!(result.summary.scanned_roots, 1);
         assert_eq!(result.summary.candidate_files, 2);
         assert_eq!(result.summary.ignored_entries, 1);
+        assert_eq!(result.summary.new_files, 2);
         assert!(
             result
                 .candidates
@@ -145,6 +258,39 @@ mod tests {
                 .iter()
                 .any(|candidate| candidate.absolute_path.ends_with("clip.mp4"))
         );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn detects_unchanged_entries() {
+        let root = temp_dir("unchanged");
+        fs::create_dir_all(&root).expect("root should be created");
+        let file = root.join("same.png");
+        fs::write(&file, []).expect("file should be created");
+        let metadata = fs::metadata(&file).expect("metadata should load");
+        let modified = metadata
+            .modified()
+            .ok()
+            .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
+            .map(|duration| duration.as_secs() as i64);
+
+        let existing = vec![ExistingIndexedEntry {
+            source_root_id: 1,
+            absolute_path: file.clone(),
+            file_size_bytes: metadata.len(),
+            modified_unix_seconds: modified,
+        }];
+        let roots = vec![ScanRoot {
+            source_root_id: 1,
+            normalized_path: root.clone(),
+        }];
+        let ignore = IgnoreEngine::new(&[]).expect("ignore should compile");
+
+        let result = scan_roots(&roots, &ignore, &existing);
+        assert_eq!(result.summary.unchanged_files, 1);
+        assert_eq!(result.candidates.len(), 1);
+        assert_eq!(result.candidates[0].change_kind, ChangeKind::Unchanged);
 
         let _ = fs::remove_dir_all(root);
     }

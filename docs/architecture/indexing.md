@@ -18,6 +18,10 @@ Indexing is a dedicated subsystem (`librapix-indexer`) isolated from UI renderin
 - Media-kind detection by supported extension set
 - Candidate writer to app-managed `indexed_media` table
 - Missing-root reconciliation delegated to storage lifecycle updates
+- Metadata extraction stage:
+  - file size and modified timestamp
+  - image dimensions when available
+  - extraction status (`ok` / `partial` / `unreadable`)
 
 ## Baseline pipeline
 
@@ -25,7 +29,8 @@ Indexing is a dedicated subsystem (`librapix-indexer`) isolated from UI renderin
 2. Load eligible roots.
 3. Load enabled ignore rules.
 4. Scan filesystem and filter ignored entries.
-5. Emit image/video candidates.
-6. Persist candidates in Librapix storage.
+5. Detect incremental change class (`new` / `changed` / `unchanged`).
+6. Extract baseline metadata for new/changed entries.
+7. Persist/upsert candidates and mark missing files for scanned roots.
 
 No indexing logic should be embedded inside view widgets.

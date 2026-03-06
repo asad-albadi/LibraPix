@@ -1,6 +1,6 @@
 mod migration;
 
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::fs;
@@ -45,6 +45,95 @@ pub struct IndexedMediaRecord {
     pub source_root_id: i64,
     pub absolute_path: PathBuf,
     pub media_kind: String,
+    pub file_size_bytes: u64,
+    pub modified_unix_seconds: Option<i64>,
+    pub width_px: Option<u32>,
+    pub height_px: Option<u32>,
+    pub metadata_status: IndexedMetadataStatus,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IndexedMetadataStatus {
+    Ok,
+    Partial,
+    Unreadable,
+    Missing,
+}
+
+impl IndexedMetadataStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            IndexedMetadataStatus::Ok => "ok",
+            IndexedMetadataStatus::Partial => "partial",
+            IndexedMetadataStatus::Unreadable => "unreadable",
+            IndexedMetadataStatus::Missing => "missing",
+        }
+    }
+
+    fn from_str(value: &str) -> Option<Self> {
+        match value {
+            "ok" => Some(Self::Ok),
+            "partial" => Some(Self::Partial),
+            "unreadable" => Some(Self::Unreadable),
+            "missing" => Some(Self::Missing),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IndexedMediaSnapshot {
+    pub source_root_id: i64,
+    pub absolute_path: PathBuf,
+    pub file_size_bytes: u64,
+    pub modified_unix_seconds: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IndexedMediaWrite {
+    pub source_root_id: i64,
+    pub absolute_path: PathBuf,
+    pub media_kind: String,
+    pub file_size_bytes: u64,
+    pub modified_unix_seconds: Option<i64>,
+    pub width_px: Option<u32>,
+    pub height_px: Option<u32>,
+    pub metadata_status: IndexedMetadataStatus,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct IncrementalApplySummary {
+    pub upserted_count: usize,
+    pub missing_marked_count: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TagKind {
+    App,
+    Game,
+}
+
+impl TagKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            TagKind::App => "app",
+            TagKind::Game => "game",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MediaReadModel {
+    pub media_id: i64,
+    pub source_root_id: i64,
+    pub absolute_path: PathBuf,
+    pub media_kind: String,
+    pub file_size_bytes: u64,
+    pub modified_unix_seconds: Option<i64>,
+    pub width_px: Option<u32>,
+    pub height_px: Option<u32>,
+    pub metadata_status: IndexedMetadataStatus,
+    pub tags: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -278,37 +367,159 @@ impl Storage {
         &mut self,
         entries: &[(i64, &Path, &str)],
     ) -> Result<(), StorageError> {
+        let writes = entries
+            .iter()
+            .map(|(root_id, absolute_path, media_kind)| IndexedMediaWrite {
+                source_root_id: *root_id,
+                absolute_path: (*absolute_path).to_path_buf(),
+                media_kind: (*media_kind).to_owned(),
+                file_size_bytes: 0,
+                modified_unix_seconds: None,
+                width_px: None,
+                height_px: None,
+                metadata_status: IndexedMetadataStatus::Ok,
+            })
+            .collect::<Vec<_>>();
+        let root_ids = writes
+            .iter()
+            .map(|entry| entry.source_root_id)
+            .collect::<Vec<_>>();
+        self.apply_incremental_index(&writes, &root_ids).map(|_| ())
+    }
+
+    pub fn apply_incremental_index(
+        &mut self,
+        entries: &[IndexedMediaWrite],
+        scanned_root_ids: &[i64],
+    ) -> Result<IncrementalApplySummary, StorageError> {
         let transaction = self.connection.transaction()?;
-        transaction.execute("DELETE FROM indexed_media", [])?;
+        transaction.execute_batch(
+            "CREATE TEMP TABLE IF NOT EXISTS temp_seen_paths (
+                absolute_path TEXT PRIMARY KEY
+            );
+            DELETE FROM temp_seen_paths;",
+        )?;
+
         {
-            let mut insert = transaction.prepare(
-                "INSERT INTO indexed_media (source_root_id, absolute_path, media_kind)
-                 VALUES (?1, ?2, ?3)",
+            let mut mark_seen = transaction.prepare(
+                "INSERT OR IGNORE INTO temp_seen_paths (absolute_path)
+                 VALUES (?1)",
             )?;
-            for (root_id, absolute_path, media_kind) in entries {
-                insert.execute(params![
-                    root_id,
-                    absolute_path.to_string_lossy().to_string(),
-                    media_kind
+            let mut upsert = transaction.prepare(
+                "INSERT INTO indexed_media (
+                    source_root_id,
+                    absolute_path,
+                    media_kind,
+                    file_size_bytes,
+                    modified_unix_seconds,
+                    width_px,
+                    height_px,
+                    metadata_status,
+                    last_seen_at,
+                    missing_since
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, CURRENT_TIMESTAMP, NULL)
+                 ON CONFLICT(absolute_path) DO UPDATE SET
+                    source_root_id = excluded.source_root_id,
+                    media_kind = excluded.media_kind,
+                    file_size_bytes = excluded.file_size_bytes,
+                    modified_unix_seconds = excluded.modified_unix_seconds,
+                    width_px = excluded.width_px,
+                    height_px = excluded.height_px,
+                    metadata_status = excluded.metadata_status,
+                    last_seen_at = CURRENT_TIMESTAMP,
+                    missing_since = NULL",
+            )?;
+
+            for entry in entries {
+                let path_string = entry.absolute_path.to_string_lossy().to_string();
+                mark_seen.execute(params![path_string])?;
+                upsert.execute(params![
+                    entry.source_root_id,
+                    entry.absolute_path.to_string_lossy().to_string(),
+                    entry.media_kind,
+                    i64::try_from(entry.file_size_bytes).unwrap_or(i64::MAX),
+                    entry.modified_unix_seconds,
+                    entry.width_px.map(i64::from),
+                    entry.height_px.map(i64::from),
+                    entry.metadata_status.as_str(),
                 ])?;
             }
         }
+
+        let missing_marked_count = if scanned_root_ids.is_empty() {
+            0
+        } else {
+            let placeholders = vec!["?"; scanned_root_ids.len()].join(", ");
+            let query = format!(
+                "UPDATE indexed_media
+                 SET metadata_status = 'missing',
+                     missing_since = COALESCE(missing_since, CURRENT_TIMESTAMP)
+                 WHERE source_root_id IN ({placeholders})
+                   AND absolute_path NOT IN (SELECT absolute_path FROM temp_seen_paths)
+                   AND metadata_status != 'missing'"
+            );
+            transaction.execute(&query, params_from_iter(scanned_root_ids.iter()))?
+        };
+
         transaction.commit()?;
-        Ok(())
+        Ok(IncrementalApplySummary {
+            upserted_count: entries.len(),
+            missing_marked_count,
+        })
+    }
+
+    pub fn list_existing_indexed_media_snapshots(
+        &self,
+        root_ids: &[i64],
+    ) -> Result<Vec<IndexedMediaSnapshot>, StorageError> {
+        if root_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let placeholders = vec!["?"; root_ids.len()].join(", ");
+        let query = format!(
+            "SELECT source_root_id, absolute_path, file_size_bytes, modified_unix_seconds
+             FROM indexed_media
+             WHERE source_root_id IN ({placeholders})"
+        );
+        let mut statement = self.connection.prepare(&query)?;
+        let rows = statement.query_map(params_from_iter(root_ids.iter()), |row| {
+            Ok(IndexedMediaSnapshot {
+                source_root_id: row.get(0)?,
+                absolute_path: PathBuf::from(row.get::<usize, String>(1)?),
+                file_size_bytes: row.get::<usize, i64>(2).map_or(0, |v| v.max(0) as u64),
+                modified_unix_seconds: row.get(3)?,
+            })
+        })?;
+        let collected: Result<Vec<_>, rusqlite::Error> = rows.collect();
+        Ok(collected?)
     }
 
     pub fn list_indexed_media(&self) -> Result<Vec<IndexedMediaRecord>, StorageError> {
         let mut statement = self.connection.prepare(
-            "SELECT id, source_root_id, absolute_path, media_kind
+            "SELECT id, source_root_id, absolute_path, media_kind,
+                    file_size_bytes, modified_unix_seconds, width_px, height_px, metadata_status
              FROM indexed_media
              ORDER BY id ASC",
         )?;
         let rows = statement.query_map([], |row| {
+            let status_string: String = row.get(8)?;
+            let metadata_status = IndexedMetadataStatus::from_str(&status_string)
+                .ok_or_else(|| rusqlite::Error::InvalidParameterName(status_string.clone()))?;
             Ok(IndexedMediaRecord {
                 id: row.get(0)?,
                 source_root_id: row.get(1)?,
                 absolute_path: PathBuf::from(row.get::<usize, String>(2)?),
                 media_kind: row.get(3)?,
+                file_size_bytes: row.get::<usize, i64>(4).map_or(0, |v| v.max(0) as u64),
+                modified_unix_seconds: row.get(5)?,
+                width_px: row
+                    .get::<usize, Option<i64>>(6)?
+                    .and_then(|v| u32::try_from(v).ok()),
+                height_px: row
+                    .get::<usize, Option<i64>>(7)?
+                    .and_then(|v| u32::try_from(v).ok()),
+                metadata_status,
             })
         })?;
         let collected: Result<Vec<_>, rusqlite::Error> = rows.collect();
@@ -320,6 +531,118 @@ impl Storage {
         self.upsert_ignore_rule("global", "**/cache/**", true)?;
         self.upsert_ignore_rule("global", "**/*.tmp", true)?;
         Ok(())
+    }
+
+    pub fn upsert_tag(&self, name: &str, kind: TagKind) -> Result<i64, StorageError> {
+        self.connection.execute(
+            "INSERT INTO tags (name, kind)
+             VALUES (?1, ?2)
+             ON CONFLICT(name) DO UPDATE SET kind = excluded.kind",
+            params![name, kind.as_str()],
+        )?;
+        let id = self.connection.query_row(
+            "SELECT id FROM tags WHERE name = ?1",
+            params![name],
+            |row| row.get(0),
+        )?;
+        Ok(id)
+    }
+
+    pub fn attach_tag_to_media(&self, media_id: i64, tag_id: i64) -> Result<(), StorageError> {
+        self.connection.execute(
+            "INSERT OR IGNORE INTO media_tags (media_id, tag_id) VALUES (?1, ?2)",
+            params![media_id, tag_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_media_read_models(
+        &self,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<MediaReadModel>, StorageError> {
+        self.query_media_read_models(None, limit, offset)
+    }
+
+    pub fn search_media_read_models(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<MediaReadModel>, StorageError> {
+        self.query_media_read_models(Some(query), limit, 0)
+    }
+
+    fn query_media_read_models(
+        &self,
+        query: Option<&str>,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<MediaReadModel>, StorageError> {
+        let sql_with_filter = "
+            SELECT m.id, m.source_root_id, m.absolute_path, m.media_kind,
+                   m.file_size_bytes, m.modified_unix_seconds, m.width_px, m.height_px,
+                   m.metadata_status, COALESCE(GROUP_CONCAT(t.name, ','), '')
+            FROM indexed_media m
+            LEFT JOIN media_tags mt ON mt.media_id = m.id
+            LEFT JOIN tags t ON t.id = mt.tag_id
+            WHERE m.metadata_status != 'missing'
+              AND (m.absolute_path LIKE '%' || ?1 || '%' OR t.name LIKE '%' || ?1 || '%')
+            GROUP BY m.id
+            ORDER BY m.absolute_path ASC
+            LIMIT ?2 OFFSET ?3";
+
+        let sql_without_filter = "
+            SELECT m.id, m.source_root_id, m.absolute_path, m.media_kind,
+                   m.file_size_bytes, m.modified_unix_seconds, m.width_px, m.height_px,
+                   m.metadata_status, COALESCE(GROUP_CONCAT(t.name, ','), '')
+            FROM indexed_media m
+            LEFT JOIN media_tags mt ON mt.media_id = m.id
+            LEFT JOIN tags t ON t.id = mt.tag_id
+            WHERE m.metadata_status != 'missing'
+            GROUP BY m.id
+            ORDER BY m.absolute_path ASC
+            LIMIT ?1 OFFSET ?2";
+
+        let mut statement = self.connection.prepare(if query.is_some() {
+            sql_with_filter
+        } else {
+            sql_without_filter
+        })?;
+
+        let mapper = |row: &rusqlite::Row<'_>| -> Result<MediaReadModel, rusqlite::Error> {
+            let status_string: String = row.get(8)?;
+            let metadata_status = IndexedMetadataStatus::from_str(&status_string)
+                .ok_or_else(|| rusqlite::Error::InvalidParameterName(status_string.clone()))?;
+            let tags_csv: String = row.get(9)?;
+            Ok(MediaReadModel {
+                media_id: row.get(0)?,
+                source_root_id: row.get(1)?,
+                absolute_path: PathBuf::from(row.get::<usize, String>(2)?),
+                media_kind: row.get(3)?,
+                file_size_bytes: row.get::<usize, i64>(4).map_or(0, |v| v.max(0) as u64),
+                modified_unix_seconds: row.get(5)?,
+                width_px: row
+                    .get::<usize, Option<i64>>(6)?
+                    .and_then(|v| u32::try_from(v).ok()),
+                height_px: row
+                    .get::<usize, Option<i64>>(7)?
+                    .and_then(|v| u32::try_from(v).ok()),
+                metadata_status,
+                tags: if tags_csv.is_empty() {
+                    Vec::new()
+                } else {
+                    tags_csv.split(',').map(ToOwned::to_owned).collect()
+                },
+            })
+        };
+
+        let rows = if let Some(text) = query {
+            statement.query_map(params![text, limit as i64, offset as i64], mapper)?
+        } else {
+            statement.query_map(params![limit as i64, offset as i64], mapper)?
+        };
+        let collected: Result<Vec<_>, rusqlite::Error> = rows.collect();
+        Ok(collected?)
     }
 }
 
@@ -346,7 +669,7 @@ mod tests {
         let version = storage
             .migration_version()
             .expect("migration version should be queryable");
-        assert_eq!(version, 3);
+        assert_eq!(version, 5);
 
         let _ = std::fs::remove_file(db);
     }
@@ -393,6 +716,47 @@ mod tests {
             .expect("deactivate should work");
         let roots_after = storage.list_source_roots().expect("roots should list");
         assert_eq!(roots_after[0].lifecycle, SourceRootLifecycle::Deactivated);
+
+        let _ = std::fs::remove_file(db);
+    }
+
+    #[test]
+    fn incremental_apply_marks_missing_entries() {
+        let db = temp_db_file("incremental");
+        let mut storage = Storage::open(&db).expect("database should open");
+        let root = Path::new("/tmp/librapix-incremental-root");
+        storage
+            .upsert_source_root(root)
+            .expect("root insert should work");
+        let root_id = storage
+            .list_source_roots()
+            .expect("roots should list")
+            .first()
+            .expect("one root expected")
+            .id;
+
+        let first = vec![IndexedMediaWrite {
+            source_root_id: root_id,
+            absolute_path: PathBuf::from("/tmp/librapix-incremental-root/a.png"),
+            media_kind: "image".to_owned(),
+            file_size_bytes: 10,
+            modified_unix_seconds: Some(100),
+            width_px: Some(10),
+            height_px: Some(10),
+            metadata_status: IndexedMetadataStatus::Ok,
+        }];
+        storage
+            .apply_incremental_index(&first, &[root_id])
+            .expect("first apply should work");
+
+        let summary = storage
+            .apply_incremental_index(&[], &[root_id])
+            .expect("second apply should work");
+        assert_eq!(summary.missing_marked_count, 1);
+
+        let media = storage.list_indexed_media().expect("media should list");
+        assert_eq!(media.len(), 1);
+        assert_eq!(media[0].metadata_status, IndexedMetadataStatus::Missing);
 
         let _ = std::fs::remove_file(db);
     }

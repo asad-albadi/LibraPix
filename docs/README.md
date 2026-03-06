@@ -15,6 +15,7 @@ This repository is documentation-driven. Architecture and operational decisions 
 - `docs/architecture/message-flow.md`
 - `docs/architecture/indexing.md`
 - `docs/architecture/storage.md`
+- `docs/architecture/metadata.md`
 - `docs/architecture/config.md`
 - `docs/architecture/i18n.md`
 - `docs/architecture/ignore-rules.md`
@@ -27,6 +28,7 @@ This repository is documentation-driven. Architecture and operational decisions 
 - `docs/roadmap/bootstrap-checklist.md`
 - `docs/roadmap/config-storage-checklist.md`
 - `docs/roadmap/library-indexing-foundation-checklist.md`
+- `docs/roadmap/metadata-incremental-search-checklist.md`
 
 ## ADRs
 

@@ -35,7 +35,17 @@ SQLite is the primary persistent store for Librapix-owned metadata.
 - `ignore_rules`
   - scope + pattern + enabled marker
 - `indexed_media`
-  - minimal indexed path records (`absolute_path`, `media_kind`, `source_root_id`)
+  - indexed path records and metadata baseline:
+    - `absolute_path`
+    - `media_kind`
+    - `source_root_id`
+    - `file_size_bytes`
+    - `modified_unix_seconds`
+    - optional `width_px` / `height_px`
+    - `metadata_status`
+    - `last_seen_at` / `missing_since`
+- `tags` / `media_tags`
+  - minimal tag-readiness schema for search-facing read models
 
 This schema is intentionally minimal to avoid overbuilding before indexing and search are implemented.
 
@@ -52,6 +62,7 @@ This schema is intentionally minimal to avoid overbuilding before indexing and s
 - User-driven deactivation transitions roots to `deactivated`.
 - Removal is explicit and deletes only Librapix-managed records.
 - Future indexing phases will define lifecycle transitions for missing media under existing roots.
+- Indexed media missing-file reconciliation marks records as `missing` rather than deleting source data.
 
 ## Path handling policy baseline
 

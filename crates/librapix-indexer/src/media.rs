@@ -24,6 +24,11 @@ pub fn classify_media_kind(path: &Path) -> Option<MediaKind> {
     }
 }
 
+pub fn extract_image_dimensions(path: &Path) -> Option<(u32, u32)> {
+    let size = imagesize::size(path).ok()?;
+    Some((size.width as u32, size.height as u32))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -40,5 +45,10 @@ mod tests {
             Some(MediaKind::Video)
         );
         assert_eq!(classify_media_kind(&PathBuf::from("/tmp/a.txt")), None);
+    }
+
+    #[test]
+    fn returns_none_for_non_image_dimensions() {
+        assert_eq!(extract_image_dimensions(&PathBuf::from("/tmp/a.mp4")), None);
     }
 }

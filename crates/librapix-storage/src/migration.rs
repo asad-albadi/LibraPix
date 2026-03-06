@@ -7,7 +7,7 @@ struct Migration {
     sql: &'static str,
 }
 
-const MIGRATIONS: [Migration; 3] = [
+const MIGRATIONS: [Migration; 5] = [
     Migration {
         version: 1,
         name: "baseline_foundation",
@@ -22,6 +22,16 @@ const MIGRATIONS: [Migration; 3] = [
         version: 3,
         name: "indexed_media_baseline",
         sql: include_str!("../migrations/0003_indexed_media_baseline.sql"),
+    },
+    Migration {
+        version: 4,
+        name: "indexed_media_metadata_incremental",
+        sql: include_str!("../migrations/0004_indexed_media_metadata_incremental.sql"),
+    },
+    Migration {
+        version: 5,
+        name: "tags_baseline",
+        sql: include_str!("../migrations/0005_tags_baseline.sql"),
     },
 ];
 

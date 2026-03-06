@@ -6,8 +6,8 @@ use librapix_core::app::{
 };
 use librapix_core::domain::non_destructive;
 use librapix_i18n::{Locale, TextKey, Translator};
-use librapix_indexer::{IgnoreEngine, ScanRoot, candidates_for_storage, scan_roots};
-use librapix_storage::{SourceRootLifecycle, Storage};
+use librapix_indexer::{IgnoreEngine, ScanRoot, scan_roots};
+use librapix_storage::{IndexedMediaWrite, IndexedMetadataStatus, SourceRootLifecycle, Storage};
 use std::path::PathBuf;
 
 fn main() -> iced::Result {
@@ -30,6 +30,8 @@ enum Message {
     RemoveRoot,
     RefreshRoots,
     RunIndexing,
+    SearchQueryChanged(String),
+    RunSearchQuery,
 }
 
 struct Librapix {
@@ -146,6 +148,13 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
         Message::RunIndexing => {
             run_indexing(app);
         }
+        Message::SearchQueryChanged(value) => {
+            app.state.apply(AppMessage::SetSearchQuery);
+            app.state.set_search_query(value);
+        }
+        Message::RunSearchQuery => {
+            run_read_model_query(app);
+        }
     }
 
     Task::none()
@@ -223,12 +232,41 @@ fn view(app: &Librapix) -> Element<'_, Message> {
         .spacing(8),
         button(app.i18n.text(TextKey::IndexRunButton)).on_press(Message::RunIndexing),
         text(format!(
-            "{}: roots={}, candidates={}, ignored={}",
+            "{}: roots={}, candidates={}, ignored={}, {}={}, {}={}, {}={}, {}={}, rows={}",
             app.i18n.text(TextKey::ScanSummaryLabel),
             app.state.indexing_summary.scanned_roots,
             app.state.indexing_summary.candidate_files,
-            app.state.indexing_summary.ignored_entries
+            app.state.indexing_summary.ignored_entries,
+            app.i18n.text(TextKey::ScanSummaryNew),
+            app.state.indexing_summary.new_files,
+            app.i18n.text(TextKey::ScanSummaryChanged),
+            app.state.indexing_summary.changed_files,
+            app.i18n.text(TextKey::ScanSummaryUnchanged),
+            app.state.indexing_summary.unchanged_files,
+            app.i18n.text(TextKey::ScanSummaryMissing),
+            app.state.indexing_summary.missing_marked,
+            app.state.indexing_summary.read_model_count
         )),
+        text(format!(
+            "{}: {}",
+            app.i18n.text(TextKey::ScanSummaryUnreadable),
+            app.state.indexing_summary.unreadable_entries
+        )),
+        text(app.i18n.text(TextKey::SearchInputLabel)),
+        text_input("", &app.state.search_query)
+            .on_input(Message::SearchQueryChanged)
+            .width(Length::Fill),
+        button(app.i18n.text(TextKey::SearchRunButton)).on_press(Message::RunSearchQuery),
+        text(format!(
+            "{}: {}",
+            app.i18n.text(TextKey::SearchResultLabel),
+            app.state.search_preview.len()
+        )),
+        app.state
+            .search_preview
+            .iter()
+            .take(5)
+            .fold(column![].spacing(4), |rows, value| rows.push(text(value))),
         root_rows,
         text(app.i18n.text(TextKey::NonDestructiveNotice)).size(14),
     ]
@@ -334,17 +372,67 @@ fn run_indexing(app: &mut Librapix) {
 
     let summary = prep.ok().and_then(|(roots_for_scan, patterns)| {
         let ignore = IgnoreEngine::new(&patterns).ok()?;
-        let result = scan_roots(&roots_for_scan, &ignore);
-        let rows = candidates_for_storage(&result);
-        let persist_ok =
-            with_storage(&app.runtime, |storage| storage.replace_indexed_media(&rows)).is_ok();
-        if !persist_ok {
-            return None;
-        }
+        let root_ids = roots_for_scan
+            .iter()
+            .map(|root| root.source_root_id)
+            .collect::<Vec<_>>();
+        let existing = with_storage(&app.runtime, |storage| {
+            storage.list_existing_indexed_media_snapshots(&root_ids)
+        })
+        .ok()?;
+
+        let existing_for_indexer = existing
+            .into_iter()
+            .map(|entry| librapix_indexer::ExistingIndexedEntry {
+                source_root_id: entry.source_root_id,
+                absolute_path: entry.absolute_path,
+                file_size_bytes: entry.file_size_bytes,
+                modified_unix_seconds: entry.modified_unix_seconds,
+            })
+            .collect::<Vec<_>>();
+
+        let result = scan_roots(&roots_for_scan, &ignore, &existing_for_indexer);
+        let writes = result
+            .candidates
+            .iter()
+            .map(|candidate| IndexedMediaWrite {
+                source_root_id: candidate.source_root_id,
+                absolute_path: candidate.absolute_path.clone(),
+                media_kind: candidate.media_kind.as_str().to_owned(),
+                file_size_bytes: candidate.file_size_bytes,
+                modified_unix_seconds: candidate.modified_unix_seconds,
+                width_px: candidate.width_px,
+                height_px: candidate.height_px,
+                metadata_status: match candidate.metadata_status {
+                    librapix_indexer::MetadataStatus::Ok => IndexedMetadataStatus::Ok,
+                    librapix_indexer::MetadataStatus::Partial => IndexedMetadataStatus::Partial,
+                    librapix_indexer::MetadataStatus::Unreadable => {
+                        IndexedMetadataStatus::Unreadable
+                    }
+                },
+            })
+            .collect::<Vec<_>>();
+
+        let apply_summary = with_storage(&app.runtime, |storage| {
+            storage.apply_incremental_index(&writes, &result.scanned_root_ids)
+        })
+        .ok()?;
+
+        let read_models = with_storage(&app.runtime, |storage| {
+            storage.list_media_read_models(50, 0)
+        })
+        .ok()?;
+
         Some(IndexingSummary {
             scanned_roots: result.summary.scanned_roots,
             candidate_files: result.summary.candidate_files,
             ignored_entries: result.summary.ignored_entries,
+            unreadable_entries: result.summary.unreadable_entries,
+            new_files: result.summary.new_files,
+            changed_files: result.summary.changed_files,
+            unchanged_files: result.summary.unchanged_files,
+            missing_marked: apply_summary.missing_marked_count,
+            read_model_count: read_models.len(),
         })
     });
 
@@ -353,6 +441,43 @@ fn run_indexing(app: &mut Librapix) {
         app.state.record_indexing_summary(summary);
     }
     refresh_roots(app);
+}
+
+fn run_read_model_query(app: &mut Librapix) {
+    let query = app.state.search_query.clone();
+    let rows = with_storage(&app.runtime, |storage| {
+        if query.trim().is_empty() {
+            storage.list_media_read_models(20, 0)
+        } else {
+            storage.search_media_read_models(&query, 20)
+        }
+    })
+    .map(|rows| {
+        rows.into_iter()
+            .map(|row| {
+                if row.tags.is_empty() {
+                    format!(
+                        "{} [{}] {}x{}",
+                        row.absolute_path.display(),
+                        row.media_kind,
+                        row.width_px.unwrap_or(0),
+                        row.height_px.unwrap_or(0)
+                    )
+                } else {
+                    format!(
+                        "{} [{}] tags={}",
+                        row.absolute_path.display(),
+                        row.media_kind,
+                        row.tags.join("|")
+                    )
+                }
+            })
+            .collect::<Vec<_>>()
+    })
+    .unwrap_or_default();
+
+    app.state.apply(AppMessage::ReplaceSearchPreview);
+    app.state.replace_search_preview(rows);
 }
 
 fn with_storage<T>(

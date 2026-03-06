@@ -120,3 +120,16 @@ This file tracks major direct dependencies that shape architecture and maintenan
   - Scans run with symlink following disabled by default.
 - Risks/tradeoffs:
   - Deep directory traversal can be expensive; future tuning may be required for very large libraries.
+
+## `imagesize` (0.14.0)
+
+- Purpose: Read image width/height quickly for indexing metadata baseline.
+- Why chosen: Header-based dimension probing without full image decoding.
+- Alternatives considered:
+  - `image`: powerful decoder stack, heavier than needed for baseline dimensions-only extraction.
+- Official docs consulted:
+  - [https://docs.rs/imagesize/latest/imagesize/](https://docs.rs/imagesize/latest/imagesize/)
+- Notes:
+  - Used for image-only dimensions; video metadata remains deferred in this phase.
+- Risks/tradeoffs:
+  - Not a full metadata parser; richer extraction requires future subsystem expansion.

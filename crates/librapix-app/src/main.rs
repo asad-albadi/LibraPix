@@ -68,6 +68,8 @@ struct Librapix {
     details_tag_input: String,
     details_lines: Vec<String>,
     details_action_status: String,
+    details_preview_path: Option<PathBuf>,
+    details_title: String,
     ignore_rule_input: String,
     ignore_rules_preview: Vec<String>,
     gallery_items: Vec<BrowseItem>,
@@ -113,6 +115,8 @@ impl Default for Librapix {
             details_tag_input: String::new(),
             details_lines: Vec::new(),
             details_action_status: String::new(),
+            details_preview_path: None,
+            details_title: String::new(),
             ignore_rule_input: String::new(),
             ignore_rules_preview: Vec::new(),
             gallery_items: Vec::new(),
@@ -572,6 +576,17 @@ fn render_details_panel(app: &Librapix) -> Element<'_, Message> {
         .selected_media_id
         .map(|id| id.to_string())
         .unwrap_or_else(|| "-".to_owned());
+    let preview: Element<'_, Message> = if let Some(path) = &app.details_preview_path {
+        image(image::Handle::from_path(path))
+            .width(Length::Fill)
+            .height(Length::Fixed(220.0))
+            .into()
+    } else {
+        subtle_panel(column![text(
+            app.i18n.text(TextKey::DetailsNoSelectionLabel)
+        )])
+        .into()
+    };
     let metadata = if app.details_lines.is_empty() {
         column![text(app.i18n.text(TextKey::DetailsNoSelectionLabel))]
     } else {
@@ -582,39 +597,62 @@ fn render_details_panel(app: &Librapix) -> Element<'_, Message> {
             })
     };
 
-    panel(
-        column![
-            text(app.i18n.text(TextKey::DetailsSelectedMediaLabel)).size(FONT_SECTION),
-            text(selected),
-            metadata,
-            text(app.i18n.text(TextKey::DetailsTagInputLabel)).size(FONT_SECTION),
-            text_input("", &app.details_tag_input).on_input(Message::DetailsTagInputChanged),
-            row![
-                button(app.i18n.text(TextKey::DetailsAttachTagButton))
-                    .on_press(Message::AttachAppTag),
-                button(app.i18n.text(TextKey::DetailsAttachGameTagButton))
-                    .on_press(Message::AttachGameTag),
-                button(app.i18n.text(TextKey::DetailsDetachTagButton)).on_press(Message::DetachTag),
+    column![
+        panel(
+            column![
+                text(app.i18n.text(TextKey::DetailsSelectedMediaLabel)).size(FONT_SECTION),
+                text(selected),
+                text(app.details_title.clone()).size(FONT_BODY),
+                preview,
             ]
-            .spacing(SPACE_XS),
-            row![
-                button(app.i18n.text(TextKey::DetailsOpenFileButton))
-                    .on_press(Message::OpenSelectedFile),
-                button(app.i18n.text(TextKey::DetailsOpenFolderButton))
-                    .on_press(Message::OpenSelectedFolder),
-                button(app.i18n.text(TextKey::DetailsCopyPathButton))
-                    .on_press(Message::CopySelectedPath),
+            .spacing(SPACE_SM),
+        ),
+        panel(
+            column![
+                text(app.i18n.text(TextKey::DetailsMetadataSectionLabel)).size(FONT_SECTION),
+                metadata,
             ]
-            .spacing(SPACE_XS),
-            text(format!(
-                "{}: {}",
-                app.i18n.text(TextKey::DetailsActionStatusLabel),
-                app.details_action_status
-            )),
-            text(app.i18n.text(TextKey::NonDestructiveNotice)).size(FONT_BODY),
-        ]
-        .spacing(SPACE_SM),
-    )
+            .spacing(SPACE_SM),
+        ),
+        panel(
+            column![
+                text(app.i18n.text(TextKey::DetailsTagsSectionLabel)).size(FONT_SECTION),
+                text_input("", &app.details_tag_input).on_input(Message::DetailsTagInputChanged),
+                row![
+                    button(app.i18n.text(TextKey::DetailsAttachTagButton))
+                        .on_press(Message::AttachAppTag),
+                    button(app.i18n.text(TextKey::DetailsAttachGameTagButton))
+                        .on_press(Message::AttachGameTag),
+                    button(app.i18n.text(TextKey::DetailsDetachTagButton))
+                        .on_press(Message::DetachTag),
+                ]
+                .spacing(SPACE_XS),
+            ]
+            .spacing(SPACE_SM),
+        ),
+        panel(
+            column![
+                text(app.i18n.text(TextKey::DetailsActionsSectionLabel)).size(FONT_SECTION),
+                row![
+                    button(app.i18n.text(TextKey::DetailsOpenFileButton))
+                        .on_press(Message::OpenSelectedFile),
+                    button(app.i18n.text(TextKey::DetailsOpenFolderButton))
+                        .on_press(Message::OpenSelectedFolder),
+                    button(app.i18n.text(TextKey::DetailsCopyPathButton))
+                        .on_press(Message::CopySelectedPath),
+                ]
+                .spacing(SPACE_XS),
+                text(format!(
+                    "{}: {}",
+                    app.i18n.text(TextKey::DetailsActionStatusLabel),
+                    app.details_action_status
+                )),
+                text(app.i18n.text(TextKey::NonDestructiveNotice)).size(FONT_BODY),
+            ]
+            .spacing(SPACE_SM),
+        ),
+    ]
+    .spacing(SPACE_SM)
     .into()
 }
 
@@ -1088,6 +1126,8 @@ fn run_gallery_projection(app: &mut Librapix) {
 fn load_media_details(app: &mut Librapix) {
     let Some(media_id) = app.state.selected_media_id else {
         app.details_action_status = app.i18n.text(TextKey::DetailsNoSelectionLabel).to_owned();
+        app.details_preview_path = None;
+        app.details_title.clear();
         return;
     };
     let details = with_storage(&app.runtime, |storage| {
@@ -1096,6 +1136,24 @@ fn load_media_details(app: &mut Librapix) {
     .ok()
     .flatten();
     if let Some(details) = details {
+        app.details_title = details
+            .absolute_path
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_else(|| details.absolute_path.display().to_string());
+        app.details_preview_path = if details.media_kind == "image" {
+            ensure_image_thumbnail(
+                &app.runtime.thumbnails_dir,
+                &details.absolute_path,
+                details.file_size_bytes,
+                details.modified_unix_seconds,
+                512,
+            )
+            .ok()
+            .map(|outcome| outcome.thumbnail_path)
+        } else {
+            None
+        };
         app.details_lines = vec![
             format!("id={}", details.media_id),
             format!("path={}", details.absolute_path.display()),
@@ -1122,6 +1180,8 @@ fn load_media_details(app: &mut Librapix) {
         app.details_action_status = app.i18n.text(TextKey::DetailsActionSuccess).to_owned();
     } else {
         app.details_lines.clear();
+        app.details_preview_path = None;
+        app.details_title.clear();
         app.details_action_status = app.i18n.text(TextKey::DetailsActionFailed).to_owned();
     }
 }

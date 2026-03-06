@@ -36,27 +36,27 @@ This checklist tracks mandatory visual/product-quality redesign work for Librapi
 
 ## 5. Details/actions/tags redesign
 
-- [ ] Redesign details pane into clear metadata/tag/action sections
-- [ ] Keep open/copy/tag actions consistent and discoverable
-- [ ] Integrate game tags cleanly in details flow
-- [ ] Verification loop + smoke run
+- [x] Redesign details pane into clear metadata/tag/action sections
+- [x] Keep open/copy/tag actions consistent and discoverable
+- [x] Integrate game tags cleanly in details flow
+- [x] Verification loop + smoke run
 - [ ] Commit details/actions redesign milestone
 
 ## 6. Search/root/indexing UX redesign
 
-- [ ] Integrate search into top bar and browsing flow
-- [ ] Improve root lifecycle visibility in management panel
-- [ ] Improve indexing status readability
-- [ ] Keep ignore-rule management integrated and uncluttered
-- [ ] Verification loop + smoke run
+- [x] Integrate search into top bar and browsing flow
+- [x] Improve root lifecycle visibility in management panel
+- [x] Improve indexing status readability
+- [x] Keep ignore-rule management integrated and uncluttered
+- [x] Verification loop + smoke run
 - [ ] Commit root/search/indexing redesign milestone
 
 ## 7. Empty/loading/error visual states
 
-- [ ] Add intentional visual empty states
-- [ ] Add intentional loading/progress feedback surfaces
-- [ ] Add intentional action/indexing error surfaces
-- [ ] Verification loop + smoke run
+- [x] Add intentional visual empty states
+- [x] Add intentional loading/progress feedback surfaces
+- [x] Add intentional action/indexing error surfaces
+- [x] Verification loop + smoke run
 - [ ] Commit state-hardening redesign milestone
 
 ## 8. Final visual MVP reconciliation

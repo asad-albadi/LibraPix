@@ -8,6 +8,11 @@ Librapix UI uses an app-shell layout with centralized styling helpers.
 - Left sidebar for navigation and library/indexing/ignore management.
 - Main media pane for gallery/timeline/search results.
 - Right details pane for metadata, tags, and actions.
+- Details pane is segmented into:
+  - selected media summary/preview
+  - metadata section
+  - tags section
+  - actions section
 
 ## Styling centralization
 

@@ -20,8 +20,8 @@ This checklist tracks the library-management and indexing foundation phase.
 - [x] Wire app orchestration to trigger and display indexing baseline results
 - [x] Run verification loop for ignore/indexer milestone
 - [x] Run app smoke test for ignore/indexer milestone
-- [ ] Commit ignore/indexer foundation milestone
+- [x] Commit ignore/indexer foundation milestone
 - [x] Update architecture docs, dependency records, changelog, and ADRs
-- [ ] Run final verification loop
-- [ ] Run final app smoke test
+- [x] Run final verification loop
+- [x] Run final app smoke test
 - [ ] Commit final documentation/ADR checkpoint (if needed)

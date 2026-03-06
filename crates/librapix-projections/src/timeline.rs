@@ -24,11 +24,30 @@ pub struct TimelineItem {
     pub modified_unix_seconds: Option<i64>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TimelineDateParts {
+    pub year: Option<i32>,
+    pub month: Option<u32>,
+    pub day: Option<u32>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TimelineBucket {
     pub label: String,
+    pub date: TimelineDateParts,
     pub item_count: usize,
     pub items: Vec<TimelineItem>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TimelineAnchor {
+    pub group_index: usize,
+    pub label: String,
+    pub year: Option<i32>,
+    pub month: Option<u32>,
+    pub day: Option<u32>,
+    pub item_count: usize,
+    pub normalized_position: f32,
 }
 
 pub fn project_timeline(
@@ -86,6 +105,11 @@ pub fn project_timeline(
                 .collect::<Vec<_>>();
             TimelineBucket {
                 label: format_key(&key),
+                date: TimelineDateParts {
+                    year: Some(key.year),
+                    month: key.month,
+                    day: key.day,
+                },
                 item_count: rows.len(),
                 items: rows,
             }
@@ -104,12 +128,62 @@ pub fn project_timeline(
             .collect::<Vec<_>>();
         buckets.push(TimelineBucket {
             label: "unknown".to_owned(),
+            date: TimelineDateParts {
+                year: None,
+                month: None,
+                day: None,
+            },
             item_count: rows.len(),
             items: rows,
         });
     }
 
     buckets
+}
+
+pub fn build_timeline_anchors(buckets: &[TimelineBucket]) -> Vec<TimelineAnchor> {
+    if buckets.is_empty() {
+        return Vec::new();
+    }
+
+    let total_weight = buckets
+        .iter()
+        .map(|bucket| bucket.item_count.max(1))
+        .sum::<usize>() as f32;
+    let mut running_weight = 0usize;
+    let mut anchors = buckets
+        .iter()
+        .enumerate()
+        .map(|(group_index, bucket)| {
+            let normalized_position = if total_weight > 0.0 {
+                (running_weight as f32 / total_weight).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            running_weight += bucket.item_count.max(1);
+
+            TimelineAnchor {
+                group_index,
+                label: bucket.label.clone(),
+                year: bucket.date.year,
+                month: bucket.date.month,
+                day: bucket.date.day,
+                item_count: bucket.item_count,
+                normalized_position,
+            }
+        })
+        .collect::<Vec<_>>();
+
+    if anchors.len() == 1 {
+        anchors[0].normalized_position = 0.0;
+    } else {
+        anchors[0].normalized_position = 0.0;
+        if let Some(last) = anchors.last_mut() {
+            last.normalized_position = 1.0;
+        }
+    }
+
+    anchors
 }
 
 fn format_key(key: &TimelineKey) -> String {
@@ -171,5 +245,36 @@ mod tests {
                 .iter()
                 .any(|bucket| bucket.label.len() == 7 || bucket.label == "unknown")
         );
+    }
+
+    #[test]
+    fn builds_monotonic_anchors_with_date_parts() {
+        let buckets = project_timeline(&sample(), TimelineGranularity::Day);
+        let anchors = build_timeline_anchors(&buckets);
+
+        assert_eq!(anchors.len(), buckets.len());
+        assert!(
+            anchors
+                .windows(2)
+                .all(|w| { w[0].normalized_position <= w[1].normalized_position })
+        );
+        assert_eq!(anchors.first().map(|a| a.normalized_position), Some(0.0));
+        assert_eq!(anchors.last().map(|a| a.normalized_position), Some(1.0));
+
+        let known_anchor = anchors.iter().find(|a| a.label != "unknown").unwrap();
+        assert!(known_anchor.year.is_some());
+        assert!(known_anchor.month.is_some());
+        assert!(known_anchor.day.is_some());
+    }
+
+    #[test]
+    fn unknown_bucket_anchor_has_no_date_parts() {
+        let buckets = project_timeline(&sample(), TimelineGranularity::Day);
+        let anchors = build_timeline_anchors(&buckets);
+        let unknown = anchors.iter().find(|a| a.label == "unknown").unwrap();
+
+        assert_eq!(unknown.year, None);
+        assert_eq!(unknown.month, None);
+        assert_eq!(unknown.day, None);
     }
 }

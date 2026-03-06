@@ -4,7 +4,7 @@ Librapix is a cross-platform, desktop-first, non-destructive local media gallery
 
 ## Status
 
-Project phase: metadata and incremental indexing foundation.
+Project phase: search/projections baseline with thumbnail cache integration.
 
 ## Core Principles
 
@@ -20,7 +20,10 @@ Project phase: metadata and incremental indexing foundation.
 - `crates/librapix-core`: domain and application orchestration primitives.
 - `crates/librapix-indexer`: indexing pipeline foundation and centralized ignore matching.
 - `crates/librapix-i18n`: key-based localization layer with locale fallback behavior.
+- `crates/librapix-projections`: timeline and gallery read projection subsystem.
+- `crates/librapix-search`: replaceable search contracts and fuzzy strategy baseline.
 - `crates/librapix-storage`: SQLite storage and migrations subsystem.
+- `crates/librapix-thumbnails`: app-owned image thumbnail cache subsystem.
 - `docs/`: architecture, roadmap, dependency records, and repository operational docs.
 
 ## MSRV
@@ -47,6 +50,7 @@ Project phase: metadata and incremental indexing foundation.
 - Metadata baseline stores file size, modified time, media kind, and image dimensions where available.
 - Re-index runs apply incremental change detection and mark missing indexed files without destructive source operations.
 - Search-facing read-model queries are available over indexed media and tag joins.
+- Indexing/galleries now generate and reuse deterministic image thumbnails in app-owned cache.
 
 ## Documentation Index
 

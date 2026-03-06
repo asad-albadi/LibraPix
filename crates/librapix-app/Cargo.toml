@@ -14,3 +14,4 @@ librapix-i18n = { path = "../librapix-i18n" }
 librapix-projections = { path = "../librapix-projections" }
 librapix-search = { path = "../librapix-search" }
 librapix-storage = { path = "../librapix-storage" }
+librapix-thumbnails = { path = "../librapix-thumbnails" }

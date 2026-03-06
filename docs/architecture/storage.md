@@ -84,3 +84,4 @@ This schema is intentionally minimal to avoid overbuilding before indexing and s
 - Default location: project cache directory under `thumbnails`.
 - Source media directories are never used as cache locations.
 - Path overrides are possible through config, but ownership remains app-side only.
+- Thumbnail cache file naming uses deterministic derived keys from source path + size + modified timestamp.

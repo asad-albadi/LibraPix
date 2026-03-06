@@ -159,3 +159,29 @@ This file tracks major direct dependencies that shape architecture and maintenan
   - Baseline uses UTC timestamp conversion only; timezone-specific timeline behavior is deferred.
 - Risks/tradeoffs:
   - Local timezone-aware grouping is intentionally deferred and may change bucket semantics in future phases.
+
+## `image` (0.25.9)
+
+- Purpose: Decode source images and render thumbnail cache outputs.
+- Why chosen: Mature Rust-native decoding/encoding stack with straightforward thumbnail operations.
+- Alternatives considered:
+  - custom decoder stack: unnecessary complexity and lower maintainability.
+- Official docs consulted:
+  - [https://docs.rs/image/latest/image/](https://docs.rs/image/latest/image/)
+- Notes:
+  - Baseline uses image thumbnails only; video thumbnails remain deferred.
+- Risks/tradeoffs:
+  - Decoder support breadth can increase compile times and binary size.
+
+## `sha2` (0.10.9)
+
+- Purpose: Deterministic thumbnail cache-key hashing.
+- Why chosen: Widely used hashing crate with stable one-shot and incremental APIs.
+- Alternatives considered:
+  - ad-hoc hashing: weaker portability and higher collision risk.
+- Official docs consulted:
+  - [https://docs.rs/sha2/latest/sha2/](https://docs.rs/sha2/latest/sha2/)
+- Notes:
+  - Baseline uses SHA-256 digest of source path and fingerprint fields.
+- Risks/tradeoffs:
+  - Cryptographic hashing is slightly heavier than non-crypto hashes, but acceptable for baseline cache keying.

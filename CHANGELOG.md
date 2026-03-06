@@ -27,6 +27,7 @@ All notable changes to this project are documented in this file.
 - Added tag-readiness baseline tables (`tags`, `media_tags`) and read-model queries.
 - Added `librapix-search` crate with replaceable search contracts and baseline fuzzy ranking strategy.
 - Added `librapix-projections` crate for timeline and gallery read projections.
+- Added `librapix-thumbnails` crate for deterministic image thumbnail cache generation.
 
 ### Changed
 - Migrated from a single-crate starter to a multi-crate workspace.
@@ -41,6 +42,7 @@ All notable changes to this project are documented in this file.
 - Search queries now run through the dedicated search subsystem instead of UI-owned matching logic.
 - Timeline projections now group by indexed modified timestamp using day/month/year buckets.
 - Gallery projections now support baseline filtering/sorting over read-model rows.
+- Indexing now generates/reuses image thumbnails in app-owned cache with per-run status reporting.
 
 ### Docs
 - Established baseline documentation for dependencies, troubleshooting, architecture, and repository map.
@@ -49,3 +51,4 @@ All notable changes to this project are documented in this file.
 - Recorded dependency decisions for `imagesize`.
 - Recorded dependency decisions for `strsim`.
 - Recorded dependency decisions for `chrono`.
+- Recorded dependency decisions for `image` and `sha2`.

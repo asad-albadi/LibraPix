@@ -12,6 +12,7 @@ use librapix_projections::gallery::{GalleryQuery, GallerySort, project_gallery};
 use librapix_projections::timeline::{TimelineGranularity, project_timeline};
 use librapix_search::{FuzzySearchStrategy, SearchDocument, SearchQuery, SearchStrategy};
 use librapix_storage::{IndexedMediaWrite, IndexedMetadataStatus, SourceRootLifecycle, Storage};
+use librapix_thumbnails::ensure_image_thumbnail;
 use std::path::PathBuf;
 
 fn main() -> iced::Result {
@@ -45,11 +46,13 @@ struct Librapix {
     i18n: Translator,
     theme_preference: ThemePreference,
     runtime: RuntimeContext,
+    thumbnail_status: String,
 }
 
 #[derive(Debug, Clone)]
 struct RuntimeContext {
     database_file: PathBuf,
+    thumbnails_dir: PathBuf,
 }
 
 impl Default for Librapix {
@@ -65,7 +68,9 @@ impl Default for Librapix {
             theme_preference: bootstrap.theme_preference,
             runtime: RuntimeContext {
                 database_file: bootstrap.database_file,
+                thumbnails_dir: bootstrap.thumbnails_dir,
             },
+            thumbnail_status: String::new(),
         }
     }
 }
@@ -264,6 +269,7 @@ fn view(app: &Librapix) -> Element<'_, Message> {
             app.i18n.text(TextKey::ScanSummaryUnreadable),
             app.state.indexing_summary.unreadable_entries
         )),
+        text(app.thumbnail_status.clone()),
         text(app.i18n.text(TextKey::SearchInputLabel)),
         text_input("", &app.state.search_query)
             .on_input(Message::SearchQueryChanged)
@@ -320,6 +326,7 @@ struct BootstrapRuntime {
     locale: Locale,
     theme_preference: ThemePreference,
     database_file: PathBuf,
+    thumbnails_dir: PathBuf,
     roots: Vec<LibraryRootView>,
 }
 
@@ -328,6 +335,7 @@ fn bootstrap_runtime() -> BootstrapRuntime {
         locale: Locale::EnUs,
         theme_preference: ThemePreference::System,
         database_file: PathBuf::from("librapix.db"),
+        thumbnails_dir: PathBuf::from("thumbnails"),
         roots: Vec::new(),
     };
 
@@ -348,6 +356,12 @@ fn bootstrap_runtime() -> BootstrapRuntime {
         .clone()
         .unwrap_or(loaded.paths.database_file);
     runtime.database_file = database_file.clone();
+    runtime.thumbnails_dir = loaded
+        .config
+        .path_overrides
+        .thumbnails_dir
+        .clone()
+        .unwrap_or(loaded.paths.thumbnails_dir);
 
     let storage = match Storage::open(&database_file) {
         Ok(storage) => storage,
@@ -457,9 +471,41 @@ fn run_indexing(app: &mut Librapix) {
         });
 
         let read_models = with_storage(&app.runtime, |storage| {
-            storage.list_media_read_models(50, 0)
+            storage.list_media_read_models(200, 0)
         })
         .ok()?;
+
+        let mut generated = 0usize;
+        let mut reused = 0usize;
+        let mut failed = 0usize;
+        for row in &read_models {
+            if row.media_kind != "image" {
+                continue;
+            }
+            match ensure_image_thumbnail(
+                &app.runtime.thumbnails_dir,
+                &row.absolute_path,
+                row.file_size_bytes,
+                row.modified_unix_seconds,
+                256,
+            ) {
+                Ok(outcome) => {
+                    if outcome.generated {
+                        generated += 1;
+                    } else {
+                        reused += 1;
+                    }
+                }
+                Err(_) => failed += 1,
+            }
+        }
+        app.thumbnail_status = format!(
+            "{}: {}={generated}, {}={reused}, {}={failed}",
+            app.i18n.text(TextKey::ThumbnailStatusLabel),
+            app.i18n.text(TextKey::ThumbnailGeneratedLabel),
+            app.i18n.text(TextKey::ThumbnailReusedLabel),
+            app.i18n.text(TextKey::ThumbnailFailedLabel),
+        );
 
         Some(IndexingSummary {
             scanned_roots: result.summary.scanned_roots,
@@ -550,7 +596,7 @@ fn run_timeline_projection(app: &mut Librapix) {
         storage.list_media_read_models(500, 0)
     })
     .map(|rows| {
-        let media = rows_to_projection_media(rows);
+        let media = rows_to_projection_media(&rows);
         project_timeline(&media, TimelineGranularity::Day)
             .into_iter()
             .map(|bucket| format!("{} ({})", bucket.label, bucket.item_count))
@@ -566,7 +612,7 @@ fn run_gallery_projection(app: &mut Librapix) {
         storage.list_media_read_models(500, 0)
     })
     .map(|rows| {
-        let media = rows_to_projection_media(rows);
+        let media = rows_to_projection_media(&rows);
         let query = GalleryQuery {
             media_kind: None,
             tag: None,
@@ -576,7 +622,33 @@ fn run_gallery_projection(app: &mut Librapix) {
         };
         project_gallery(&media, &query)
             .into_iter()
-            .map(|item| format!("{} [{}]", item.absolute_path, item.media_kind))
+            .map(|item| {
+                let original = PathBuf::from(&item.absolute_path);
+                let thumbnail_text = rows
+                    .iter()
+                    .find(|row| row.media_id == item.media_id)
+                    .and_then(|row| {
+                        if row.media_kind != "image" {
+                            return None;
+                        }
+                        ensure_image_thumbnail(
+                            &app.runtime.thumbnails_dir,
+                            &row.absolute_path,
+                            row.file_size_bytes,
+                            row.modified_unix_seconds,
+                            256,
+                        )
+                        .ok()
+                        .map(|outcome| outcome.thumbnail_path.display().to_string())
+                    })
+                    .unwrap_or_else(|| app.i18n.text(TextKey::ThumbnailUnavailable).to_owned());
+                format!(
+                    "{} [{}] {}={thumbnail_text}",
+                    original.display(),
+                    item.media_kind,
+                    app.i18n.text(TextKey::ThumbnailStatusLabel),
+                )
+            })
             .collect::<Vec<_>>()
     })
     .unwrap_or_default();
@@ -584,14 +656,14 @@ fn run_gallery_projection(app: &mut Librapix) {
     app.state.replace_gallery_preview(rows);
 }
 
-fn rows_to_projection_media(rows: Vec<librapix_storage::MediaReadModel>) -> Vec<ProjectionMedia> {
-    rows.into_iter()
+fn rows_to_projection_media(rows: &[librapix_storage::MediaReadModel]) -> Vec<ProjectionMedia> {
+    rows.iter()
         .map(|row| ProjectionMedia {
             media_id: row.media_id,
             absolute_path: row.absolute_path.display().to_string(),
-            media_kind: row.media_kind,
+            media_kind: row.media_kind.clone(),
             modified_unix_seconds: row.modified_unix_seconds,
-            tags: row.tags,
+            tags: row.tags.clone(),
         })
         .collect()
 }

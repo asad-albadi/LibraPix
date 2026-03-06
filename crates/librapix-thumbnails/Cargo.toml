@@ -1,0 +1,10 @@
+[package]
+name = "librapix-thumbnails"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+image.workspace = true
+sha2.workspace = true

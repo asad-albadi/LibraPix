@@ -16,6 +16,7 @@ This repository is documentation-driven. Architecture and operational decisions 
 - `docs/architecture/indexing.md`
 - `docs/architecture/search.md`
 - `docs/architecture/projections.md`
+- `docs/architecture/thumbnails.md`
 - `docs/architecture/storage.md`
 - `docs/architecture/metadata.md`
 - `docs/architecture/config.md`
@@ -32,6 +33,7 @@ This repository is documentation-driven. Architecture and operational decisions 
 - `docs/roadmap/library-indexing-foundation-checklist.md`
 - `docs/roadmap/metadata-incremental-search-checklist.md`
 - `docs/roadmap/search-projections-checklist.md`
+- `docs/roadmap/mvp-remaining-checklist.md`
 
 ## ADRs
 
@@ -43,4 +45,4 @@ This repository is documentation-driven. Architecture and operational decisions 
 - `docs/adrs/0006-metadata-incremental-readmodels.md`
 - `docs/adrs/0007-replaceable-search-baseline.md`
 - `docs/adrs/0008-timeline-gallery-projections.md`
-- `docs/adrs/0006-metadata-incremental-readmodels.md`
+- `docs/adrs/0009-thumbnail-cache-baseline.md`

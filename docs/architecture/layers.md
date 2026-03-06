@@ -33,6 +33,9 @@
 - Projections (`librapix-projections`)
   - Timeline grouping projections (day/month/year)
   - Gallery filtering/sorting projections
+- Thumbnails (`librapix-thumbnails`)
+  - Deterministic cache-key/path generation
+  - Read-only image thumbnail rendering pipeline
 - Infrastructure (`librapix-storage` + future crates/modules)
   - SQLite persistence and migrations
   - Source root and ignore-rule persistence baseline

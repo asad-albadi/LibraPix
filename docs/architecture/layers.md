@@ -30,6 +30,9 @@
 - Search (`librapix-search`)
   - Replaceable search strategy contracts
   - Baseline fuzzy-capable ranking over read-model documents
+- Projections (`librapix-projections`)
+  - Timeline grouping projections (day/month/year)
+  - Gallery filtering/sorting projections
 - Infrastructure (`librapix-storage` + future crates/modules)
   - SQLite persistence and migrations
   - Source root and ignore-rule persistence baseline

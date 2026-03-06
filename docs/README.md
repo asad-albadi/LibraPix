@@ -15,6 +15,7 @@ This repository is documentation-driven. Architecture and operational decisions 
 - `docs/architecture/message-flow.md`
 - `docs/architecture/indexing.md`
 - `docs/architecture/search.md`
+- `docs/architecture/projections.md`
 - `docs/architecture/storage.md`
 - `docs/architecture/metadata.md`
 - `docs/architecture/config.md`
@@ -40,4 +41,6 @@ This repository is documentation-driven. Architecture and operational decisions 
 - `docs/adrs/0004-source-root-lifecycle-policy.md`
 - `docs/adrs/0005-indexing-ignore-baseline.md`
 - `docs/adrs/0006-metadata-incremental-readmodels.md`
+- `docs/adrs/0007-replaceable-search-baseline.md`
+- `docs/adrs/0008-timeline-gallery-projections.md`
 - `docs/adrs/0006-metadata-incremental-readmodels.md`

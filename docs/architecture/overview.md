@@ -9,6 +9,7 @@ Librapix is a desktop-first Rust application with strict internal boundaries.
 - Domain/app primitives: `librapix-core`.
 - Indexing subsystem: `librapix-indexer`.
 - Search subsystem: `librapix-search`.
+- Projection subsystem: `librapix-projections`.
 - Localization subsystem: `librapix-i18n`.
 - Storage subsystem: `librapix-storage` (SQLite + migrations baseline).
 - Read-model query surface: `librapix-storage` read APIs over indexed media and tags.

@@ -31,6 +31,14 @@ Current baseline follows Iced's explicit state/update/view loop.
 - Run read-model query baseline
   - App queries read models from storage with optional text filtering over path/tag data.
   - App renders a small preview list for verification, keeping UI logic thin.
+- Run timeline projection baseline
+  - App loads read-model rows.
+  - App delegates grouping to `librapix-projections`.
+  - UI renders bucket preview only.
+- Run gallery projection baseline
+  - App loads read-model rows.
+  - App delegates filtering/sorting to `librapix-projections`.
+  - UI renders row preview only.
 
 ## Rules
 

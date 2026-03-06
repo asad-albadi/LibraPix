@@ -146,3 +146,16 @@ This file tracks major direct dependencies that shape architecture and maintenan
   - Current baseline uses `normalized_levenshtein`.
 - Risks/tradeoffs:
   - In-memory fuzzy scoring can become expensive at larger scales and may require indexed search later.
+
+## `chrono` (0.4.44)
+
+- Purpose: Convert indexed timestamps into timeline projection buckets.
+- Why chosen: Stable date/time primitives with straightforward UTC timestamp conversion.
+- Alternatives considered:
+  - manual timestamp math: less readable and easier to get wrong for calendar grouping.
+- Official docs consulted:
+  - [https://docs.rs/chrono/latest/chrono/](https://docs.rs/chrono/latest/chrono/)
+- Notes:
+  - Baseline uses UTC timestamp conversion only; timezone-specific timeline behavior is deferred.
+- Risks/tradeoffs:
+  - Local timezone-aware grouping is intentionally deferred and may change bucket semantics in future phases.

@@ -1591,6 +1591,7 @@ dependencies = [
  "librapix-core",
  "librapix-i18n",
  "librapix-indexer",
+ "librapix-projections",
  "librapix-search",
  "librapix-storage",
 ]

@@ -26,6 +26,7 @@ All notable changes to this project are documented in this file.
 - Added ADR `0006` for metadata extraction, incremental indexing policy, and read-model baseline.
 - Added tag-readiness baseline tables (`tags`, `media_tags`) and read-model queries.
 - Added `librapix-search` crate with replaceable search contracts and baseline fuzzy ranking strategy.
+- Added `librapix-projections` crate for timeline and gallery read projections.
 
 ### Changed
 - Migrated from a single-crate starter to a multi-crate workspace.
@@ -38,6 +39,8 @@ All notable changes to this project are documented in this file.
 - Indexing now applies incremental change detection (`new` / `changed` / `unchanged`) and marks missing files without destructive deletion.
 - App can run storage read-model queries over indexed media and tags for verification-focused UI output.
 - Search queries now run through the dedicated search subsystem instead of UI-owned matching logic.
+- Timeline projections now group by indexed modified timestamp using day/month/year buckets.
+- Gallery projections now support baseline filtering/sorting over read-model rows.
 
 ### Docs
 - Established baseline documentation for dependencies, troubleshooting, architecture, and repository map.
@@ -45,3 +48,4 @@ All notable changes to this project are documented in this file.
 - Recorded dependency decisions for `globset` and `walkdir`.
 - Recorded dependency decisions for `imagesize`.
 - Recorded dependency decisions for `strsim`.
+- Recorded dependency decisions for `chrono`.

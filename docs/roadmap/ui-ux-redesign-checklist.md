@@ -65,5 +65,5 @@ This checklist tracks mandatory visual/product-quality redesign work for Librapi
 - [x] Add ADR for UI shell/design-system decisions
 - [x] Reconcile architecture docs and README with redesign
 - [x] Final verification loop + smoke run
-- [ ] Final redesign commit
-- [ ] Clean working tree
+- [x] Final redesign commit
+- [x] Clean working tree

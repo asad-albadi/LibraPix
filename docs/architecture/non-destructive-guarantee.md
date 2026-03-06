@@ -9,6 +9,7 @@ This is a hard architectural contract.
 - Metadata extraction is read-only.
 - Thumbnail/cache/index/search artifacts remain in app-owned storage.
 - Missing or offline roots transition lifecycle state only; no source media mutation occurs.
+- Incremental indexing updates app-managed metadata rows only; source media files remain untouched.
 
 ## Forbidden behavior
 

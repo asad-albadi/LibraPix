@@ -30,5 +30,6 @@ Ignore rules are a first-class, centralized subsystem.
   - `**/cache/**`
   - `**/*.tmp`
 - Indexing consumes enabled global rules from storage and applies them consistently across scanned roots.
+- Incremental runs use the same centralized ignore engine, so ignored paths are excluded consistently from both discovery and metadata refresh passes.
 
 Library-specific overrides are reserved for a follow-up phase.

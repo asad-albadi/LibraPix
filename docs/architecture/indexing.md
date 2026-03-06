@@ -22,6 +22,10 @@ Indexing is a dedicated subsystem (`librapix-indexer`) isolated from UI renderin
   - file size and modified timestamp
   - image dimensions when available
   - extraction status (`ok` / `partial` / `unreadable`)
+- Incremental strategy:
+  - compare by `absolute_path + file_size_bytes + modified_unix_seconds`
+  - classify `new`, `changed`, `unchanged`
+  - mark non-seen files under scanned roots as `missing`
 
 ## Baseline pipeline
 
@@ -32,5 +36,6 @@ Indexing is a dedicated subsystem (`librapix-indexer`) isolated from UI renderin
 5. Detect incremental change class (`new` / `changed` / `unchanged`).
 6. Extract baseline metadata for new/changed entries.
 7. Persist/upsert candidates and mark missing files for scanned roots.
+8. Query read-model rows for verification or downstream browsing/search surfaces.
 
 No indexing logic should be embedded inside view widgets.

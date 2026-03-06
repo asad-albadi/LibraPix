@@ -23,6 +23,8 @@ All notable changes to this project are documented in this file.
 - Added ADR `0005` for indexing + ignore-rule baseline.
 - Added metadata extraction baseline for indexed media (size, modified time, image dimensions where supported).
 - Added `docs/architecture/metadata.md`.
+- Added ADR `0006` for metadata extraction, incremental indexing policy, and read-model baseline.
+- Added tag-readiness baseline tables (`tags`, `media_tags`) and read-model queries.
 
 ### Changed
 - Migrated from a single-crate starter to a multi-crate workspace.
@@ -33,6 +35,7 @@ All notable changes to this project are documented in this file.
 - App now runs an indexing baseline flow against persisted roots and stores candidates in `indexed_media`.
 - Ignore rules are now centrally evaluated through the indexer engine.
 - Indexing now applies incremental change detection (`new` / `changed` / `unchanged`) and marks missing files without destructive deletion.
+- App can run storage read-model queries over indexed media and tags for verification-focused UI output.
 
 ### Docs
 - Established baseline documentation for dependencies, troubleshooting, architecture, and repository map.

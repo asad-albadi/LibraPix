@@ -120,6 +120,21 @@ impl TagKind {
             TagKind::Game => "game",
         }
     }
+
+    fn from_str(value: &str) -> Option<Self> {
+        match value {
+            "app" => Some(Self::App),
+            "game" => Some(Self::Game),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TagRecord {
+    pub id: i64,
+    pub name: String,
+    pub kind: TagKind,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -556,6 +571,49 @@ impl Storage {
         Ok(())
     }
 
+    pub fn attach_tag_name_to_media(
+        &self,
+        media_id: i64,
+        tag_name: &str,
+        kind: TagKind,
+    ) -> Result<(), StorageError> {
+        let tag_id = self.upsert_tag(tag_name, kind)?;
+        self.attach_tag_to_media(media_id, tag_id)
+    }
+
+    pub fn detach_tag_name_from_media(
+        &self,
+        media_id: i64,
+        tag_name: &str,
+    ) -> Result<(), StorageError> {
+        self.connection.execute(
+            "DELETE FROM media_tags
+             WHERE media_id = ?1 AND tag_id IN (
+                SELECT id FROM tags WHERE name = ?2
+             )",
+            params![media_id, tag_name],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_tags(&self) -> Result<Vec<TagRecord>, StorageError> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT id, name, kind FROM tags ORDER BY name ASC")?;
+        let rows = statement.query_map([], |row| {
+            let kind_str: String = row.get(2)?;
+            let kind = TagKind::from_str(&kind_str)
+                .ok_or_else(|| rusqlite::Error::InvalidParameterName(kind_str.clone()))?;
+            Ok::<TagRecord, rusqlite::Error>(TagRecord {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                kind,
+            })
+        })?;
+        let collected: Result<Vec<_>, rusqlite::Error> = rows.collect();
+        Ok(collected?)
+    }
+
     pub fn ensure_media_kind_tags_attached(&self) -> Result<(), StorageError> {
         let image_tag = self.upsert_tag("kind:image", TagKind::App)?;
         let video_tag = self.upsert_tag("kind:video", TagKind::App)?;
@@ -592,6 +650,27 @@ impl Storage {
         limit: usize,
     ) -> Result<Vec<MediaReadModel>, StorageError> {
         self.query_media_read_models(Some(query), limit, 0)
+    }
+
+    pub fn get_media_read_model_by_id(
+        &self,
+        media_id: i64,
+    ) -> Result<Option<MediaReadModel>, StorageError> {
+        let sql = "
+            SELECT m.id, m.source_root_id, m.absolute_path, m.media_kind,
+                   m.file_size_bytes, m.modified_unix_seconds, m.width_px, m.height_px,
+                   m.metadata_status, COALESCE(GROUP_CONCAT(t.name, ','), '')
+            FROM indexed_media m
+            LEFT JOIN media_tags mt ON mt.media_id = m.id
+            LEFT JOIN tags t ON t.id = mt.tag_id
+            WHERE m.metadata_status != 'missing' AND m.id = ?1
+            GROUP BY m.id";
+
+        let mut statement = self.connection.prepare(sql)?;
+        let row = statement
+            .query_row(params![media_id], map_media_read_model_row)
+            .optional()?;
+        Ok(row)
     }
 
     fn query_media_read_models(
@@ -632,30 +711,7 @@ impl Storage {
         })?;
 
         let mapper = |row: &rusqlite::Row<'_>| -> Result<MediaReadModel, rusqlite::Error> {
-            let status_string: String = row.get(8)?;
-            let metadata_status = IndexedMetadataStatus::from_str(&status_string)
-                .ok_or_else(|| rusqlite::Error::InvalidParameterName(status_string.clone()))?;
-            let tags_csv: String = row.get(9)?;
-            Ok(MediaReadModel {
-                media_id: row.get(0)?,
-                source_root_id: row.get(1)?,
-                absolute_path: PathBuf::from(row.get::<usize, String>(2)?),
-                media_kind: row.get(3)?,
-                file_size_bytes: row.get::<usize, i64>(4).map_or(0, |v| v.max(0) as u64),
-                modified_unix_seconds: row.get(5)?,
-                width_px: row
-                    .get::<usize, Option<i64>>(6)?
-                    .and_then(|v| u32::try_from(v).ok()),
-                height_px: row
-                    .get::<usize, Option<i64>>(7)?
-                    .and_then(|v| u32::try_from(v).ok()),
-                metadata_status,
-                tags: if tags_csv.is_empty() {
-                    Vec::new()
-                } else {
-                    tags_csv.split(',').map(ToOwned::to_owned).collect()
-                },
-            })
+            map_media_read_model_row(row)
         };
 
         let rows = if let Some(text) = query {
@@ -666,6 +722,33 @@ impl Storage {
         let collected: Result<Vec<_>, rusqlite::Error> = rows.collect();
         Ok(collected?)
     }
+}
+
+fn map_media_read_model_row(row: &rusqlite::Row<'_>) -> Result<MediaReadModel, rusqlite::Error> {
+    let status_string: String = row.get(8)?;
+    let metadata_status = IndexedMetadataStatus::from_str(&status_string)
+        .ok_or_else(|| rusqlite::Error::InvalidParameterName(status_string.clone()))?;
+    let tags_csv: String = row.get(9)?;
+    Ok(MediaReadModel {
+        media_id: row.get(0)?,
+        source_root_id: row.get(1)?,
+        absolute_path: PathBuf::from(row.get::<usize, String>(2)?),
+        media_kind: row.get(3)?,
+        file_size_bytes: row.get::<usize, i64>(4).map_or(0, |v| v.max(0) as u64),
+        modified_unix_seconds: row.get(5)?,
+        width_px: row
+            .get::<usize, Option<i64>>(6)?
+            .and_then(|v| u32::try_from(v).ok()),
+        height_px: row
+            .get::<usize, Option<i64>>(7)?
+            .and_then(|v| u32::try_from(v).ok()),
+        metadata_status,
+        tags: if tags_csv.is_empty() {
+            Vec::new()
+        } else {
+            tags_csv.split(',').map(ToOwned::to_owned).collect()
+        },
+    })
 }
 
 #[cfg(test)]
@@ -818,6 +901,62 @@ mod tests {
             .search_media_read_models("kind:image", 10)
             .expect("search should work");
         assert_eq!(rows.len(), 1);
+
+        let _ = std::fs::remove_file(db);
+    }
+
+    #[test]
+    fn attach_and_detach_tag_by_name() {
+        let db = temp_db_file("tag-attach-detach");
+        let mut storage = Storage::open(&db).expect("database should open");
+        storage
+            .upsert_source_root(Path::new("/tmp/librapix-tag-root"))
+            .expect("root insert should work");
+        let root_id = storage
+            .list_source_roots()
+            .expect("roots should list")
+            .first()
+            .expect("one root expected")
+            .id;
+        storage
+            .apply_incremental_index(
+                &[IndexedMediaWrite {
+                    source_root_id: root_id,
+                    absolute_path: PathBuf::from("/tmp/librapix-tag-root/a.png"),
+                    media_kind: "image".to_owned(),
+                    file_size_bytes: 1,
+                    modified_unix_seconds: Some(1),
+                    width_px: Some(1),
+                    height_px: Some(1),
+                    metadata_status: IndexedMetadataStatus::Ok,
+                }],
+                &[root_id],
+            )
+            .expect("apply should work");
+        let media_id = storage
+            .list_media_read_models(10, 0)
+            .expect("rows should list")
+            .first()
+            .expect("row should exist")
+            .media_id;
+
+        storage
+            .attach_tag_name_to_media(media_id, "boss-fight", TagKind::Game)
+            .expect("attach should work");
+        let attached = storage
+            .get_media_read_model_by_id(media_id)
+            .expect("row lookup should work")
+            .expect("row should exist");
+        assert!(attached.tags.iter().any(|tag| tag == "boss-fight"));
+
+        storage
+            .detach_tag_name_from_media(media_id, "boss-fight")
+            .expect("detach should work");
+        let detached = storage
+            .get_media_read_model_by_id(media_id)
+            .expect("row lookup should work")
+            .expect("row should exist");
+        assert!(!detached.tags.iter().any(|tag| tag == "boss-fight"));
 
         let _ = std::fs::remove_file(db);
     }

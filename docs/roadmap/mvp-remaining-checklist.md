@@ -34,22 +34,22 @@ This checklist tracks the remaining work to reach a usable Librapix MVP.
 
 ## D. Media details + actions
 
-- [ ] Add details panel for selected media metadata
-- [ ] Add open file action
-- [ ] Add open containing folder action
-- [ ] Add copy-path action baseline
-- [ ] Document platform behavior and constraints
-- [ ] Verification loop + smoke run
+- [x] Add details panel for selected media metadata
+- [x] Add open file action
+- [x] Add open containing folder action
+- [x] Add copy-path action baseline
+- [x] Document platform behavior and constraints
+- [x] Verification loop + smoke run
 - [ ] Commit details/actions milestone
 
 ## E. Tags and game tags baseline
 
-- [ ] Add storage API for listing tags and media-tag links
-- [ ] Add create tag / attach tag / detach tag flows
-- [ ] Add game-tag creation/attachment baseline (`TagKind::Game`)
-- [ ] Integrate tag filtering in search/gallery flow
-- [ ] Add tests for tag workflows
-- [ ] Verification loop + smoke run
+- [x] Add storage API for listing tags and media-tag links
+- [x] Add create tag / attach tag / detach tag flows
+- [x] Add game-tag creation/attachment baseline (`TagKind::Game`)
+- [x] Integrate tag filtering in search/gallery flow
+- [x] Add tests for tag workflows
+- [x] Verification loop + smoke run
 - [ ] Commit tags/game-tags milestone
 
 ## F. Library + indexing UX hardening

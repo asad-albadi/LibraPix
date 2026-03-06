@@ -40,6 +40,17 @@ Current baseline follows Iced's explicit state/update/view loop.
   - App loads read-model rows.
   - App delegates filtering/sorting to `librapix-projections`.
   - UI renders row preview only.
+- Load media details
+  - UI provides selected media id.
+  - App resolves media details from storage read-model lookup.
+  - UI renders metadata lines and action status.
+- Tag actions
+  - UI provides selected media id + tag text.
+  - App attaches/detaches app or game tags through storage APIs.
+  - Updated tags are reflected by reloading selected media details.
+- Open/copy actions
+  - App resolves selected media path from storage.
+  - App invokes platform-specific open/clipboard commands.
 
 ## Rules
 

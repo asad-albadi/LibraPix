@@ -11,9 +11,13 @@ use librapix_projections::ProjectionMedia;
 use librapix_projections::gallery::{GalleryQuery, GallerySort, project_gallery};
 use librapix_projections::timeline::{TimelineGranularity, project_timeline};
 use librapix_search::{FuzzySearchStrategy, SearchDocument, SearchQuery, SearchStrategy};
-use librapix_storage::{IndexedMediaWrite, IndexedMetadataStatus, SourceRootLifecycle, Storage};
+use librapix_storage::{
+    IndexedMediaWrite, IndexedMetadataStatus, SourceRootLifecycle, Storage, TagKind,
+};
 use librapix_thumbnails::ensure_image_thumbnail;
+use std::io::Write;
 use std::path::PathBuf;
+use std::process::{Command, Stdio};
 
 fn main() -> iced::Result {
     iced::application(Librapix::default, update, view)
@@ -39,6 +43,15 @@ enum Message {
     RunSearchQuery,
     RunTimelineProjection,
     RunGalleryProjection,
+    SelectedMediaIdChanged(String),
+    DetailsTagInputChanged(String),
+    LoadMediaDetails,
+    AttachAppTag,
+    AttachGameTag,
+    DetachTag,
+    OpenSelectedFile,
+    OpenSelectedFolder,
+    CopySelectedPath,
 }
 
 struct Librapix {
@@ -47,6 +60,10 @@ struct Librapix {
     theme_preference: ThemePreference,
     runtime: RuntimeContext,
     thumbnail_status: String,
+    selected_media_id_input: String,
+    details_tag_input: String,
+    details_lines: Vec<String>,
+    details_action_status: String,
 }
 
 #[derive(Debug, Clone)]
@@ -71,6 +88,10 @@ impl Default for Librapix {
                 thumbnails_dir: bootstrap.thumbnails_dir,
             },
             thumbnail_status: String::new(),
+            selected_media_id_input: String::new(),
+            details_tag_input: String::new(),
+            details_lines: Vec::new(),
+            details_action_status: String::new(),
         }
     }
 }
@@ -171,6 +192,33 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
         }
         Message::RunGalleryProjection => {
             run_gallery_projection(app);
+        }
+        Message::SelectedMediaIdChanged(value) => {
+            app.selected_media_id_input = value;
+        }
+        Message::DetailsTagInputChanged(value) => {
+            app.details_tag_input = value;
+        }
+        Message::LoadMediaDetails => {
+            load_media_details(app);
+        }
+        Message::AttachAppTag => {
+            attach_tag_to_selected_media(app, TagKind::App);
+        }
+        Message::AttachGameTag => {
+            attach_tag_to_selected_media(app, TagKind::Game);
+        }
+        Message::DetachTag => {
+            detach_tag_from_selected_media(app);
+        }
+        Message::OpenSelectedFile => {
+            open_selected_path(app, false);
+        }
+        Message::OpenSelectedFolder => {
+            open_selected_path(app, true);
+        }
+        Message::CopySelectedPath => {
+            copy_selected_path(app);
         }
     }
 
@@ -307,6 +355,44 @@ fn view(app: &Librapix) -> Element<'_, Message> {
             .iter()
             .take(5)
             .fold(column![].spacing(4), |rows, value| rows.push(text(value))),
+        text(app.i18n.text(TextKey::DetailsSelectedMediaLabel)),
+        text_input("", &app.selected_media_id_input)
+            .on_input(Message::SelectedMediaIdChanged)
+            .width(Length::Fill),
+        text(app.i18n.text(TextKey::DetailsTagInputLabel)),
+        text_input("", &app.details_tag_input)
+            .on_input(Message::DetailsTagInputChanged)
+            .width(Length::Fill),
+        row![
+            button(app.i18n.text(TextKey::DetailsLoadButton)).on_press(Message::LoadMediaDetails),
+            button(app.i18n.text(TextKey::DetailsAttachTagButton)).on_press(Message::AttachAppTag),
+            button(app.i18n.text(TextKey::DetailsAttachGameTagButton))
+                .on_press(Message::AttachGameTag),
+            button(app.i18n.text(TextKey::DetailsDetachTagButton)).on_press(Message::DetachTag),
+        ]
+        .spacing(8),
+        row![
+            button(app.i18n.text(TextKey::DetailsOpenFileButton))
+                .on_press(Message::OpenSelectedFile),
+            button(app.i18n.text(TextKey::DetailsOpenFolderButton))
+                .on_press(Message::OpenSelectedFolder),
+            button(app.i18n.text(TextKey::DetailsCopyPathButton))
+                .on_press(Message::CopySelectedPath),
+        ]
+        .spacing(8),
+        text(format!(
+            "{}: {}",
+            app.i18n.text(TextKey::DetailsActionStatusLabel),
+            app.details_action_status
+        )),
+        if app.details_lines.is_empty() {
+            column![text(app.i18n.text(TextKey::DetailsNoSelectionLabel))]
+        } else {
+            app.details_lines
+                .iter()
+                .take(8)
+                .fold(column![].spacing(4), |rows, value| rows.push(text(value)))
+        },
         root_rows,
         text(app.i18n.text(TextKey::NonDestructiveNotice)).size(14),
     ]
@@ -654,6 +740,199 @@ fn run_gallery_projection(app: &mut Librapix) {
     .unwrap_or_default();
     app.state.apply(AppMessage::ReplaceGalleryPreview);
     app.state.replace_gallery_preview(rows);
+}
+
+fn parse_selected_media_id(app: &Librapix) -> Option<i64> {
+    app.selected_media_id_input.trim().parse::<i64>().ok()
+}
+
+fn load_media_details(app: &mut Librapix) {
+    let Some(media_id) = parse_selected_media_id(app) else {
+        app.details_action_status = app.i18n.text(TextKey::DetailsInvalidMediaId).to_owned();
+        return;
+    };
+    let details = with_storage(&app.runtime, |storage| {
+        storage.get_media_read_model_by_id(media_id)
+    })
+    .ok()
+    .flatten();
+    if let Some(details) = details {
+        app.details_lines = vec![
+            format!("id={}", details.media_id),
+            format!("path={}", details.absolute_path.display()),
+            format!("kind={}", details.media_kind),
+            format!("size={}", details.file_size_bytes),
+            format!(
+                "modified={}",
+                details.modified_unix_seconds.unwrap_or_default()
+            ),
+            format!(
+                "dimensions={}x{}",
+                details.width_px.unwrap_or(0),
+                details.height_px.unwrap_or(0)
+            ),
+            format!("tags={}", details.tags.join("|")),
+        ];
+        app.details_action_status = app.i18n.text(TextKey::DetailsActionSuccess).to_owned();
+    } else {
+        app.details_lines.clear();
+        app.details_action_status = app.i18n.text(TextKey::DetailsActionFailed).to_owned();
+    }
+}
+
+fn attach_tag_to_selected_media(app: &mut Librapix, kind: TagKind) {
+    let Some(media_id) = parse_selected_media_id(app) else {
+        app.details_action_status = app.i18n.text(TextKey::DetailsInvalidMediaId).to_owned();
+        return;
+    };
+    let tag = app.details_tag_input.trim();
+    if tag.is_empty() {
+        app.details_action_status = app.i18n.text(TextKey::DetailsActionFailed).to_owned();
+        return;
+    }
+    match with_storage(&app.runtime, |storage| {
+        storage.attach_tag_name_to_media(media_id, tag, kind)
+    }) {
+        Ok(_) => {
+            app.details_action_status = app.i18n.text(TextKey::DetailsActionSuccess).to_owned();
+            load_media_details(app);
+        }
+        Err(_) => {
+            app.details_action_status = app.i18n.text(TextKey::DetailsActionFailed).to_owned();
+        }
+    }
+}
+
+fn detach_tag_from_selected_media(app: &mut Librapix) {
+    let Some(media_id) = parse_selected_media_id(app) else {
+        app.details_action_status = app.i18n.text(TextKey::DetailsInvalidMediaId).to_owned();
+        return;
+    };
+    let tag = app.details_tag_input.trim();
+    if tag.is_empty() {
+        app.details_action_status = app.i18n.text(TextKey::DetailsActionFailed).to_owned();
+        return;
+    }
+    match with_storage(&app.runtime, |storage| {
+        storage.detach_tag_name_from_media(media_id, tag)
+    }) {
+        Ok(_) => {
+            app.details_action_status = app.i18n.text(TextKey::DetailsActionSuccess).to_owned();
+            load_media_details(app);
+        }
+        Err(_) => {
+            app.details_action_status = app.i18n.text(TextKey::DetailsActionFailed).to_owned();
+        }
+    }
+}
+
+fn open_selected_path(app: &mut Librapix, containing_folder: bool) {
+    let Some(media_id) = parse_selected_media_id(app) else {
+        app.details_action_status = app.i18n.text(TextKey::DetailsInvalidMediaId).to_owned();
+        return;
+    };
+    let row = with_storage(&app.runtime, |storage| {
+        storage.get_media_read_model_by_id(media_id)
+    })
+    .ok()
+    .flatten();
+    let Some(row) = row else {
+        app.details_action_status = app.i18n.text(TextKey::DetailsActionFailed).to_owned();
+        return;
+    };
+    let target = if containing_folder {
+        row.absolute_path
+            .parent()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| row.absolute_path.clone())
+    } else {
+        row.absolute_path
+    };
+    match open_with_system_default(&target) {
+        Ok(_) => {
+            app.details_action_status = app.i18n.text(TextKey::DetailsActionSuccess).to_owned()
+        }
+        Err(_) => {
+            app.details_action_status = app.i18n.text(TextKey::DetailsActionFailed).to_owned()
+        }
+    }
+}
+
+fn copy_selected_path(app: &mut Librapix) {
+    let Some(media_id) = parse_selected_media_id(app) else {
+        app.details_action_status = app.i18n.text(TextKey::DetailsInvalidMediaId).to_owned();
+        return;
+    };
+    let row = with_storage(&app.runtime, |storage| {
+        storage.get_media_read_model_by_id(media_id)
+    })
+    .ok()
+    .flatten();
+    let Some(row) = row else {
+        app.details_action_status = app.i18n.text(TextKey::DetailsActionFailed).to_owned();
+        return;
+    };
+    match copy_to_clipboard(&row.absolute_path.display().to_string()) {
+        Ok(_) => {
+            app.details_action_status = app.i18n.text(TextKey::DetailsActionSuccess).to_owned()
+        }
+        Err(_) => {
+            app.details_action_status = app.i18n.text(TextKey::DetailsActionFailed).to_owned()
+        }
+    }
+}
+
+fn open_with_system_default(path: &PathBuf) -> Result<(), std::io::Error> {
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open").arg(path).status()?;
+        Ok(())
+    }
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("cmd")
+            .args(["/C", "start", "", &path.display().to_string()])
+            .status()?;
+        Ok(())
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        Command::new("xdg-open").arg(path).status()?;
+        Ok(())
+    }
+}
+
+fn copy_to_clipboard(value: &str) -> Result<(), std::io::Error> {
+    #[cfg(target_os = "macos")]
+    {
+        let mut child = Command::new("pbcopy").stdin(Stdio::piped()).spawn()?;
+        if let Some(stdin) = &mut child.stdin {
+            stdin.write_all(value.as_bytes())?;
+        }
+        child.wait()?;
+        Ok(())
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let mut child = Command::new("clip").stdin(Stdio::piped()).spawn()?;
+        if let Some(stdin) = &mut child.stdin {
+            stdin.write_all(value.as_bytes())?;
+        }
+        child.wait()?;
+        Ok(())
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let mut child = Command::new("xclip")
+            .args(["-selection", "clipboard"])
+            .stdin(Stdio::piped())
+            .spawn()?;
+        if let Some(stdin) = &mut child.stdin {
+            stdin.write_all(value.as_bytes())?;
+        }
+        child.wait()?;
+        Ok(())
+    }
 }
 
 fn rows_to_projection_media(rows: &[librapix_storage::MediaReadModel]) -> Vec<ProjectionMedia> {

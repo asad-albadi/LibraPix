@@ -28,6 +28,7 @@ All notable changes to this project are documented in this file.
 - Added `librapix-search` crate with replaceable search contracts and baseline fuzzy ranking strategy.
 - Added `librapix-projections` crate for timeline and gallery read projections.
 - Added `librapix-thumbnails` crate for deterministic image thumbnail cache generation.
+- Added media-details action baseline (load metadata, open file/folder, copy path).
 
 ### Changed
 - Migrated from a single-crate starter to a multi-crate workspace.
@@ -43,6 +44,8 @@ All notable changes to this project are documented in this file.
 - Timeline projections now group by indexed modified timestamp using day/month/year buckets.
 - Gallery projections now support baseline filtering/sorting over read-model rows.
 - Indexing now generates/reuses image thumbnails in app-owned cache with per-run status reporting.
+- Storage read-model APIs now include media-by-id lookup and tag attach/detach by tag name.
+- App orchestration now supports app-tag/game-tag attachment and media action workflows by selected media id.
 
 ### Docs
 - Established baseline documentation for dependencies, troubleshooting, architecture, and repository map.

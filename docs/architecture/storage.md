@@ -61,7 +61,15 @@ This schema is intentionally minimal to avoid overbuilding before indexing and s
 - Baseline query surface supports:
   - paginated list of non-missing indexed media
   - search by path/tag text filter
+  - media-by-id lookup for details/action orchestration
 - This read layer is UI-agnostic and replaceable by richer search subsystems later.
+
+## Tag workflow baseline
+
+- Tags can be listed from storage (`tags` table).
+- Tags can be attached/detached to media via `media_tags`.
+- Tag kind supports `app` and `game`.
+- Tag mutations affect only Librapix-managed storage.
 
 ## Missing-file policy baseline
 

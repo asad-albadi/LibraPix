@@ -13,5 +13,5 @@ Milestone date: 2026-03-07
 - [x] Run verification loop (`fmt`, `check`, `clippy -D warnings`, `test`) after each meaningful step
 - [x] Run app smoke checks after each milestone step (`cargo run -p librapix-app`)
 - [x] Update docs (`README.md`, `CHANGELOG.md`, docs index/architecture/troubleshooting/dependencies)
-- [ ] Commit meaningful checkpoints
-- [ ] Final verification loop and clean working tree
+- [x] Commit meaningful checkpoints
+- [x] Final verification loop and clean working tree

@@ -2,7 +2,7 @@ mod format;
 mod ui;
 
 use iced::widget::{Space, button, column, container, image, row, scrollable, text, text_input};
-use iced::{ContentFit, Element, Length, Task, Theme};
+use iced::{ContentFit, Element, Length, Subscription, Task, Theme};
 use librapix_config::{LocalePreference, ThemePreference, lexical_normalize_path, load_or_create};
 use librapix_core::app::{
     AppMessage, AppState, IndexingSummary, LibraryRootView, RootLifecycle, Route,
@@ -18,6 +18,7 @@ use librapix_storage::{
     IndexedMediaWrite, IndexedMetadataStatus, SourceRootLifecycle, Storage, TagKind,
 };
 use librapix_thumbnails::ensure_image_thumbnail;
+use notify::{EventKind, RecursiveMode, Watcher};
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -28,6 +29,7 @@ fn main() -> iced::Result {
     iced::application(init, update, view)
         .title(title)
         .theme(theme)
+        .subscription(subscription)
         .run()
 }
 
@@ -65,6 +67,7 @@ enum Message {
     DisableIgnoreRule,
     StartupRestore,
     BrowseFolder,
+    FilesystemChanged,
 }
 
 struct Librapix {
@@ -155,6 +158,74 @@ fn theme(app: &Librapix) -> Theme {
         ThemePreference::Dark => Theme::Dark,
         ThemePreference::Light => Theme::Light,
     }
+}
+
+#[derive(Debug, Clone, Hash)]
+struct WatchSubscriptionConfig {
+    roots: Vec<PathBuf>,
+}
+
+fn subscription(app: &Librapix) -> Subscription<Message> {
+    let roots = app
+        .state
+        .library_roots
+        .iter()
+        .filter(|root| matches!(root.lifecycle, RootLifecycle::Active))
+        .map(|root| root.normalized_path.clone())
+        .collect::<Vec<_>>();
+
+    if roots.is_empty() {
+        Subscription::none()
+    } else {
+        Subscription::run_with(WatchSubscriptionConfig { roots }, watch_filesystem)
+    }
+}
+
+fn watch_filesystem(
+    config: &WatchSubscriptionConfig,
+) -> impl iced::futures::Stream<Item = Message> + use<> {
+    use iced::futures::StreamExt;
+    use iced::futures::channel::mpsc;
+    use iced::futures::sink::SinkExt;
+    use iced::stream;
+
+    let roots = config.roots.clone();
+    stream::channel(100, async move |mut output| {
+        let (tx, mut rx) = mpsc::unbounded::<notify::Result<notify::Event>>();
+        let mut watcher = match notify::recommended_watcher(move |res| {
+            let _ = tx.unbounded_send(res);
+        }) {
+            Ok(watcher) => watcher,
+            Err(_) => {
+                return;
+            }
+        };
+
+        for root in &roots {
+            if watcher.watch(root, RecursiveMode::Recursive).is_err() {}
+        }
+
+        let mut last_signal = Instant::now();
+        loop {
+            match rx.next().await {
+                Some(Ok(event)) => {
+                    let should_trigger = matches!(
+                        event.kind,
+                        EventKind::Create(_)
+                            | EventKind::Modify(_)
+                            | EventKind::Remove(_)
+                            | EventKind::Any
+                    );
+                    if should_trigger && last_signal.elapsed().as_millis() > 500 {
+                        last_signal = Instant::now();
+                        let _ = output.send(Message::FilesystemChanged).await;
+                    }
+                }
+                Some(Err(_)) => {}
+                None => break,
+            }
+        }
+    })
 }
 
 fn update(app: &mut Librapix, message: Message) -> Task<Message> {
@@ -314,6 +385,16 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
                 app.state.apply(AppMessage::SetRootInput);
                 app.state.set_root_input(path.display().to_string());
             }
+        }
+        Message::FilesystemChanged => {
+            app.activity_status = app.i18n.text(TextKey::LoadingIndexingLabel).to_owned();
+            run_indexing(app);
+            run_gallery_projection(app);
+            run_timeline_projection(app);
+            if !app.state.search_query.trim().is_empty() {
+                run_read_model_query(app);
+            }
+            app.activity_status.clear();
         }
     }
 

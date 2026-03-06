@@ -31,6 +31,9 @@ All notable changes to this project are documented in this file.
 - Added media-details action baseline (load metadata, open file/folder, copy path).
 
 ### Changed
+- Added live filesystem watch subscription over active roots using `notify`.
+- Auto-refresh now reacts to create/modify/remove file events without manual index/refresh.
+- Replaced blocking watcher channel receive with async channel delivery in Iced subscription worker.
 - App now auto-indexes and loads gallery/timeline on startup from persisted state.
 - App now auto-indexes and refreshes gallery after adding a library root.
 - Gallery now refreshes after removing a library root.

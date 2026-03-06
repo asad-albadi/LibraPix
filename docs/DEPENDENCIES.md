@@ -203,3 +203,20 @@ This file tracks major direct dependencies that shape architecture and maintenan
 - Risks/tradeoffs:
   - On Linux, requires either GTK3 or xdg-desktop-portal runtime support.
   - Synchronous API blocks the main thread during dialog interaction, which is acceptable for modal folder selection.
+
+## `notify` (8.2.0)
+
+- Purpose: Cross-platform filesystem change watching for live indexing refresh.
+- Why chosen: Mature Rust crate with native backends and explicit recursive directory watch support.
+- Alternatives considered:
+  - polling-only refresh loops: less responsive and less efficient.
+  - custom OS-specific watchers: unnecessary complexity and maintenance cost.
+- Official docs consulted:
+  - [https://docs.rs/notify/latest/notify/](https://docs.rs/notify/latest/notify/)
+  - [https://docs.rs/notify/latest/notify/fn.recommended_watcher.html](https://docs.rs/notify/latest/notify/fn.recommended_watcher.html)
+- Notes:
+  - `recommended_watcher` is used with `RecursiveMode::Recursive` for active source roots.
+  - Events are forwarded through async `iced::futures::channel::mpsc` for integration with Iced subscriptions.
+- Risks/tradeoffs:
+  - Some network or pseudo filesystems may not emit reliable native events.
+  - Event behavior can vary by editor/save strategy and platform backend.

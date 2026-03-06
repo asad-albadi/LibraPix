@@ -259,6 +259,41 @@ fn view(app: &Librapix) -> Element<'_, Message> {
         .selected_root_id
         .map_or_else(|| "-".to_owned(), |id| id.to_string());
 
+    let gallery_panel = column![
+        button(app.i18n.text(TextKey::GalleryRunButton)).on_press(Message::RunGalleryProjection),
+        text(format!(
+            "{}: {}",
+            app.i18n.text(TextKey::GalleryResultLabel),
+            app.state.gallery_preview.len()
+        )),
+        app.state
+            .gallery_preview
+            .iter()
+            .take(12)
+            .fold(column![].spacing(4), |rows, value| rows.push(text(value))),
+    ]
+    .spacing(8);
+
+    let timeline_panel = column![
+        button(app.i18n.text(TextKey::TimelineRunButton)).on_press(Message::RunTimelineProjection),
+        text(format!(
+            "{}: {}",
+            app.i18n.text(TextKey::TimelineResultLabel),
+            app.state.timeline_preview.len()
+        )),
+        app.state
+            .timeline_preview
+            .iter()
+            .take(12)
+            .fold(column![].spacing(4), |rows, value| rows.push(text(value))),
+    ]
+    .spacing(8);
+
+    let route_panel = match app.state.active_route {
+        Route::Gallery => gallery_panel,
+        Route::Timeline => timeline_panel,
+    };
+
     let content = column![
         text(app.i18n.text(TextKey::AppTitle)).size(32),
         text(app.i18n.text(TextKey::AppSubtitle)).size(18),
@@ -328,33 +363,12 @@ fn view(app: &Librapix) -> Element<'_, Message> {
             app.i18n.text(TextKey::SearchResultLabel),
             app.state.search_preview.len()
         )),
-        button(app.i18n.text(TextKey::TimelineRunButton)).on_press(Message::RunTimelineProjection),
-        text(format!(
-            "{}: {}",
-            app.i18n.text(TextKey::TimelineResultLabel),
-            app.state.timeline_preview.len()
-        )),
-        button(app.i18n.text(TextKey::GalleryRunButton)).on_press(Message::RunGalleryProjection),
-        text(format!(
-            "{}: {}",
-            app.i18n.text(TextKey::GalleryResultLabel),
-            app.state.gallery_preview.len()
-        )),
         app.state
             .search_preview
             .iter()
             .take(5)
             .fold(column![].spacing(4), |rows, value| rows.push(text(value))),
-        app.state
-            .timeline_preview
-            .iter()
-            .take(5)
-            .fold(column![].spacing(4), |rows, value| rows.push(text(value))),
-        app.state
-            .gallery_preview
-            .iter()
-            .take(5)
-            .fold(column![].spacing(4), |rows, value| rows.push(text(value))),
+        route_panel,
         text(app.i18n.text(TextKey::DetailsSelectedMediaLabel)),
         text_input("", &app.selected_media_id_input)
             .on_input(Message::SelectedMediaIdChanged)

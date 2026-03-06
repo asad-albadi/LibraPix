@@ -46,6 +46,7 @@ All notable changes to this project are documented in this file.
 - Indexing now generates/reuses image thumbnails in app-owned cache with per-run status reporting.
 - Storage read-model APIs now include media-by-id lookup and tag attach/detach by tag name.
 - App orchestration now supports app-tag/game-tag attachment and media action workflows by selected media id.
+- Gallery and timeline routes now render projection-specific panels instead of mixed debug output.
 
 ### Docs
 - Established baseline documentation for dependencies, troubleshooting, architecture, and repository map.

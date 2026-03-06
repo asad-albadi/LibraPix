@@ -15,21 +15,21 @@ This checklist tracks the remaining work to reach a usable Librapix MVP.
 
 ## B. Gallery UX completion
 
-- [ ] Implement real gallery media list/grid rendering
-- [ ] Use gallery projections with paging/sort baseline
-- [ ] Show thumbnail where available
+- [x] Implement real gallery media list/grid rendering
+- [x] Use gallery projections with paging/sort baseline
+- [x] Show thumbnail where available
 - [ ] Add media selection behavior
 - [ ] Add empty-state and loading/status hints
-- [ ] Verification loop + smoke run
+- [x] Verification loop + smoke run
 - [ ] Commit gallery UX milestone
 
 ## C. Timeline UX completion
 
-- [ ] Implement timeline grouped rendering from projections
+- [x] Implement timeline grouped rendering from projections
 - [ ] Add group navigation and media access controls
-- [ ] Align timeline route behavior with app state
+- [x] Align timeline route behavior with app state
 - [ ] Add empty-state and loading/status hints
-- [ ] Verification loop + smoke run
+- [x] Verification loop + smoke run
 - [ ] Commit timeline UX milestone
 
 ## D. Media details + actions
@@ -40,7 +40,7 @@ This checklist tracks the remaining work to reach a usable Librapix MVP.
 - [x] Add copy-path action baseline
 - [x] Document platform behavior and constraints
 - [x] Verification loop + smoke run
-- [ ] Commit details/actions milestone
+- [x] Commit details/actions milestone
 
 ## E. Tags and game tags baseline
 
@@ -50,7 +50,7 @@ This checklist tracks the remaining work to reach a usable Librapix MVP.
 - [x] Integrate tag filtering in search/gallery flow
 - [x] Add tests for tag workflows
 - [x] Verification loop + smoke run
-- [ ] Commit tags/game-tags milestone
+- [x] Commit tags/game-tags milestone
 
 ## F. Library + indexing UX hardening
 

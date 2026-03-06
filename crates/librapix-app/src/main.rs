@@ -658,6 +658,11 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
         }
         Message::TimelineScrubReleased => {
             app.timeline_scrubbing = false;
+            if let Some(anchor_index) = app.timeline_scrub_anchor_index
+                && let Some(anchor) = app.timeline_anchors.get(anchor_index)
+            {
+                app.timeline_scrub_value = anchor.normalized_position.clamp(0.0, 1.0);
+            }
         }
         Message::JumpToTimelineAnchor(index) => {
             return jump_to_timeline_anchor(app, index);
@@ -1495,7 +1500,7 @@ fn render_timeline_view<'a>(
 fn render_timeline_scrubber(app: &Librapix) -> Element<'_, Message> {
     if app.timeline_anchors.is_empty() {
         return container(column![])
-            .width(Length::Fixed(76.0))
+            .width(Length::Fixed(88.0))
             .height(Length::Fill)
             .into();
     }
@@ -1506,16 +1511,22 @@ fn render_timeline_scrubber(app: &Librapix) -> Element<'_, Message> {
     })
     .on_release(Message::TimelineScrubReleased)
     .step(0.001)
-    .width(14.0)
+    .width(12.0)
     .height(Length::Fill);
 
-    let chip_label = app
+    let active_anchor = app
         .timeline_scrub_anchor_index
-        .and_then(|index| app.timeline_anchors.get(index))
-        .map_or_else(String::new, |anchor| anchor.label.clone());
+        .and_then(|index| app.timeline_anchors.get(index));
+    let chip_label = active_anchor
+        .map(|anchor| format!("{} ({})", anchor.label, anchor.item_count))
+        .unwrap_or_default();
+    let chip_position = active_anchor
+        .map(|anchor| anchor.normalized_position)
+        .unwrap_or(app.timeline_scrub_value)
+        .clamp(0.0, 1.0);
 
     let chip_track: Element<'_, Message> = if app.timeline_scrubbing {
-        let top = ((app.timeline_scrub_value.clamp(0.0, 1.0) * 1000.0).round() as u16).min(1000);
+        let top = ((chip_position * 1000.0).round() as u16).min(1000);
         let bottom = 1000u16.saturating_sub(top);
         column![
             Space::new().height(Length::FillPortion(top.max(1))),
@@ -1551,7 +1562,7 @@ fn render_timeline_scrubber(app: &Librapix) -> Element<'_, Message> {
         .spacing(SPACE_SM)
         .height(Length::Fill),
     )
-    .width(Length::Fixed(84.0))
+    .width(Length::Fixed(96.0))
     .height(Length::Fill)
     .padding([SPACE_SM as u16, SPACE_XS as u16])
     .style(scrubber_panel_style)
@@ -1669,11 +1680,16 @@ fn apply_timeline_scrub(
     }
 
     let clamped = normalized_value.clamp(0.0, 1.0);
+    let previous_anchor = app.timeline_scrub_anchor_index;
     app.timeline_scrub_value = clamped;
     app.timeline_scrubbing = interactive;
-    app.timeline_scrub_anchor_index = nearest_timeline_anchor_index(&app.timeline_anchors, clamped);
+    app.timeline_scrub_anchor_index = scrub_value_to_anchor_index(&app.timeline_anchors, clamped);
 
     if !matches!(app.state.active_route, Route::Timeline) {
+        return Task::none();
+    }
+
+    if previous_anchor == app.timeline_scrub_anchor_index {
         return Task::none();
     }
 
@@ -1719,9 +1735,17 @@ fn sync_timeline_scrub_from_viewport(app: &mut Librapix, absolute_y: f32, max_y:
     } else {
         0.0
     };
-    app.timeline_scrub_value = normalized;
     app.timeline_scrub_anchor_index =
-        nearest_timeline_anchor_index(&app.timeline_anchors, normalized);
+        scrub_value_to_anchor_index(&app.timeline_anchors, normalized);
+    if let Some(anchor_index) = app.timeline_scrub_anchor_index {
+        if let Some(anchor) = app.timeline_anchors.get(anchor_index) {
+            app.timeline_scrub_value = anchor.normalized_position.clamp(0.0, 1.0);
+        } else {
+            app.timeline_scrub_value = normalized;
+        }
+    } else {
+        app.timeline_scrub_value = normalized;
+    }
 }
 
 fn sync_timeline_scrub_selection(app: &mut Librapix, preferred_value: f32) {
@@ -1734,7 +1758,7 @@ fn sync_timeline_scrub_selection(app: &mut Librapix, preferred_value: f32) {
     }
 
     let clamped = preferred_value.clamp(0.0, 1.0);
-    let anchor_index = nearest_timeline_anchor_index(&app.timeline_anchors, clamped).unwrap_or(0);
+    let anchor_index = scrub_value_to_anchor_index(&app.timeline_anchors, clamped).unwrap_or(0);
     let anchor_value = app.timeline_anchors[anchor_index]
         .normalized_position
         .clamp(0.0, 1.0);
@@ -1742,20 +1766,22 @@ fn sync_timeline_scrub_selection(app: &mut Librapix, preferred_value: f32) {
     app.timeline_scrub_anchor_index = Some(anchor_index);
     app.timeline_scrub_value = anchor_value;
     app.timeline_scrubbing = false;
+    app.timeline_scroll_max_y = 0.0;
 }
 
-fn nearest_timeline_anchor_index(anchors: &[TimelineAnchor], normalized: f32) -> Option<usize> {
-    anchors
-        .iter()
-        .enumerate()
-        .min_by(|(_, left), (_, right)| {
-            let left_distance = (left.normalized_position - normalized).abs();
-            let right_distance = (right.normalized_position - normalized).abs();
-            left_distance
-                .partial_cmp(&right_distance)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        })
-        .map(|(index, _)| index)
+fn scrub_value_to_anchor_index(anchors: &[TimelineAnchor], normalized: f32) -> Option<usize> {
+    if anchors.is_empty() {
+        return None;
+    }
+
+    let max_index = anchors.len().saturating_sub(1) as f32;
+    let clamped = normalized.clamp(0.0, 1.0);
+    let index = if max_index > 0.0 {
+        (clamped * max_index).round() as usize
+    } else {
+        0
+    };
+    Some(index.min(anchors.len().saturating_sub(1)))
 }
 
 fn scroll_task_to_timeline_anchor(app: &Librapix, anchor_index: usize) -> Task<Message> {
@@ -1765,25 +1791,13 @@ fn scroll_task_to_timeline_anchor(app: &Librapix, anchor_index: usize) -> Task<M
     let normalized = anchor.normalized_position.clamp(0.0, 1.0);
     let id = Id::new(MEDIA_SCROLLABLE_ID);
 
-    if app.timeline_scroll_max_y > 0.0 {
-        let target_y =
-            (normalized * app.timeline_scroll_max_y).clamp(0.0, app.timeline_scroll_max_y);
-        operation::scroll_to(
-            id,
-            operation::AbsoluteOffset {
-                x: 0.0,
-                y: target_y,
-            },
-        )
-    } else {
-        operation::snap_to(
-            id,
-            operation::RelativeOffset {
-                x: 0.0,
-                y: normalized,
-            },
-        )
-    }
+    operation::snap_to(
+        id,
+        operation::RelativeOffset {
+            x: 0.0,
+            y: normalized,
+        },
+    )
 }
 
 fn render_details_panel(app: &Librapix) -> Element<'_, Message> {
@@ -3382,7 +3396,7 @@ mod tests {
     }
 
     #[test]
-    fn nearest_anchor_index_picks_closest_normalized_value() {
+    fn scrub_value_to_anchor_index_maps_across_anchor_span() {
         let anchors = vec![
             anchor(0, Some(2026), "2026-03-01", 0.0),
             anchor(1, Some(2025), "2025-12-01", 0.35),
@@ -3390,9 +3404,9 @@ mod tests {
             anchor(3, None, "unknown", 1.0),
         ];
 
-        assert_eq!(nearest_timeline_anchor_index(&anchors, 0.01), Some(0));
-        assert_eq!(nearest_timeline_anchor_index(&anchors, 0.55), Some(2));
-        assert_eq!(nearest_timeline_anchor_index(&anchors, 0.97), Some(3));
+        assert_eq!(scrub_value_to_anchor_index(&anchors, 0.01), Some(0));
+        assert_eq!(scrub_value_to_anchor_index(&anchors, 0.55), Some(2));
+        assert_eq!(scrub_value_to_anchor_index(&anchors, 0.97), Some(3));
     }
 
     #[test]

@@ -1,5 +1,5 @@
 use crate::{ProjectionMedia, compare_optional_i64_desc};
-use chrono::{DateTime, Datelike, Utc};
+use chrono::{Datelike, Local, TimeZone};
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,6 +54,14 @@ pub fn project_timeline(
     media: &[ProjectionMedia],
     granularity: TimelineGranularity,
 ) -> Vec<TimelineBucket> {
+    project_timeline_with_timezone(media, granularity, &Local)
+}
+
+fn project_timeline_with_timezone<Tz: TimeZone>(
+    media: &[ProjectionMedia],
+    granularity: TimelineGranularity,
+    time_zone: &Tz,
+) -> Vec<TimelineBucket> {
     let mut grouped: BTreeMap<TimelineKey, Vec<&ProjectionMedia>> = BTreeMap::new();
     let mut unknown_items: Vec<&ProjectionMedia> = Vec::new();
 
@@ -62,7 +70,7 @@ pub fn project_timeline(
             unknown_items.push(item);
             continue;
         };
-        let Some(datetime) = DateTime::<Utc>::from_timestamp(timestamp, 0) else {
+        let Some(datetime) = time_zone.timestamp_opt(timestamp, 0).single() else {
             unknown_items.push(item);
             continue;
         };
@@ -146,21 +154,16 @@ pub fn build_timeline_anchors(buckets: &[TimelineBucket]) -> Vec<TimelineAnchor>
         return Vec::new();
     }
 
-    let total_weight = buckets
-        .iter()
-        .map(|bucket| bucket.item_count.max(1))
-        .sum::<usize>() as f32;
-    let mut running_weight = 0usize;
-    let mut anchors = buckets
+    let last_index = buckets.len().saturating_sub(1) as f32;
+    buckets
         .iter()
         .enumerate()
         .map(|(group_index, bucket)| {
-            let normalized_position = if total_weight > 0.0 {
-                (running_weight as f32 / total_weight).clamp(0.0, 1.0)
+            let normalized_position = if last_index > 0.0 {
+                (group_index as f32 / last_index).clamp(0.0, 1.0)
             } else {
                 0.0
             };
-            running_weight += bucket.item_count.max(1);
 
             TimelineAnchor {
                 group_index,
@@ -172,18 +175,7 @@ pub fn build_timeline_anchors(buckets: &[TimelineBucket]) -> Vec<TimelineAnchor>
                 normalized_position,
             }
         })
-        .collect::<Vec<_>>();
-
-    if anchors.len() == 1 {
-        anchors[0].normalized_position = 0.0;
-    } else {
-        anchors[0].normalized_position = 0.0;
-        if let Some(last) = anchors.last_mut() {
-            last.normalized_position = 1.0;
-        }
-    }
-
-    anchors
+        .collect()
 }
 
 fn format_key(key: &TimelineKey) -> String {
@@ -198,6 +190,7 @@ fn format_key(key: &TimelineKey) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::FixedOffset;
 
     fn sample() -> Vec<ProjectionMedia> {
         vec![
@@ -276,5 +269,36 @@ mod tests {
         assert_eq!(unknown.year, None);
         assert_eq!(unknown.month, None);
         assert_eq!(unknown.day, None);
+    }
+
+    #[test]
+    fn groups_using_localized_day_boundaries() {
+        let media = vec![
+            ProjectionMedia {
+                media_id: 1,
+                absolute_path: "/a/night.png".to_owned(),
+                media_kind: "image".to_owned(),
+                modified_unix_seconds: Some(84_600), // 1970-01-01 23:30:00 UTC
+                tags: vec![],
+            },
+            ProjectionMedia {
+                media_id: 2,
+                absolute_path: "/a/morning.png".to_owned(),
+                media_kind: "image".to_owned(),
+                modified_unix_seconds: Some(88_200), // 1970-01-02 00:30:00 UTC
+                tags: vec![],
+            },
+        ];
+
+        let utc = FixedOffset::east_opt(0).expect("valid offset");
+        let local_plus_two = FixedOffset::east_opt(2 * 3_600).expect("valid offset");
+
+        let utc_buckets = project_timeline_with_timezone(&media, TimelineGranularity::Day, &utc);
+        let local_buckets =
+            project_timeline_with_timezone(&media, TimelineGranularity::Day, &local_plus_two);
+
+        assert_eq!(utc_buckets.len(), 2);
+        assert_eq!(local_buckets.len(), 1);
+        assert_eq!(local_buckets[0].label, "1970-01-02");
     }
 }

@@ -1,5 +1,6 @@
 use image::ImageFormat;
 use image::ImageReader;
+use image::imageops::FilterType;
 use sha2::{Digest, Sha256};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
@@ -46,11 +47,13 @@ pub fn thumbnail_path(
     source_path: &Path,
     file_size_bytes: u64,
     modified_unix_seconds: Option<i64>,
+    max_edge: u32,
 ) -> PathBuf {
     let mut hasher = Sha256::new();
     hasher.update(source_path.to_string_lossy().as_bytes());
     hasher.update(file_size_bytes.to_le_bytes());
     hasher.update(modified_unix_seconds.unwrap_or_default().to_le_bytes());
+    hasher.update(max_edge.to_le_bytes());
     let digest = hasher.finalize();
     let filename = digest
         .iter()
@@ -72,6 +75,7 @@ pub fn ensure_image_thumbnail(
         source_path,
         file_size_bytes,
         modified_unix_seconds,
+        max_edge,
     );
     if output.exists() {
         return Ok(ThumbnailOutcome {
@@ -81,7 +85,7 @@ pub fn ensure_image_thumbnail(
     }
 
     let image = ImageReader::open(source_path)?.decode()?;
-    let thumbnail = image.thumbnail(max_edge, max_edge);
+    let thumbnail = image.resize(max_edge, max_edge, FilterType::Lanczos3);
     thumbnail.save_with_format(&output, ImageFormat::Png)?;
     Ok(ThumbnailOutcome {
         thumbnail_path: output,
@@ -100,13 +104,34 @@ mod tests {
             Path::new("/tmp/a.png"),
             10,
             Some(123),
+            256,
         );
         let b = thumbnail_path(
             Path::new("/tmp/thumbs"),
             Path::new("/tmp/a.png"),
             10,
             Some(123),
+            256,
         );
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn different_max_edge_produces_different_path() {
+        let a = thumbnail_path(
+            Path::new("/tmp/thumbs"),
+            Path::new("/tmp/a.png"),
+            10,
+            Some(123),
+            256,
+        );
+        let b = thumbnail_path(
+            Path::new("/tmp/thumbs"),
+            Path::new("/tmp/a.png"),
+            10,
+            Some(123),
+            400,
+        );
+        assert_ne!(a, b);
     }
 }

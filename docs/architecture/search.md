@@ -30,4 +30,5 @@ Search is implemented as a replaceable subsystem.
 ## Current scope
 
 - Supports path/filename, tags, and media-kind terms.
+- Search results respect active type and extension filters applied at the app layer.
 - Designed to be replaced later with richer ranking or index-backed search.

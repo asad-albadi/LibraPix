@@ -268,6 +268,25 @@ pub fn nav_button_style(active: bool) -> impl Fn(&Theme, button::Status) -> butt
     }
 }
 
+pub fn filter_chip_style(active: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |_theme, status| {
+        let (bg, text_color) = if active {
+            (ACCENT, Color::WHITE)
+        } else {
+            match status {
+                button::Status::Hovered => (BG_HOVER, TEXT_PRIMARY),
+                _ => (BG_SURFACE, TEXT_SECONDARY),
+            }
+        };
+        button::Style {
+            background: Some(Background::Color(bg)),
+            text_color,
+            border: iced::border::rounded(RADIUS_PILL),
+            ..button::Style::default()
+        }
+    }
+}
+
 pub fn card_button_style(selected: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
     move |_theme, status| {
         let (bg, border_color, border_width) = if selected {

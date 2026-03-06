@@ -27,7 +27,7 @@ All visual presentation is centralized in `librapix-app/src/ui.rs`:
 - Consistent padding and gap values across all surfaces.
 
 ### Component styles
-- Button styles: primary (accent), subtle (transparent), action (card bg), nav (active/inactive), card (selection border).
+- Button styles: primary (accent), subtle (transparent), action (card bg), nav (active/inactive), card (selection border), filter chip (pill radius, accent when active).
 - Text input styles: search (pill radius) and field (standard radius) with focus accent border.
 - Container styles: header, sidebar, details pane, cards, empty states, thumbnail placeholders, dividers.
 
@@ -47,6 +47,21 @@ All visual presentation is centralized in `librapix-app/src/ui.rs`:
 - Root management controls appear contextually when a root is selected.
 - Library root addition supports native folder picker dialog via Browse button.
 - Manual path input is available as a secondary flow.
+
+## Filtering
+
+- Media pane toolbar includes filter chips for type (All / Images / Videos) and extension (PNG, JPG, GIF, WEBP, MP4, MOV, etc.).
+- Extension chip set adjusts based on active type filter: image extensions when type is Images, video extensions when type is Videos, both when All.
+- Changing type resets the extension filter.
+- Filters apply to gallery, timeline, and search projections simultaneously.
+- Filter state lives in app state (`filter_media_kind`, `filter_extension`); presentation is in the media pane toolbar.
+- Filter logic is applied at the app orchestration layer, not inside widgets.
+
+## Media pane layout
+
+- Media pane toolbar (title, refresh, item count, filter chips) is rendered outside the scrollable region.
+- Only the browse content and search results scroll; the toolbar remains fixed at the top.
+- This prevents the scrollbar from overlapping toolbar controls.
 
 ## Gallery rendering
 
@@ -90,6 +105,13 @@ All visual presentation is centralized in `librapix-app/src/ui.rs`:
 - Gallery is auto-refreshed after adding or removing a library root.
 - Periodic file-system watching is deferred to a future phase.
 
+## Size-based exclusion
+
+- Sidebar indexing section includes a min-size input (in KB) with Apply button.
+- When applied, the next indexing run skips files below the threshold.
+- Files previously indexed that fall below the threshold are marked missing on re-index.
+- The setting is session-local; config persistence is a future extension.
+
 ## UX goals
 
 - Media-first browsing experience.
@@ -98,3 +120,4 @@ All visual presentation is centralized in `librapix-app/src/ui.rs`:
 - Coherent action placement.
 - Product-oriented language throughout.
 - Desktop-native interactions (double-click, folder picker, human-readable metadata).
+- Filtering as lightweight chips, not admin forms.

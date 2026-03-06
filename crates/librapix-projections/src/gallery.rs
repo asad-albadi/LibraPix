@@ -9,6 +9,7 @@ pub enum GallerySort {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GalleryQuery {
     pub media_kind: Option<String>,
+    pub extension: Option<String>,
     pub tag: Option<String>,
     pub sort: GallerySort,
     pub limit: usize,
@@ -31,6 +32,14 @@ pub fn project_gallery(media: &[ProjectionMedia], query: &GalleryQuery) -> Vec<G
                 .media_kind
                 .as_ref()
                 .is_none_or(|kind| item.media_kind.eq_ignore_ascii_case(kind))
+        })
+        .filter(|item| {
+            query.extension.as_ref().is_none_or(|ext| {
+                item.absolute_path
+                    .rsplit('.')
+                    .next()
+                    .is_some_and(|e| e.eq_ignore_ascii_case(ext))
+            })
         })
         .filter(|item| {
             query
@@ -88,6 +97,7 @@ mod tests {
     fn filters_by_kind_and_sorts_desc() {
         let query = GalleryQuery {
             media_kind: Some("image".to_owned()),
+            extension: None,
             tag: None,
             sort: GallerySort::ModifiedDesc,
             limit: 10,
@@ -99,9 +109,25 @@ mod tests {
     }
 
     #[test]
+    fn filters_by_extension() {
+        let query = GalleryQuery {
+            media_kind: None,
+            extension: Some("mp4".to_owned()),
+            tag: None,
+            sort: GallerySort::ModifiedDesc,
+            limit: 10,
+            offset: 0,
+        };
+        let rows = project_gallery(&sample(), &query);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].media_id, 2);
+    }
+
+    #[test]
     fn filters_by_tag() {
         let query = GalleryQuery {
             media_kind: None,
+            extension: None,
             tag: Some("kind:video".to_owned()),
             sort: GallerySort::PathAsc,
             limit: 10,

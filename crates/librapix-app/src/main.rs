@@ -9,7 +9,7 @@ use librapix_core::app::{
 };
 use librapix_core::domain::non_destructive;
 use librapix_i18n::{Locale, TextKey, Translator};
-use librapix_indexer::{IgnoreEngine, ScanRoot, scan_roots};
+use librapix_indexer::{IgnoreEngine, ScanOptions, ScanRoot, scan_roots};
 use librapix_projections::ProjectionMedia;
 use librapix_projections::gallery::{GalleryQuery, GallerySort, project_gallery};
 use librapix_projections::timeline::{TimelineGranularity, project_timeline};
@@ -68,6 +68,10 @@ enum Message {
     StartupRestore,
     BrowseFolder,
     FilesystemChanged,
+    SetFilterMediaKind(Option<String>),
+    SetFilterExtension(Option<String>),
+    MinFileSizeInputChanged(String),
+    ApplyMinFileSize,
 }
 
 struct Librapix {
@@ -92,6 +96,10 @@ struct Librapix {
     last_click_media_id: Option<i64>,
     last_click_time: Option<Instant>,
     activity_status: String,
+    filter_media_kind: Option<String>,
+    filter_extension: Option<String>,
+    min_file_size_bytes: u64,
+    min_file_size_input: String,
 }
 
 #[derive(Debug, Clone)]
@@ -103,6 +111,9 @@ struct BrowseItem {
     is_group_header: bool,
     line: String,
 }
+
+const GALLERY_THUMB_SIZE: u32 = 400;
+const DETAIL_THUMB_SIZE: u32 = 800;
 
 #[derive(Debug, Clone)]
 struct RuntimeContext {
@@ -141,6 +152,10 @@ impl Default for Librapix {
             last_click_media_id: None,
             last_click_time: None,
             activity_status: String::new(),
+            filter_media_kind: None,
+            filter_extension: None,
+            min_file_size_bytes: 0,
+            min_file_size_input: String::new(),
         };
         refresh_ignore_rules_preview(&mut app);
         app
@@ -396,6 +411,36 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
             }
             app.activity_status.clear();
         }
+        Message::SetFilterMediaKind(kind) => {
+            app.filter_media_kind = kind;
+            app.filter_extension = None;
+            run_gallery_projection(app);
+            run_timeline_projection(app);
+            if !app.state.search_query.trim().is_empty() {
+                run_read_model_query(app);
+            }
+        }
+        Message::SetFilterExtension(ext) => {
+            app.filter_extension = ext;
+            run_gallery_projection(app);
+            run_timeline_projection(app);
+            if !app.state.search_query.trim().is_empty() {
+                run_read_model_query(app);
+            }
+        }
+        Message::MinFileSizeInputChanged(value) => {
+            app.min_file_size_input = value;
+        }
+        Message::ApplyMinFileSize => {
+            if let Ok(kb) = app.min_file_size_input.trim().parse::<u64>() {
+                app.min_file_size_bytes = kb * 1024;
+            } else if app.min_file_size_input.trim().is_empty() {
+                app.min_file_size_bytes = 0;
+            }
+            run_indexing(app);
+            run_gallery_projection(app);
+            run_timeline_projection(app);
+        }
     }
 
     Task::none()
@@ -563,6 +608,28 @@ fn view(app: &Librapix) -> Element<'_, Message> {
             .style(primary_button_style)
             .width(Length::Fill)
             .padding([SPACE_SM as u16, SPACE_MD as u16]),
+        row![
+            text(app.i18n.text(TextKey::MinFileSizeLabel))
+                .size(FONT_CAPTION)
+                .color(TEXT_SECONDARY),
+            text_input(
+                app.i18n.text(TextKey::MinFileSizeKbSuffix),
+                &app.min_file_size_input
+            )
+            .on_input(Message::MinFileSizeInputChanged)
+            .on_submit(Message::ApplyMinFileSize)
+            .width(Length::Fixed(60.0))
+            .style(field_input_style),
+            text(app.i18n.text(TextKey::MinFileSizeKbSuffix))
+                .size(FONT_CAPTION)
+                .color(TEXT_TERTIARY),
+            button(text(app.i18n.text(TextKey::ApplyLabel)).size(FONT_CAPTION))
+                .on_press(Message::ApplyMinFileSize)
+                .style(subtle_button_style)
+                .padding([SPACE_2XS as u16, SPACE_SM as u16]),
+        ]
+        .spacing(SPACE_XS)
+        .align_y(iced::Alignment::Center),
         text(app.indexing_status.clone())
             .size(FONT_CAPTION)
             .color(TEXT_TERTIARY),
@@ -618,7 +685,7 @@ fn view(app: &Librapix) -> Element<'_, Message> {
     .style(sidebar_style);
 
     // ── Media pane ──
-    let media_content = render_media_panel(app);
+    let (media_header, media_scrollable) = render_media_panel(app);
 
     // ── Details pane ──
     let details_content = render_details_panel(app);
@@ -626,9 +693,15 @@ fn view(app: &Librapix) -> Element<'_, Message> {
     // ── Body ──
     let body = row![
         sidebar,
-        container(scrollable(media_content).height(Length::Fill))
-            .padding(SPACE_LG as u16)
-            .width(Length::Fill),
+        container(
+            column![
+                media_header,
+                scrollable(media_scrollable).height(Length::Fill),
+            ]
+            .spacing(SPACE_SM),
+        )
+        .padding(SPACE_LG as u16)
+        .width(Length::Fill),
         container(scrollable(details_content).height(Length::Fill))
             .width(Length::Fixed(DETAILS_WIDTH))
             .padding(SPACE_LG as u16)
@@ -643,7 +716,7 @@ fn view(app: &Librapix) -> Element<'_, Message> {
         .into()
 }
 
-fn render_media_panel(app: &Librapix) -> Element<'_, Message> {
+fn render_media_panel(app: &Librapix) -> (Element<'_, Message>, Element<'_, Message>) {
     let route_title = match app.state.active_route {
         Route::Gallery => app.i18n.text(TextKey::GalleryTab),
         Route::Timeline => app.i18n.text(TextKey::TimelineTab),
@@ -674,6 +747,54 @@ fn render_media_panel(app: &Librapix) -> Element<'_, Message> {
     ]
     .spacing(SPACE_SM)
     .align_y(iced::Alignment::Center);
+
+    let type_chips = row![
+        button(text(app.i18n.text(TextKey::FilterAllLabel)).size(FONT_CAPTION))
+            .on_press(Message::SetFilterMediaKind(None))
+            .style(filter_chip_style(app.filter_media_kind.is_none()))
+            .padding([SPACE_2XS as u16, SPACE_SM as u16]),
+        button(text(app.i18n.text(TextKey::FilterImagesLabel)).size(FONT_CAPTION))
+            .on_press(Message::SetFilterMediaKind(Some("image".to_owned())))
+            .style(filter_chip_style(
+                app.filter_media_kind.as_deref() == Some("image"),
+            ))
+            .padding([SPACE_2XS as u16, SPACE_SM as u16]),
+        button(text(app.i18n.text(TextKey::FilterVideosLabel)).size(FONT_CAPTION))
+            .on_press(Message::SetFilterMediaKind(Some("video".to_owned())))
+            .style(filter_chip_style(
+                app.filter_media_kind.as_deref() == Some("video"),
+            ))
+            .padding([SPACE_2XS as u16, SPACE_SM as u16]),
+    ]
+    .spacing(SPACE_XS);
+
+    let ext_list: &[&str] = match app.filter_media_kind.as_deref() {
+        Some("image") => &["png", "jpg", "gif", "webp"],
+        Some("video") => &["mp4", "mov", "mkv", "webm"],
+        _ => &["png", "jpg", "gif", "webp", "mp4", "mov"],
+    };
+    let mut ext_chips = row![
+        button(text(app.i18n.text(TextKey::FilterAllLabel)).size(FONT_CAPTION))
+            .on_press(Message::SetFilterExtension(None))
+            .style(filter_chip_style(app.filter_extension.is_none()))
+            .padding([SPACE_2XS as u16, SPACE_SM as u16]),
+    ]
+    .spacing(SPACE_XS);
+    for ext in ext_list {
+        let is_active = app.filter_extension.as_deref() == Some(ext);
+        ext_chips = ext_chips.push(
+            button(text(ext.to_uppercase()).size(FONT_CAPTION))
+                .on_press(Message::SetFilterExtension(Some((*ext).to_owned())))
+                .style(filter_chip_style(is_active))
+                .padding([SPACE_2XS as u16, SPACE_SM as u16]),
+        );
+    }
+
+    let filter_bar = row![type_chips, Space::new().width(SPACE_LG), ext_chips,]
+        .spacing(SPACE_SM)
+        .align_y(iced::Alignment::Center);
+
+    let header: Element<'_, Message> = column![content_header, filter_bar].spacing(SPACE_SM).into();
 
     let search_section: Element<'_, Message> = if !app.state.search_query.trim().is_empty() {
         if app.search_items.is_empty() {
@@ -742,9 +863,11 @@ fn render_media_panel(app: &Librapix) -> Element<'_, Message> {
         }
     };
 
-    column![content_header, search_section, browse_content]
+    let scrollable_content: Element<'_, Message> = column![search_section, browse_content]
         .spacing(SPACE_LG)
-        .into()
+        .into();
+
+    (header, scrollable_content)
 }
 
 fn render_gallery_grid(items: &[BrowseItem], selected_id: Option<i64>) -> Element<'_, Message> {
@@ -1125,7 +1248,15 @@ fn run_indexing(app: &mut Librapix) {
             })
             .collect::<Vec<_>>();
 
-        let result = scan_roots(&roots_for_scan, &ignore, &existing_for_indexer);
+        let scan_options = ScanOptions {
+            min_file_size_bytes: app.min_file_size_bytes,
+        };
+        let result = scan_roots(
+            &roots_for_scan,
+            &ignore,
+            &existing_for_indexer,
+            &scan_options,
+        );
         let writes = result
             .candidates
             .iter()
@@ -1173,7 +1304,7 @@ fn run_indexing(app: &mut Librapix) {
                 &row.absolute_path,
                 row.file_size_bytes,
                 row.modified_unix_seconds,
-                256,
+                GALLERY_THUMB_SIZE,
             ) {
                 Ok(outcome) => {
                     if outcome.generated {
@@ -1254,6 +1385,19 @@ fn run_read_model_query(app: &mut Librapix) {
                     .find(|row| row.media_id == hit.media_id)
                     .map(|row| (hit, row))
             })
+            .filter(|(_, row)| {
+                app.filter_media_kind
+                    .as_ref()
+                    .is_none_or(|k| row.media_kind.eq_ignore_ascii_case(k))
+            })
+            .filter(|(_, row)| {
+                app.filter_extension.as_ref().is_none_or(|ext| {
+                    row.absolute_path
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .is_some_and(|e| e.eq_ignore_ascii_case(ext))
+                })
+            })
             .map(|(_hit, row)| BrowseItem {
                 media_id: row.media_id,
                 title: row
@@ -1272,7 +1416,7 @@ fn run_read_model_query(app: &mut Librapix) {
                         &row.absolute_path,
                         row.file_size_bytes,
                         row.modified_unix_seconds,
-                        256,
+                        GALLERY_THUMB_SIZE,
                     )
                     .ok()
                     .map(|outcome| outcome.thumbnail_path)
@@ -1297,7 +1441,23 @@ fn run_timeline_projection(app: &mut Librapix) {
     })
     .map(|rows| {
         let media = rows_to_projection_media(&rows);
-        project_timeline(&media, TimelineGranularity::Day)
+        let filtered: Vec<ProjectionMedia> = media
+            .into_iter()
+            .filter(|m| {
+                app.filter_media_kind
+                    .as_ref()
+                    .is_none_or(|k| m.media_kind.eq_ignore_ascii_case(k))
+            })
+            .filter(|m| {
+                app.filter_extension.as_ref().is_none_or(|ext| {
+                    m.absolute_path
+                        .rsplit('.')
+                        .next()
+                        .is_some_and(|e| e.eq_ignore_ascii_case(ext))
+                })
+            })
+            .collect();
+        project_timeline(&filtered, TimelineGranularity::Day)
     })
     .map(|buckets| {
         let mut lines = Vec::new();
@@ -1326,7 +1486,7 @@ fn run_timeline_projection(app: &mut Librapix) {
                             &PathBuf::from(&item.absolute_path),
                             0,
                             item.modified_unix_seconds,
-                            256,
+                            GALLERY_THUMB_SIZE,
                         )
                         .ok()
                         .map(|outcome| outcome.thumbnail_path)
@@ -1355,7 +1515,8 @@ fn run_gallery_projection(app: &mut Librapix) {
     .map(|rows| {
         let media = rows_to_projection_media(&rows);
         let query = GalleryQuery {
-            media_kind: None,
+            media_kind: app.filter_media_kind.clone(),
+            extension: app.filter_extension.clone(),
             tag: None,
             sort: GallerySort::ModifiedDesc,
             limit: 60,
@@ -1375,7 +1536,7 @@ fn run_gallery_projection(app: &mut Librapix) {
                         &row.absolute_path,
                         row.file_size_bytes,
                         row.modified_unix_seconds,
-                        256,
+                        GALLERY_THUMB_SIZE,
                     )
                     .ok()
                     .map(|outcome| outcome.thumbnail_path)
@@ -1435,7 +1596,7 @@ fn load_media_details(app: &mut Librapix) {
                 &details.absolute_path,
                 details.file_size_bytes,
                 details.modified_unix_seconds,
-                512,
+                DETAIL_THUMB_SIZE,
             )
             .ok()
             .map(|outcome| outcome.thumbnail_path)

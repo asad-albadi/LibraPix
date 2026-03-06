@@ -78,6 +78,12 @@ All notable changes to this project are documented in this file.
 - App now supports enabling/disabling global ignore rules from UI and shows current rule status.
 - App browsing now supports direct media selection from search/gallery/timeline route panels.
 - Added explicit empty/loading/status messaging for roots, indexing, search, gallery, and timeline flows.
+- Added media type filter (All / Images / Videos) as filter chips in the media pane toolbar.
+- Added file extension filter (PNG, JPG, GIF, WEBP, MP4, MOV, etc.) as filter chips below the type filter.
+- Filters apply to gallery, timeline, and search results simultaneously.
+- Added size-based file exclusion during indexing via `ScanOptions.min_file_size_bytes`.
+- Min file size is configurable from the sidebar with a KB input and Apply button.
+- Gallery and detail preview thumbnail sizes increased to 400px and 800px for HiDPI clarity.
 - MVP roadmap and README now reflect a complete usable baseline.
 - Remaining MVP checklist now tracks completion of selection UX, state hardening, and final reconciliation.
 - Added UI redesign checklist and app-shell/design-token architecture baseline.
@@ -85,7 +91,15 @@ All notable changes to this project are documented in this file.
 - Refined details pane into explicit preview, metadata, tags, and actions sections with consistent interaction layout.
 - Updated architecture/roadmap docs to include UI shell, visual browsing, and redesign completion tracking.
 
+### Fixed
+- Thumbnails now use Lanczos3 resampling instead of nearest-neighbor for substantially sharper results.
+- Thumbnail cache key now includes the requested size, preventing gallery and detail views from sharing a single low-resolution cached file.
+- Refresh button and item count in the media pane are no longer hidden behind the scrollbar; the toolbar is now outside the scrollable region.
+
 ### Docs
+- Added ADR `0014` for filtering, exclusion, and thumbnail quality decisions.
+- Added quality milestone checklist.
+- Updated architecture docs for thumbnails, UI, indexing, and search.
 - Established baseline documentation for dependencies, troubleshooting, architecture, and repository map.
 - Recorded dependency decisions for `serde`, `toml`, `directories`, and `rusqlite`.
 - Recorded dependency decisions for `globset` and `walkdir`.

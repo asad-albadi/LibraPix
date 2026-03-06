@@ -106,6 +106,12 @@ pub enum TextKey {
     DetailsModifiedLabel,
     DetailsDimensionsLabel,
     DetailsPathLabel,
+    FilterAllLabel,
+    FilterImagesLabel,
+    FilterVideosLabel,
+    MinFileSizeLabel,
+    MinFileSizeKbSuffix,
+    ApplyLabel,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -238,5 +244,11 @@ fn en_us(key: TextKey) -> &'static str {
         TextKey::DetailsModifiedLabel => "Modified",
         TextKey::DetailsDimensionsLabel => "Dimensions",
         TextKey::DetailsPathLabel => "Path",
+        TextKey::FilterAllLabel => "All",
+        TextKey::FilterImagesLabel => "Images",
+        TextKey::FilterVideosLabel => "Videos",
+        TextKey::MinFileSizeLabel => "Min size",
+        TextKey::MinFileSizeKbSuffix => "KB",
+        TextKey::ApplyLabel => "Apply",
     }
 }

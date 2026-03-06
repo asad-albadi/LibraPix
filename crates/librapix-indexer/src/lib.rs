@@ -88,10 +88,16 @@ pub struct IndexingResult {
     pub scanned_root_ids: Vec<i64>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ScanOptions {
+    pub min_file_size_bytes: u64,
+}
+
 pub fn scan_roots(
     roots: &[ScanRoot],
     ignore_engine: &IgnoreEngine,
     existing_entries: &[ExistingIndexedEntry],
+    options: &ScanOptions,
 ) -> IndexingResult {
     let mut result = IndexingResult::default();
     let existing_by_path: HashMap<PathBuf, &ExistingIndexedEntry> = existing_entries
@@ -161,6 +167,11 @@ pub fn scan_roots(
                     continue;
                 }
             };
+
+            if options.min_file_size_bytes > 0 && file_size_bytes < options.min_file_size_bytes {
+                result.summary.ignored_entries += 1;
+                continue;
+            }
 
             let existing = existing_by_path.get(&path_buf).copied();
             let change_kind = match existing {
@@ -241,7 +252,7 @@ mod tests {
             normalized_path: root.clone(),
         }];
 
-        let result = scan_roots(&roots, &ignore, &[]);
+        let result = scan_roots(&roots, &ignore, &[], &ScanOptions::default());
         assert_eq!(result.summary.scanned_roots, 1);
         assert_eq!(result.summary.candidate_files, 2);
         assert_eq!(result.summary.ignored_entries, 1);
@@ -287,7 +298,7 @@ mod tests {
         }];
         let ignore = IgnoreEngine::new(&[]).expect("ignore should compile");
 
-        let result = scan_roots(&roots, &ignore, &existing);
+        let result = scan_roots(&roots, &ignore, &existing, &ScanOptions::default());
         assert_eq!(result.summary.unchanged_files, 1);
         assert_eq!(result.candidates.len(), 1);
         assert_eq!(result.candidates[0].change_kind, ChangeKind::Unchanged);

@@ -17,12 +17,15 @@ Thumbnail generation is an app-owned, non-destructive cache subsystem.
   - absolute source path
   - file size
   - modified timestamp
+  - requested max edge size
 - Cache location uses config-resolved app thumbnails directory.
 
 ## Generation behavior
 
 - If a deterministic thumbnail path already exists, it is reused.
 - If missing, Librapix decodes source image and writes a PNG thumbnail.
+- Resize uses `Lanczos3` filter for high-quality downsampling.
+- Gallery thumbnails default to 400px max edge; detail previews default to 800px max edge.
 - Failures are counted for status output but do not abort full indexing flow.
 
 ## Ownership model

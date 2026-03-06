@@ -27,7 +27,10 @@ Current baseline follows Iced's explicit state/update/view loop.
 - Run indexing baseline
   - App loads eligible roots and enabled ignore patterns from storage.
   - `librapix-indexer` scans and emits media candidates.
-  - App persists candidates to `indexed_media` and records indexing summary in state.
+  - App persists candidates incrementally to `indexed_media`, marks missing records, and records indexing summary in state.
+- Run read-model query baseline
+  - App queries read models from storage with optional text filtering over path/tag data.
+  - App renders a small preview list for verification, keeping UI logic thin.
 
 ## Rules
 

@@ -556,6 +556,28 @@ impl Storage {
         Ok(())
     }
 
+    pub fn ensure_media_kind_tags_attached(&self) -> Result<(), StorageError> {
+        let image_tag = self.upsert_tag("kind:image", TagKind::App)?;
+        let video_tag = self.upsert_tag("kind:video", TagKind::App)?;
+
+        self.connection.execute(
+            "INSERT OR IGNORE INTO media_tags (media_id, tag_id)
+             SELECT id, ?1
+             FROM indexed_media
+             WHERE media_kind = 'image' AND metadata_status != 'missing'",
+            params![image_tag],
+        )?;
+        self.connection.execute(
+            "INSERT OR IGNORE INTO media_tags (media_id, tag_id)
+             SELECT id, ?1
+             FROM indexed_media
+             WHERE media_kind = 'video' AND metadata_status != 'missing'",
+            params![video_tag],
+        )?;
+
+        Ok(())
+    }
+
     pub fn list_media_read_models(
         &self,
         limit: usize,
@@ -757,6 +779,45 @@ mod tests {
         let media = storage.list_indexed_media().expect("media should list");
         assert_eq!(media.len(), 1);
         assert_eq!(media[0].metadata_status, IndexedMetadataStatus::Missing);
+
+        let _ = std::fs::remove_file(db);
+    }
+
+    #[test]
+    fn read_model_search_matches_tag() {
+        let db = temp_db_file("read-model-tags");
+        let mut storage = Storage::open(&db).expect("database should open");
+        storage
+            .upsert_source_root(Path::new("/tmp/librapix-read-model"))
+            .expect("root insert should work");
+        let root_id = storage
+            .list_source_roots()
+            .expect("roots should list")
+            .first()
+            .expect("one root expected")
+            .id;
+
+        let writes = vec![IndexedMediaWrite {
+            source_root_id: root_id,
+            absolute_path: PathBuf::from("/tmp/librapix-read-model/a.png"),
+            media_kind: "image".to_owned(),
+            file_size_bytes: 12,
+            modified_unix_seconds: Some(200),
+            width_px: Some(20),
+            height_px: Some(20),
+            metadata_status: IndexedMetadataStatus::Ok,
+        }];
+        storage
+            .apply_incremental_index(&writes, &[root_id])
+            .expect("apply should work");
+        storage
+            .ensure_media_kind_tags_attached()
+            .expect("kind tags should attach");
+
+        let rows = storage
+            .search_media_read_models("kind:image", 10)
+            .expect("search should work");
+        assert_eq!(rows.len(), 1);
 
         let _ = std::fs::remove_file(db);
     }

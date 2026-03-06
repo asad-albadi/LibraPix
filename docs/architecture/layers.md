@@ -30,7 +30,8 @@
 - Infrastructure (`librapix-storage` + future crates/modules)
   - SQLite persistence and migrations
   - Source root and ignore-rule persistence baseline
-  - Search integration and richer indexing persistence (future phases)
+  - Search-facing read-model queries over indexed media and tags
+  - Richer search ranking/fuzzy behavior (future phases)
 
 ## Dependency direction
 

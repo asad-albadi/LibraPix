@@ -55,6 +55,14 @@ This schema is intentionally minimal to avoid overbuilding before indexing and s
 - Config may provide bootstrap roots, but storage is the persistence system of record for library root rows.
 - Startup orchestration may sync configured roots into storage using idempotent upsert.
 
+## Read-model baseline
+
+- Storage exposes read-model queries over `indexed_media` joined with `tags`.
+- Baseline query surface supports:
+  - paginated list of non-missing indexed media
+  - search by path/tag text filter
+- This read layer is UI-agnostic and replaceable by richer search subsystems later.
+
 ## Missing-file policy baseline
 
 - Missing/deleted files are not treated as fatal startup errors.

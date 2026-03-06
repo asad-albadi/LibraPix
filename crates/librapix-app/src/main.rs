@@ -418,6 +418,10 @@ fn run_indexing(app: &mut Librapix) {
         })
         .ok()?;
 
+        let _ = with_storage(&app.runtime, |storage| {
+            storage.ensure_media_kind_tags_attached()
+        });
+
         let read_models = with_storage(&app.runtime, |storage| {
             storage.list_media_read_models(50, 0)
         })

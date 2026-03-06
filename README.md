@@ -4,7 +4,7 @@ Librapix is a cross-platform, desktop-first, non-destructive local media gallery
 
 ## Status
 
-Project phase: library management and indexing foundation.
+Project phase: metadata and incremental indexing foundation.
 
 ## Core Principles
 
@@ -44,6 +44,9 @@ Project phase: library management and indexing foundation.
 - Startup bootstrap syncs configured library roots into storage via idempotent upsert.
 - Root lifecycle state is reconciled as `active`, `unavailable`, or `deactivated`.
 - Indexing baseline scans eligible roots, applies centralized ignore rules, and persists indexed media candidates.
+- Metadata baseline stores file size, modified time, media kind, and image dimensions where available.
+- Re-index runs apply incremental change detection and mark missing indexed files without destructive source operations.
+- Search-facing read-model queries are available over indexed media and tag joins.
 
 ## Documentation Index
 

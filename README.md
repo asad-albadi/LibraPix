@@ -52,12 +52,15 @@ Project phase: MVP complete (technical + visual shell baseline).
 - Search-facing read-model queries are available over indexed media and tag joins.
 - Indexing/galleries now generate and reuse deterministic image thumbnails in app-owned cache.
 - UI uses a desktop shell layout (header/sidebar/main/details) with media-first gallery/timeline browsing.
-- Timeline mode includes a projection-driven fast date scrubber for large-library navigation.
+- Timeline mode includes a projection-driven fast date scrubber with stable anchor-index mapping for smooth large-library navigation.
+- Timeline day grouping uses local timezone day boundaries from `modified_unix_seconds`.
 - Browse filters include media type, extension, and tag chips (applied consistently across gallery/timeline/search).
 - Search results are no longer silently capped at 20.
 - Media cards show compact metadata (`kind · size · dimensions`) and corner media-type badges.
-- Details/actions support both copy-file and copy-path workflows.
-- Live filesystem refresh can surface an in-app new-file announcement with quick actions.
+- Details/actions support both copy-file and copy-path workflows, including keyboard shortcuts (`Cmd/Ctrl+C` for file, `Cmd/Ctrl+Shift+C` for path).
+- Details action layout is responsive in narrow panels (no clipped final action button).
+- Media header stats show `Shown`, `Images`, and `Videos` counts derived from the currently active browse/search result set.
+- Live filesystem refresh can surface an in-app modal new-file dialog with preview, metadata, and quick actions.
 - Windows publisher/signing baseline is documented under `packaging/windows/`.
 
 ## MVP Usage Flow

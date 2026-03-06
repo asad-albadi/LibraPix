@@ -8,6 +8,9 @@ Librapix exposes simple file-oriented actions without mutating source media.
 - Open selected media containing folder.
 - Copy selected media file to clipboard (file object copy, not just path text).
 - Copy selected media path to clipboard via platform command.
+- Keyboard shortcuts:
+  - `Cmd/Ctrl+C`: copy selected media file
+  - `Cmd/Ctrl+Shift+C`: copy selected media path
 
 ## Double-click open
 
@@ -23,6 +26,7 @@ Librapix exposes simple file-oriented actions without mutating source media.
 - Media id comes from explicit selection state populated by search/gallery/timeline route panels.
 - UI remains a thin input/button surface.
 - Actions are presented in a dedicated details-pane section rather than mixed with browsing content.
+- Shortcut events are consumed through Iced `keyboard::listen` (ignored events only), so focused text inputs keep normal copy behavior.
 
 ## Platform behavior
 

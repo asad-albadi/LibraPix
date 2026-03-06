@@ -48,8 +48,8 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
 - Timeline scrubber interaction
   - Timeline pane owns a stable scrollable `Id` (`media-pane-scrollable`).
   - Drag/click on scrubber emits `TimelineScrubChanged` (continuous) and `TimelineScrubReleased`.
-  - Scrub value maps to nearest projection anchor (by `normalized_position`), not widget inspection.
-  - App issues Iced widget operations (`operation::scroll_to` / `operation::snap_to`) to jump the timeline scroll position.
+  - Scrub value maps to anchor index over ordered timeline anchors (index-stable mapping, no widget inspection).
+  - App issues Iced widget operations (`operation::snap_to`) to jump timeline scroll position by relative anchor position.
   - Scroll updates emit `MediaViewportChanged` and keep scrubber state synchronized with manual scrolling.
 - Run gallery projection baseline
   - App loads read-model rows.
@@ -71,6 +71,11 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
   - App resolves selected media path from storage.
   - App invokes platform-specific open/clipboard commands.
   - Copy flow supports both path clipboard and file-object clipboard actions.
+- Keyboard shortcuts
+  - App subscribes to ignored keyboard events via `keyboard::listen`.
+  - `Cmd/Ctrl+C` routes to copy-selected-file.
+  - `Cmd/Ctrl+Shift+C` routes to copy-selected-path.
+  - Ignored-only subscription prevents conflicts with focused text input widgets.
 - Startup restore
   - `Task::done(Message::StartupRestore)` fires after the first render.
   - If roots exist, spawns background work via `Task::perform` to run indexing, thumbnail generation, and gallery/timeline projections on a background thread.
@@ -88,7 +93,7 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
   - After removing a root, gallery refreshes automatically.
   - After indexing completes, gallery projection refreshes automatically (within StartupRestore flow).
   - Filesystem-triggered background refresh compares previous and current media cache ids to detect newly indexed files.
-  - New files can trigger a dismissible in-app announcement card with quick actions.
+  - New files can trigger a dismissible in-app modal dialog with preview/metadata and quick actions.
 
 - Background work pattern
   - Heavy operations (indexing, scanning, thumbnail generation, projections) are encapsulated in `do_background_work`.

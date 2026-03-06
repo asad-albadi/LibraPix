@@ -16,6 +16,10 @@ We need a fast date navigator that:
 
 The existing timeline projection already groups by date buckets. That grouping is the correct source of truth for scrub navigation.
 
+Follow-up validation uncovered two correctness issues:
+- weighted anchor normalization (`item_count`-proportional) made scrub movement feel sticky on uneven datasets
+- UTC date bucketing caused local-midnight files to appear under the previous day
+
 ## Decision
 
 ### Anchor model in projections
@@ -25,9 +29,11 @@ Add a projection-level timeline anchor model (`TimelineAnchor`) derived from tim
 - `label`
 - date parts (`year`, `month`, `day`)
 - `item_count`
-- `normalized_position` in `0.0..=1.0`
+- index-based `normalized_position` in `0.0..=1.0` (uniform by ordered group index)
 
 Anchors are produced by `build_timeline_anchors` in `librapix-projections`, not by inspecting rendered widgets.
+
+Timeline date buckets are derived from `modified_unix_seconds` using local timezone conversion before day/month/year extraction.
 
 ### Timeline-mode scrubber in app layer
 
@@ -40,8 +46,7 @@ Add a right-side scrubber control in Timeline mode only:
 ### Programmatic scrolling with Iced operations
 
 Use Iced widget operations for jumps:
-- primary: `iced::widget::operation::scroll_to`
-- fallback: `iced::widget::operation::snap_to` (when max scroll extent is not yet known)
+- primary: `iced::widget::operation::snap_to` (relative anchor positions)
 
 The media-pane scrollable uses a stable `Id` (`media-pane-scrollable`), and viewport events keep scrub state synchronized with manual scrolling.
 
@@ -57,6 +62,6 @@ The media-pane scrollable uses a stable `Id` (`media-pane-scrollable`), and view
 ## Consequences
 
 - Timeline navigation is now projection-driven and scalable for large libraries.
-- Scrub interactions avoid projection rebuilds and reuse precomputed anchors.
+- Scrub interactions avoid projection rebuilds, reuse precomputed anchors, and skip redundant same-anchor scroll commands.
 - Architecture remains extensible: gallery can later reuse anchor-based navigation patterns without changing projection boundaries.
 - UI shell structure remains unchanged (header/sidebar/media/details).

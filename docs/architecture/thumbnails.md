@@ -26,6 +26,7 @@ Thumbnail generation is an app-owned, non-destructive cache subsystem.
 - For images: decodes source and writes a PNG thumbnail using `Lanczos3` filter for high-quality downsampling.
 - For videos: runs `ffmpeg -ss 00:00:01 -frames:v 1 -vf scale=<max>:<max>:force_original_aspect_ratio=decrease` to extract a representative frame.
 - Gallery thumbnails default to 400px max edge; detail previews default to 800px max edge.
+- Detail-size thumbnails are also reused by the in-app new-file modal dialog preview.
 - Failures are counted for status output but do not abort full indexing flow.
 
 ## Video thumbnail requirements

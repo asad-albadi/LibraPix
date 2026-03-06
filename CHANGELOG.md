@@ -39,6 +39,8 @@ All notable changes to this project are documented in this file.
 - Added compact card metadata row (`kind · size · dimensions`) with padded layout to avoid clipping.
 - Added details action to copy the selected media file object (not only path text).
 - Added in-app new-file announcement card for filesystem-triggered live refresh, with quick actions (view/open/copy file/dismiss).
+- Added modal in-app new-file dialog overlay with preview thumbnail, metadata, and quick actions (view/open/copy file/dismiss).
+- Added keyboard shortcuts for copy actions: `Cmd/Ctrl+C` (copy file) and `Cmd/Ctrl+Shift+C` (copy path), wired through ignored key-event subscription.
 - Added Windows packaging/signing baseline under `packaging/windows/`:
   - MSIX manifest template with publisher identity `CN=Asad`
   - scripts for dev cert creation, EXE signing, and MSIX pack+sign
@@ -65,6 +67,9 @@ All notable changes to this project are documented in this file.
 - Added new i18n keys for folder picker, activity status, and metadata labels.
 - Timeline pane scroll is now wired with a stable scrollable `Id` and programmatic jumps via Iced widget operations (`scroll_to` + `snap_to` fallback).
 - Timeline scrubber state now stays synchronized with viewport scroll events and nearest anchor mapping.
+- Timeline scrubber mapping now uses stable anchor-index normalization and relative snapping to prevent sticky/jumpy behavior on uneven timelines.
+- Details-pane action buttons now use responsive layout so the final action is never clipped in narrow widths.
+- Media-pane header now shows consistent `Shown`, `Images`, and `Videos` counts derived from the active browse/search result source.
 - Search input border radius now matches the standard control radius used by the rest of the design system.
 - Search/galleries/timeline now all consume the same tag-filter state alongside media-kind and extension filters.
 - Redesigned UI with Fluent-inspired design system: comprehensive color palette, spacing scale, typography hierarchy, and component styles.
@@ -117,6 +122,10 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 - "All" filter now truly includes both images and videos by removing hidden browse truncation layers; no implicit image-only behavior remains in `All`.
+- Timeline grouping now respects local timezone day boundaries, fixing newly added files appearing under the previous day around UTC/local midnight offsets.
+- Timeline fast-scrubber no longer gets stuck on certain dates/years due to weighted anchor mapping and redundant same-anchor scroll operations.
+- New-file announcement UX moved from inline card injection to a modal dialog to avoid layout interference with timeline/gallery content.
+- Top Refresh-adjacent stats are now consistent with active filter/search state instead of route-only item counts.
 - Removed hidden app-side search truncation (`limit: 20`); search results now return the complete matching set for the current read-model snapshot.
 - Multi-root aggregation now consumes full read-model datasets for browse/index/search hydration via unbounded storage reads, avoiding silent root/media loss from hard SQL limits.
 - Read-model query ordering changed from `ORDER BY absolute_path ASC` to `ORDER BY modified_unix_seconds DESC, absolute_path ASC` so gallery/timeline show most-recent-first across all roots instead of filling the limit with alphabetically-first paths (which favored one or two libraries).
@@ -151,10 +160,12 @@ All notable changes to this project are documented in this file.
 - Added ADR `0014` for filtering, exclusion, and thumbnail quality decisions.
 - Added ADR `0015` for media-view architecture, justified layout, and video thumbnail decisions.
 - Added ADR `0018` for projection-driven timeline scrubber architecture.
+- Updated ADR `0018` with anchor-index normalization and local-day grouping follow-up decisions.
 - Added ADR `0019` for Windows signing/publisher baseline.
 - Added Windows signing/distribution guide and script usage documentation.
 - Updated architecture docs for UI/media-view/projections/search/actions/message-flow with tag filtering, card metadata/icon design, file-copy action, and live new-file announcement behavior.
 - Added product-updates milestone checklist for tag filter, card metadata polish, copy-file action, announcement flow, search cap fix, and Windows signing setup.
+- Added timeline follow-up correctness checklist for scrubber stability, modal announcement UX, copy shortcuts, responsive details actions, stats consistency, and regrouping correctness.
 - Added quality milestone checklist.
 - Added timeline scrubber milestone checklist.
 - Updated architecture docs for thumbnails, UI, indexing, and search.

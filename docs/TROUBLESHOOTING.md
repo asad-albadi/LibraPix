@@ -18,6 +18,72 @@
   - Keep timeline anchor generation tied to projection output and avoid widget-derived fallback state.
   - Preserve stable scrollable `Id` wiring (`media-pane-scrollable`) so scrub events can issue scroll operations.
 
+## Timeline scrubber feels stuck on certain dates/years
+
+- Symptoms
+  - Dragging the scrubber can appear to stall on a date/year.
+  - Scrubber movement feels jumpy or non-linear with large uneven date groups.
+- Affected area
+  - Timeline scrubber anchor mapping + programmatic scroll behavior.
+- Confirmed cause
+  - Anchor positions were weighted by `item_count`, so very large groups consumed disproportionate scrub range.
+  - Scrub updates repeatedly re-issued scroll operations even when anchor target did not change.
+  - Absolute scroll targeting depended on stale max-scroll snapshots in some transitions.
+- Resolution
+  - Anchor normalization changed to stable index-based mapping (`0.0..=1.0` across ordered groups).
+  - Scrub input now maps directly to anchor index and only scrolls when target anchor changes.
+  - Programmatic jumps now use relative snapping (`operation::snap_to`) keyed to anchor position.
+- Prevention guidance
+  - Keep scrub mapping index-stable and projection-driven.
+  - Avoid reissuing expensive scroll commands when scrub target anchor is unchanged.
+
+## New file appears under \"yesterday\" in timeline after midnight
+
+- Symptoms
+  - A file added after local midnight appears in the prior day bucket.
+  - Details panel modified timestamp appears correct, but timeline day grouping is wrong.
+- Affected area
+  - Timeline day/month/year grouping projection.
+- Confirmed cause
+  - Projection grouped by UTC calendar date from `modified_unix_seconds` instead of local timezone day boundaries.
+- Resolution
+  - Timeline projection now converts timestamps using local timezone before deriving day/month/year keys.
+  - Added regression test covering UTC-midnight boundary behavior under non-UTC offsets.
+- Prevention guidance
+  - Keep timeline grouping semantics aligned with user-facing local date formatting.
+  - Include timezone-boundary tests when changing projection date logic.
+
+## Details action buttons are clipped/cut off
+
+- Symptoms
+  - Last details action button is partially hidden in narrow details pane widths.
+- Affected area
+  - Details action layout in right pane.
+- Confirmed cause
+  - Actions were rendered in one fixed horizontal row that exceeded available width.
+- Resolution
+  - Details actions now use responsive layout:
+    - single-column stack for very narrow widths
+    - 2x2 grid for normal details widths
+    - one-row layout only when space allows
+- Prevention guidance
+  - Treat actions as responsive UI controls and avoid fixed-row assumptions in constrained panes.
+
+## Top media counts near Refresh are inconsistent
+
+- Symptoms
+  - Header count near Refresh does not match what is currently being browsed.
+- Affected area
+  - Media-pane header stats.
+- Confirmed cause
+  - Count was derived from route browse list only, even while search results were active.
+- Resolution
+  - Header stats now show `Shown`, `Images`, and `Videos` from the active result source:
+    - search result set when query is active
+    - otherwise current route browse projection
+- Prevention guidance
+  - Derive displayed stats from the exact rendered result source, not adjacent or stale state.
+
 ## Search only returns 20 results
 
 - Symptoms

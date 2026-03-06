@@ -21,7 +21,7 @@ This checklist tracks the correctness + UX fixes requested after the media-navig
 - [x] Add keyboard shortcut for copy selected file
 - [x] Add keyboard shortcut for copy selected path
 - [x] Ensure shortcuts do not fire while text inputs handle key events
-- [ ] Document shortcut behavior in architecture/UI docs
+- [x] Document shortcut behavior in architecture/UI docs
 
 ## 4. Details action layout responsiveness
 
@@ -46,12 +46,12 @@ This checklist tracks the correctness + UX fixes requested after the media-navig
 
 ## 7. Documentation updates
 
-- [ ] Update `README.md`
-- [ ] Update `CHANGELOG.md`
-- [ ] Update `docs/README.md`
-- [ ] Update `docs/TROUBLESHOOTING.md`
-- [ ] Update affected architecture docs (`ui.md`, `media-ui.md`, `projections.md`, `message-flow.md`, `search.md`, `actions.md`, `indexing.md`, `storage.md`)
-- [ ] Add/update ADR if architectural decision changes
+- [x] Update `README.md`
+- [x] Update `CHANGELOG.md`
+- [x] Update `docs/README.md`
+- [x] Update `docs/TROUBLESHOOTING.md`
+- [x] Update affected architecture docs (`ui.md`, `media-ui.md`, `projections.md`, `message-flow.md`, `search.md`, `actions.md`, `indexing.md`, `storage.md`)
+- [x] Add/update ADR if architectural decision changes
 
 ## 8. Verification loop per milestone
 
@@ -68,7 +68,7 @@ This checklist tracks the correctness + UX fixes requested after the media-navig
 
 ## 10. Commit checkpoints
 
- - [x] Commit timeline scrubber + regrouping fixes
-- [ ] Commit dialog + shortcut + details/stats fixes
+- [x] Commit timeline scrubber + regrouping fixes
+- [x] Commit dialog + shortcut + details/stats fixes
 - [ ] Commit docs reconciliation
 - [ ] Final clean working tree check

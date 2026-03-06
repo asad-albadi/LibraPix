@@ -12,6 +12,7 @@ Timeline and gallery views are read projections built from indexed media read mo
 ## Timeline baseline
 
 - Driving date field: `modified_unix_seconds`.
+- Day/month/year grouping uses local timezone conversion (user-facing local day semantics), not raw UTC calendar buckets.
 - Grouping supports:
   - day
   - month
@@ -28,7 +29,7 @@ Timeline and gallery views are read projections built from indexed media read mo
 - `label`: date label used by timeline headers (`YYYY-MM-DD`, `YYYY-MM`, `YYYY`, or `unknown`).
 - `year` / `month` / `day`: parsed date parts when available, `None` for unknown groups.
 - `item_count`: number of media items in the group.
-- `normalized_position`: stable `0.0..=1.0` anchor position used for scrub mapping and programmatic scrolling.
+- `normalized_position`: stable index-based `0.0..=1.0` anchor position used for scrub mapping and programmatic scrolling.
 
 Anchor construction is projection-driven (`build_timeline_anchors`) and does not inspect rendered widgets.
 

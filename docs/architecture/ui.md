@@ -29,7 +29,7 @@ All visual presentation is centralized in `librapix-app/src/ui.rs`:
 ### Component styles
 - Button styles: primary (accent), subtle (transparent), action (card bg), nav (active/inactive), card (selection border), filter chip (pill radius, accent when active).
 - Text input styles: search and field now share the same rounded-corner language for consistency.
-- Container styles: header, sidebar, details pane, cards, empty states, thumbnail placeholders, dividers, timeline scrubber surfaces, media-kind badges, and in-app announcement panel.
+- Container styles: header, sidebar, details pane, cards, empty states, thumbnail placeholders, dividers, timeline scrubber surfaces, media-kind badges, modal backdrop, and modal dialog surfaces.
 
 ### Layout helpers
 - `section_heading()`: small-caps section label.
@@ -42,16 +42,19 @@ All visual presentation is centralized in `librapix-app/src/ui.rs`:
 - Double-click opens the media item in the OS default external app.
 - Double-click detection tracks last-click media id and timestamp at app level.
 - Gallery cards and timeline rows are clickable buttons with card styles.
-- New-file detection during live filesystem refresh can surface an in-app announcement card with quick actions (view, open file, copy file, dismiss).
+- New-file detection during live filesystem refresh can surface an in-app modal announcement dialog with preview, metadata, and quick actions (view, open file, copy file, dismiss).
 - Timeline mode includes a fast right-side scrubber:
   - drag/click updates scrub value
-  - scrub maps to projection anchors
+  - scrub maps to projection anchors by stable anchor index
   - a date chip is shown while dragging
 - Search is triggered via Enter key in the header search bar.
 - Root selection uses styled nav buttons with status dot indicators.
 - Root management controls appear contextually when a root is selected.
 - Library root addition supports native folder picker dialog via Browse button.
 - Manual path input is available as a secondary flow.
+- Copy shortcuts are supported through ignored keyboard events (no text-input conflicts):
+  - `Cmd/Ctrl+C`: copy selected file
+  - `Cmd/Ctrl+Shift+C`: copy selected path
 
 ## Filtering
 
@@ -68,7 +71,7 @@ All visual presentation is centralized in `librapix-app/src/ui.rs`:
 
 ## Media pane layout
 
-- Media pane toolbar (title, refresh, item count, filter chips) is rendered outside the scrollable region.
+- Media pane toolbar (title, refresh, shown/images/videos stats, filter chips) is rendered outside the scrollable region.
 - Only the browse content and search results scroll; the toolbar remains fixed at the top.
 - This prevents the scrollbar from overlapping toolbar controls.
 - Timeline mode keeps this layout and adds a side scrubber column inside the media pane body (without changing shell structure).
@@ -106,7 +109,7 @@ Gallery, timeline, and search views share a unified media-view architecture:
 - Items are selectable with the same card style as gallery cards.
 - Timeline rendering does not apply a hidden hard item cap.
 - Timeline scrubber uses precomputed anchor metadata; it does not inspect rendered rows.
-- Programmatic scrolling uses Iced widget operations (`operation::scroll_to` with `operation::snap_to` fallback).
+- Programmatic scrolling uses Iced relative snapping (`operation::snap_to`) keyed to anchor positions.
 
 ## Details pane
 
@@ -116,6 +119,7 @@ Gallery, timeline, and search views share a unified media-view architecture:
 - Formatting is centralized in `format.rs` with `format_file_size`, `format_timestamp`, `format_dimensions`.
 - Tags section supports add/remove for app tags and game tags.
 - Actions section provides open, show-in-folder, copy-file, and copy-path commands.
+- Details actions are responsive (single-column, 2x2 grid, or one-row depending available width) to prevent clipped buttons.
 
 ## Startup behavior
 

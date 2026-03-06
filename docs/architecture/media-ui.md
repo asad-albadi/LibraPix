@@ -51,6 +51,7 @@ This produces a Google-Photos-style justified layout where images maintain aspec
 - Renders search results as a justified grid using the same layout as gallery.
 - Shown above the main browse content when a search query is active.
 - Search no longer truncates results to an implicit 20-hit cap; full matching set is returned for the current read-model snapshot.
+- Top media-pane stats switch to the active search result set while a query is present (`Shown`, `Images`, `Videos`).
 
 ## Selection model
 
@@ -58,12 +59,23 @@ This produces a Google-Photos-style justified layout where images maintain aspec
 - On click, `load_media_details_cached()` checks `media_cache` first, then falls back to storage.
 - Cache hits use pre-resolved `detail_thumbnail_path` — no disk I/O on the click path.
 - Double-click opens the file in the OS default app.
+- Keyboard shortcuts are routed through ignored-key subscriptions to avoid text-input conflicts:
+  - `Cmd/Ctrl+C` copies selected file
+  - `Cmd/Ctrl+Shift+C` copies selected path
 - Selection changes do not trigger layout recomputation, only a visual update of the selected card border.
 
 ## Timeline scrubber model
 
 - Scrubber anchors are precomputed from timeline projection buckets (`TimelineAnchor`).
 - Anchor model includes date label + date parts + stable group index + normalized position.
-- Scrub interactions map to nearest anchor index and trigger programmatic scroll through Iced scroll operations.
+- Anchor normalized positions are index-based (`0.0..=1.0` across ordered groups), which avoids heavy-group stickiness.
+- Scrub interactions map slider values directly to anchor indexes and trigger programmatic relative snapping (`operation::snap_to`).
 - While dragging, UI shows a floating date chip sourced from the active anchor label.
 - Scrub interactions do not rebuild projections; they reuse cached timeline anchors.
+
+## New-file announcement UX
+
+- Filesystem-triggered indexing deltas can open a modal in-app dialog for the newest new file.
+- Dialog content includes preview thumbnail, compact metadata, and path/modification details.
+- Quick actions: view/select, open file, copy file, dismiss.
+- Dialog state is app-level (`new_media_announcement`) and remains outside card/grid rendering primitives.

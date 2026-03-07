@@ -68,4 +68,4 @@ This checklist tracks the chip-based redesign milestone for library tags, detail
 - [x] Commit library/details tag redesign
 - [x] Commit settings ignore-rule redesign
 - [x] Commit docs reconciliation
-- [ ] Confirm working tree clean
+- [x] Confirm working tree clean

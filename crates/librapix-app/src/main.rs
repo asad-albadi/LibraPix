@@ -1,3 +1,4 @@
+mod assets;
 mod format;
 mod ui;
 
@@ -99,6 +100,7 @@ enum Message {
     CopyMediaFileById(i64),
     DismissNewMediaAnnouncement,
     RefreshDiagnostics,
+    OpenGitHub,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -462,6 +464,7 @@ fn message_event_label(msg: &Message) -> String {
         Message::CopyMediaFileById(id) => format!("CopyMediaFileById({id})"),
         Message::DismissNewMediaAnnouncement => "DismissNewMediaAnnouncement".into(),
         Message::RefreshDiagnostics => "RefreshDiagnostics".into(),
+        Message::OpenGitHub => "OpenGitHub".into(),
     }
 }
 
@@ -802,6 +805,9 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
         Message::RefreshDiagnostics => {
             refresh_diagnostics(app);
         }
+        Message::OpenGitHub => {
+            let _ = opener::open(assets::REPO_URL);
+        }
     }
 
     Task::none()
@@ -830,11 +836,25 @@ fn view(app: &Librapix) -> Element<'_, Message> {
     let is_timeline = matches!(app.state.active_route, Route::Timeline);
 
     // ── Header ──
+    let logo_path = assets::logo_icon_64();
     let brand = row![
+        image(image::Handle::from_path(logo_path))
+            .width(Length::Fixed(32.0))
+            .height(Length::Fixed(32.0)),
         text("Libra").size(FONT_DISPLAY).color(TEXT_PRIMARY),
         text("Pix").size(FONT_DISPLAY).color(ACCENT),
     ]
-    .spacing(0);
+    .spacing(SPACE_SM)
+    .align_y(iced::Alignment::Center);
+
+    let github_btn = button(
+        image(image::Handle::from_path(assets::icon_github()))
+            .width(Length::Fixed(20.0))
+            .height(Length::Fixed(20.0)),
+    )
+    .on_press(Message::OpenGitHub)
+    .style(subtle_button_style)
+    .padding([SPACE_XS as u16, SPACE_XS as u16]);
 
     let header = container(
         row![
@@ -855,6 +875,7 @@ fn view(app: &Librapix) -> Element<'_, Message> {
             text(app.activity_status.clone())
                 .size(FONT_CAPTION)
                 .color(ACCENT),
+            github_btn,
         ]
         .spacing(SPACE_SM)
         .align_y(iced::Alignment::Center),
@@ -867,16 +888,34 @@ fn view(app: &Librapix) -> Element<'_, Message> {
     // ── Sidebar: Browse navigation ──
     let nav_section = column![
         section_heading(app.i18n.text(TextKey::BrowseSectionLabel)),
-        button(text(app.i18n.text(TextKey::GalleryTab)).size(FONT_BODY))
-            .width(Length::Fill)
-            .on_press(Message::OpenGallery)
-            .style(nav_button_style(is_gallery))
-            .padding([SPACE_SM as u16, SPACE_MD as u16]),
-        button(text(app.i18n.text(TextKey::TimelineTab)).size(FONT_BODY))
-            .width(Length::Fill)
-            .on_press(Message::OpenTimeline)
-            .style(nav_button_style(is_timeline))
-            .padding([SPACE_SM as u16, SPACE_MD as u16]),
+        button(
+            row![
+                image(image::Handle::from_path(assets::icon_gallery()))
+                    .width(Length::Fixed(18.0))
+                    .height(Length::Fixed(18.0)),
+                text(app.i18n.text(TextKey::GalleryTab)).size(FONT_BODY),
+            ]
+            .spacing(SPACE_SM)
+            .align_y(iced::Alignment::Center),
+        )
+        .width(Length::Fill)
+        .on_press(Message::OpenGallery)
+        .style(nav_button_style(is_gallery))
+        .padding([SPACE_SM as u16, SPACE_MD as u16]),
+        button(
+            row![
+                image(image::Handle::from_path(assets::icon_timeline()))
+                    .width(Length::Fixed(18.0))
+                    .height(Length::Fixed(18.0)),
+                text(app.i18n.text(TextKey::TimelineTab)).size(FONT_BODY),
+            ]
+            .spacing(SPACE_SM)
+            .align_y(iced::Alignment::Center),
+        )
+        .width(Length::Fill)
+        .on_press(Message::OpenTimeline)
+        .style(nav_button_style(is_timeline))
+        .padding([SPACE_SM as u16, SPACE_MD as u16]),
     ]
     .spacing(SPACE_XS);
 
@@ -989,11 +1028,20 @@ fn view(app: &Librapix) -> Element<'_, Message> {
     // ── Sidebar: Indexing ──
     let indexing_section = column![
         section_heading(app.i18n.text(TextKey::IndexingSectionLabel)),
-        button(text(app.i18n.text(TextKey::IndexRunButton)).size(FONT_BODY))
-            .on_press(Message::RunIndexing)
-            .style(primary_button_style)
-            .width(Length::Fill)
-            .padding([SPACE_SM as u16, SPACE_MD as u16]),
+        button(
+            row![
+                image(image::Handle::from_path(assets::icon_index()))
+                    .width(Length::Fixed(18.0))
+                    .height(Length::Fixed(18.0)),
+                text(app.i18n.text(TextKey::IndexRunButton)).size(FONT_BODY),
+            ]
+            .spacing(SPACE_SM)
+            .align_y(iced::Alignment::Center),
+        )
+        .on_press(Message::RunIndexing)
+        .style(primary_button_style)
+        .width(Length::Fill)
+        .padding([SPACE_SM as u16, SPACE_MD as u16]),
         text(app.indexing_status.clone())
             .size(FONT_CAPTION)
             .color(TEXT_TERTIARY),
@@ -1279,10 +1327,19 @@ fn render_media_panel(app: &Librapix) -> (Element<'_, Message>, Element<'_, Mess
     let content_header = row![
         text(route_title).size(FONT_TITLE).color(TEXT_PRIMARY),
         Space::new().width(Length::Fill),
-        button(text(app.i18n.text(TextKey::RefreshButton)).size(FONT_BODY))
-            .on_press(run_msg)
-            .style(subtle_button_style)
-            .padding([SPACE_XS as u16, SPACE_MD as u16]),
+        button(
+            row![
+                image(image::Handle::from_path(assets::icon_refresh()))
+                    .width(Length::Fixed(16.0))
+                    .height(Length::Fixed(16.0)),
+                text(app.i18n.text(TextKey::RefreshButton)).size(FONT_BODY),
+            ]
+            .spacing(SPACE_SM)
+            .align_y(iced::Alignment::Center),
+        )
+        .on_press(run_msg)
+        .style(subtle_button_style)
+        .padding([SPACE_XS as u16, SPACE_MD as u16]),
         text(format!(
             "{}: {} \u{00B7} {}: {} \u{00B7} {}: {}",
             app.i18n.text(TextKey::StatsShownLabel),
@@ -1299,6 +1356,9 @@ fn render_media_panel(app: &Librapix) -> (Element<'_, Message>, Element<'_, Mess
     .align_y(iced::Alignment::Center);
 
     let type_chips = row![
+        image(image::Handle::from_path(assets::icon_filter()))
+            .width(Length::Fixed(14.0))
+            .height(Length::Fixed(14.0)),
         button(text(app.i18n.text(TextKey::FilterAllLabel)).size(FONT_CAPTION))
             .on_press(Message::SetFilterMediaKind(None))
             .style(filter_chip_style(app.filter_media_kind.is_none()))
@@ -1316,7 +1376,8 @@ fn render_media_panel(app: &Librapix) -> (Element<'_, Message>, Element<'_, Mess
             ))
             .padding([SPACE_2XS as u16, SPACE_SM as u16]),
     ]
-    .spacing(SPACE_XS);
+    .spacing(SPACE_XS)
+    .align_y(iced::Alignment::Center);
 
     let ext_list: &[&str] = match app.filter_media_kind.as_deref() {
         Some("image") => &["png", "jpg", "gif", "webp"],
@@ -1519,10 +1580,15 @@ fn render_media_card(item: &BrowseItem, selected: bool, height: f32) -> Element<
         .into()
     };
 
+    let kind_icon_path = if item.media_kind.eq_ignore_ascii_case("video") {
+        assets::icon_type_video()
+    } else {
+        assets::icon_type_image()
+    };
     let kind_badge = container(
-        text(media_kind_icon_symbol(&item.media_kind))
-            .size(FONT_CAPTION)
-            .color(TEXT_PRIMARY),
+        image(image::Handle::from_path(kind_icon_path))
+            .width(Length::Fixed(16.0))
+            .height(Length::Fixed(16.0)),
     )
     .padding([SPACE_2XS as u16, SPACE_XS as u16])
     .style(media_kind_badge_style(
@@ -1559,14 +1625,6 @@ fn render_media_card(item: &BrowseItem, selected: bool, height: f32) -> Element<
         .style(card_button_style(selected))
         .padding(0)
         .into()
-}
-
-fn media_kind_icon_symbol(media_kind: &str) -> &'static str {
-    if media_kind.eq_ignore_ascii_case("video") {
-        "\u{25B6}"
-    } else {
-        "\u{25A3}"
-    }
 }
 
 fn compute_browse_stats(items: &[BrowseItem]) -> BrowseStats {
@@ -1809,21 +1867,48 @@ fn render_new_media_dialog(app: &Librapix) -> Element<'_, Message> {
         let primary_padding = [SPACE_XS as u16, SPACE_MD as u16];
         let subtle_padding = [SPACE_XS as u16, SPACE_MD as u16];
 
-        let view = button(text(app.i18n.text(TextKey::MediaSelectButton)).size(FONT_BODY))
-            .on_press(Message::SelectMedia(announcement.media_id))
-            .width(Length::Fill)
-            .style(subtle_button_style)
-            .padding(subtle_padding);
-        let open = button(text(app.i18n.text(TextKey::DetailsOpenFileButton)).size(FONT_BODY))
-            .on_press(Message::OpenMediaById(announcement.media_id))
-            .width(Length::Fill)
-            .style(action_button_style)
-            .padding(primary_padding);
-        let copy_file = button(text(app.i18n.text(TextKey::DetailsCopyFileButton)).size(FONT_BODY))
-            .on_press(Message::CopyMediaFileById(announcement.media_id))
-            .width(Length::Fill)
-            .style(action_button_style)
-            .padding(primary_padding);
+        let view = button(
+            row![
+                image(image::Handle::from_path(assets::icon_gallery()))
+                    .width(Length::Fixed(16.0))
+                    .height(Length::Fixed(16.0)),
+                text(app.i18n.text(TextKey::MediaSelectButton)).size(FONT_BODY),
+            ]
+            .spacing(SPACE_SM)
+            .align_y(iced::Alignment::Center),
+        )
+        .on_press(Message::SelectMedia(announcement.media_id))
+        .width(Length::Fill)
+        .style(subtle_button_style)
+        .padding(subtle_padding);
+        let open = button(
+            row![
+                image(image::Handle::from_path(assets::icon_open()))
+                    .width(Length::Fixed(16.0))
+                    .height(Length::Fixed(16.0)),
+                text(app.i18n.text(TextKey::DetailsOpenFileButton)).size(FONT_BODY),
+            ]
+            .spacing(SPACE_SM)
+            .align_y(iced::Alignment::Center),
+        )
+        .on_press(Message::OpenMediaById(announcement.media_id))
+        .width(Length::Fill)
+        .style(action_button_style)
+        .padding(primary_padding);
+        let copy_file = button(
+            row![
+                image(image::Handle::from_path(assets::icon_copy_file()))
+                    .width(Length::Fixed(16.0))
+                    .height(Length::Fixed(16.0)),
+                text(app.i18n.text(TextKey::DetailsCopyFileButton)).size(FONT_BODY),
+            ]
+            .spacing(SPACE_SM)
+            .align_y(iced::Alignment::Center),
+        )
+        .on_press(Message::CopyMediaFileById(announcement.media_id))
+        .width(Length::Fill)
+        .style(action_button_style)
+        .padding(primary_padding);
         let dismiss = button(text(app.i18n.text(TextKey::DismissButton)).size(FONT_BODY))
             .on_press(Message::DismissNewMediaAnnouncement)
             .width(Length::Fill)
@@ -2182,27 +2267,62 @@ fn render_details_panel(app: &Librapix) -> Element<'_, Message> {
 
 fn render_details_actions(app: &Librapix) -> Element<'_, Message> {
     responsive(move |size: Size| {
-        let open = button(text(app.i18n.text(TextKey::DetailsOpenFileButton)).size(FONT_BODY))
-            .on_press(Message::OpenSelectedFile)
-            .width(Length::Fill)
-            .style(action_button_style)
-            .padding([SPACE_XS as u16, SPACE_MD as u16]);
-        let open_folder =
-            button(text(app.i18n.text(TextKey::DetailsOpenFolderButton)).size(FONT_BODY))
-                .on_press(Message::OpenSelectedFolder)
-                .width(Length::Fill)
-                .style(action_button_style)
-                .padding([SPACE_XS as u16, SPACE_MD as u16]);
-        let copy_file = button(text(app.i18n.text(TextKey::DetailsCopyFileButton)).size(FONT_BODY))
-            .on_press(Message::CopySelectedFile)
-            .width(Length::Fill)
-            .style(action_button_style)
-            .padding([SPACE_XS as u16, SPACE_MD as u16]);
-        let copy_path = button(text(app.i18n.text(TextKey::DetailsCopyPathButton)).size(FONT_BODY))
-            .on_press(Message::CopySelectedPath)
-            .width(Length::Fill)
-            .style(subtle_button_style)
-            .padding([SPACE_XS as u16, SPACE_MD as u16]);
+        let open = button(
+            row![
+                image(image::Handle::from_path(assets::icon_open()))
+                    .width(Length::Fixed(16.0))
+                    .height(Length::Fixed(16.0)),
+                text(app.i18n.text(TextKey::DetailsOpenFileButton)).size(FONT_BODY),
+            ]
+            .spacing(SPACE_SM)
+            .align_y(iced::Alignment::Center),
+        )
+        .on_press(Message::OpenSelectedFile)
+        .width(Length::Fill)
+        .style(action_button_style)
+        .padding([SPACE_XS as u16, SPACE_MD as u16]);
+        let open_folder = button(
+            row![
+                image(image::Handle::from_path(assets::icon_show_in_folder()))
+                    .width(Length::Fixed(16.0))
+                    .height(Length::Fixed(16.0)),
+                text(app.i18n.text(TextKey::DetailsOpenFolderButton)).size(FONT_BODY),
+            ]
+            .spacing(SPACE_SM)
+            .align_y(iced::Alignment::Center),
+        )
+        .on_press(Message::OpenSelectedFolder)
+        .width(Length::Fill)
+        .style(action_button_style)
+        .padding([SPACE_XS as u16, SPACE_MD as u16]);
+        let copy_file = button(
+            row![
+                image(image::Handle::from_path(assets::icon_copy_file()))
+                    .width(Length::Fixed(16.0))
+                    .height(Length::Fixed(16.0)),
+                text(app.i18n.text(TextKey::DetailsCopyFileButton)).size(FONT_BODY),
+            ]
+            .spacing(SPACE_SM)
+            .align_y(iced::Alignment::Center),
+        )
+        .on_press(Message::CopySelectedFile)
+        .width(Length::Fill)
+        .style(action_button_style)
+        .padding([SPACE_XS as u16, SPACE_MD as u16]);
+        let copy_path = button(
+            row![
+                image(image::Handle::from_path(assets::icon_copy_path()))
+                    .width(Length::Fixed(16.0))
+                    .height(Length::Fixed(16.0)),
+                text(app.i18n.text(TextKey::DetailsCopyPathButton)).size(FONT_BODY),
+            ]
+            .spacing(SPACE_SM)
+            .align_y(iced::Alignment::Center),
+        )
+        .on_press(Message::CopySelectedPath)
+        .width(Length::Fill)
+        .style(subtle_button_style)
+        .padding([SPACE_XS as u16, SPACE_MD as u16]);
 
         if size.width < 220.0 {
             column![open, open_folder, copy_file, copy_path]

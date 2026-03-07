@@ -224,6 +224,20 @@ This file tracks major direct dependencies that shape architecture and maintenan
   - Some network or pseudo filesystems may not emit reliable native events.
   - Event behavior can vary by editor/save strategy and platform backend.
 
+## `opener` (0.7)
+
+- Purpose: Open URLs (e.g. GitHub repository) in the system default browser from the app header.
+- Why chosen: Lightweight, cross-platform, respects `$BROWSER` on Unix.
+- Alternatives considered:
+  - `webbrowser`: similar purpose, slightly different API.
+  - `open`: alternative crate with comparable functionality.
+- Official docs consulted:
+  - [https://docs.rs/opener/latest/opener/](https://docs.rs/opener/latest/opener/)
+- Notes:
+  - Used for the GitHub link button in the app header.
+- Risks/tradeoffs:
+  - Requires a configured default browser on the system.
+
 ## `ffmpeg` (system dependency, optional)
 
 - Purpose: Extract representative video frames for thumbnail generation.

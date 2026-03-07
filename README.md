@@ -6,7 +6,7 @@
 
 ## Screenshot
 
-![LibraPix screenshot](assets/screenshots/Screenshot 2026-03-07 at 2.55.48 PM.png)
+![LibraPix screenshot](assets/screenshots/Screenshot%202026-03-07%20at%202.55.48%E2%80%AFPM.png)
 
 ## Status
 

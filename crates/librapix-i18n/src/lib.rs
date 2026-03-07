@@ -158,6 +158,7 @@ pub enum TextKey {
     UpdateChipUpToDateLabel,
     UpdateChipNewReleaseLabel,
     AboutDialogTitle,
+    AboutVersionLabel,
     AboutCreatorLabel,
     AboutWeekendProjectNote,
     AboutSecondNote,
@@ -359,6 +360,7 @@ fn en_us(key: TextKey) -> &'static str {
         TextKey::UpdateChipUpToDateLabel => "Up to date",
         TextKey::UpdateChipNewReleaseLabel => "New release",
         TextKey::AboutDialogTitle => "About LibraPix",
+        TextKey::AboutVersionLabel => "Version",
         TextKey::AboutCreatorLabel => "Creator: Asad Al Badi",
         TextKey::AboutWeekendProjectNote => "This is a weekend project.",
         TextKey::AboutSecondNote => {

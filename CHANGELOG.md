@@ -30,6 +30,7 @@ All notable changes to this project are documented in this file.
 - Removed `packaging/windows/` scripts and packaging README from the repository.
 
 ### Changed
+- About dialog now shows the current app version from package metadata.
 - Header now includes an update-status chip (`Checking...`, `Up to date`, `New release`) with subtle fallback behavior on failed checks.
 - Startup restore flow now batches background indexing/projection restore with update-check scheduling while keeping UI responsive.
 - Edit Library tags now render as structured colored chips with inline add/edit/remove controls.

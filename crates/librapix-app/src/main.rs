@@ -2483,6 +2483,13 @@ fn render_about_dialog(app: &Librapix) -> Element<'_, Message> {
         ]
         .spacing(SPACE_SM)
         .align_y(iced::Alignment::Center),
+        text(format!(
+            "{}: {}",
+            app.i18n.text(TextKey::AboutVersionLabel),
+            APP_VERSION
+        ))
+        .size(FONT_BODY)
+        .color(TEXT_SECONDARY),
         text(app.i18n.text(TextKey::AboutCreatorLabel))
             .size(FONT_BODY)
             .color(TEXT_SECONDARY),

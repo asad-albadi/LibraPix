@@ -6,6 +6,7 @@
   - Process startup
   - Iced application wiring
   - Theme/window/runtime integration
+  - Startup release-check scheduling (post-first-render task dispatch)
 - Presentation (`librapix-app`)
   - View composition
   - Message emission from user actions
@@ -15,6 +16,7 @@
   - Explicit app state and state transitions
   - Route-level coordination
   - Library root and media selection orchestration state
+  - Header update-chip state transitions and manual/periodic check policy
 - Domain (`librapix-core::domain`)
   - Product invariants and non-destructive rules
   - Media/tag concepts (expanding in next phases)

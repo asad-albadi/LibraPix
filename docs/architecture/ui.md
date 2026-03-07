@@ -4,7 +4,7 @@ Librapix UI uses a Fluent-inspired design system with an app-shell layout.
 
 ## App shell baseline
 
-- Top header with product identity, integrated search bar, Settings button, About button, and GitHub link.
+- Top header with product identity, integrated search bar, update-status chip, Settings button, About button, and GitHub link.
 - Left sidebar with sectioned navigation (browse, library roots); operational controls (indexing, ignore rules, diagnostics) moved to Settings dialog.
 - Main media pane for gallery grid, timeline groups, and search result cards.
 - Right details pane for preview, file info, tags, and actions.
@@ -53,6 +53,13 @@ All visual presentation is centralized in `librapix-app/src/ui.rs`:
   - a date chip is shown while dragging
   - entering scrub mode keeps scrubber lane geometry stable (no first-click lateral snap)
 - Search is triggered via Enter key in the header search bar.
+- Header update chip interaction:
+  - `Checking...` while release status is in flight.
+  - `Up to date` when current version matches the latest stable release.
+  - `New release` when a newer stable release exists.
+  - Click behavior is stateful:
+    - opens latest release page when `New release` is active
+    - otherwise triggers a manual check, rate-limited to once every 5 minutes
 - Root selection uses styled nav buttons with status dot indicators; display names shown when set.
 - Library management uses a unified add/edit dialog:
   - browse-first folder selection
@@ -141,6 +148,7 @@ Gallery, timeline, and search views share a unified media-view architecture:
 - If library roots exist, the app auto-indexes and loads gallery/timeline projections.
 - Startup restore is triggered via `Task::done(Message::StartupRestore)` from the init function.
 - Activity status indicator is shown in the header during restore.
+- Startup restore also triggers a non-blocking GitHub release check after first render.
 
 ## Background activity
 
@@ -155,6 +163,7 @@ Gallery, timeline, and search views share a unified media-view architecture:
 - Gallery is auto-refreshed after adding or removing a library root.
 - Filesystem watching is active for root changes, and newly indexed files can trigger an in-app announcement dialog.
 - Manual refresh/search/filter updates are also background-task driven so the UI thread remains responsive on large libraries.
+- Update status checks re-run once every 24 hours while the app remains open.
 
 ## Size-based exclusion
 

@@ -8,6 +8,9 @@ Librapix exposes simple file-oriented actions without mutating source media.
 - Open selected media containing folder.
 - Copy selected media file to clipboard (file object copy, not just path text).
 - Copy selected media path to clipboard via platform command.
+- Header update-status chip action:
+  - click opens latest release page when a newer release is available
+  - otherwise click triggers a manual release re-check (5-minute cooldown)
 - Keyboard shortcuts:
   - `Cmd/Ctrl+C`: copy selected media file
   - `Cmd/Ctrl+Shift+C`: copy selected media path

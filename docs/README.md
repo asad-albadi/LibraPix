@@ -55,6 +55,7 @@ This repository is documentation-driven. Architecture and operational decisions 
 - `docs/roadmap/about-library-management-checklist.md`
 - `docs/roadmap/library-statistics-checklist.md`
 - `docs/roadmap/tag-ignore-chip-interaction-checklist.md`
+- `docs/roadmap/github-release-update-checker-checklist.md`
 
 ## ADRs
 

@@ -8,6 +8,7 @@ This checklist tracks the remaining work to reach a usable Librapix MVP.
 - [x] Empty/loading/error hardening completion
 - [x] Root/indexing UX hardening completion
 - [x] Final MVP reconciliation completion
+- [x] GitHub release update checker + header status chip completion
 - [x] Full final verification + smoke run + clean-tree confirmation
 
 ## A. Thumbnail subsystem

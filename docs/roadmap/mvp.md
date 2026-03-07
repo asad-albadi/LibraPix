@@ -18,6 +18,7 @@ Librapix MVP is a reliable non-destructive local media manager for screenshots a
   - replaceable fuzzy search flow
   - app/game tag attach/detach workflows
   - open file, open folder, and copy path actions
+  - startup + periodic GitHub release update checks with header chip indicator
   - empty/loading/error status messaging for key UX flows
 
 ## Deferred Beyond MVP

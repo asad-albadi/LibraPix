@@ -36,6 +36,11 @@ Project phase: **MVP complete** (technical + visual shell baseline).
 - Live filesystem watching with new-file announcement dialog
 - Deterministic thumbnail cache (images and videos)
 - Header About dialog with product and creator information
+- Header update-status chip backed by GitHub Releases latest checks
+  - checks once after startup render
+  - re-checks every 24 hours while app remains open
+  - click-to-recheck with 5-minute cooldown
+  - click opens latest release page when a newer version is available
 
 ## Build & Run
 

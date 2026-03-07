@@ -16,6 +16,7 @@ Librapix is a desktop-first Rust application with strict internal boundaries.
 - Live announcement UX: in-app modal new-file dialog driven by filesystem-index deltas.
 - Keyboard input flow: ignored-key subscription route for copy shortcuts integrated in app update logic.
 - Background execution model: indexed work and projection/search refresh both run through Iced `Task::perform` modes to keep UI responsive on large libraries.
+- Release update flow: non-blocking GitHub latest-release checks with explicit header chip state and manual/periodic scheduling policy.
 - Localization subsystem: `librapix-i18n`.
 - Storage subsystem: `librapix-storage` (SQLite + migrations baseline).
 - Read-model query surface: `librapix-storage` read APIs over indexed media and tags.

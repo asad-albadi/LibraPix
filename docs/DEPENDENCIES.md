@@ -239,6 +239,45 @@ This file tracks major direct dependencies that shape architecture and maintenan
 - Risks/tradeoffs:
   - Requires a configured default browser on the system.
 
+## `ureq` (3.2.0)
+
+- Purpose: Lightweight HTTP client for GitHub latest-release update checks.
+- Why chosen: Blocking API is simple and pairs well with Iced background `Task::perform` execution; avoids introducing a full async HTTP stack for a small, infrequent request path.
+- Alternatives considered:
+  - `reqwest`: feature-rich but heavier than needed for one JSON endpoint check.
+  - shelling out to `curl`: adds host-tool dependency and weaker cross-platform behavior guarantees.
+- Official docs consulted:
+  - [https://docs.rs/ureq/latest/ureq/](https://docs.rs/ureq/latest/ureq/)
+  - [https://docs.github.com/en/rest/releases/releases?apiVersion=2022-11-28#get-the-latest-release](https://docs.github.com/en/rest/releases/releases?apiVersion=2022-11-28#get-the-latest-release)
+- Notes:
+  - Used in `librapix-app` for `GET /repos/{owner}/{repo}/releases/latest`.
+  - Request sets `Accept: application/vnd.github+json` and an explicit `User-Agent`.
+  - Endpoint semantics exclude draft and prerelease releases by design.
+- Risks/tradeoffs:
+  - Network failures and API availability issues are expected; UI must remain quiet and non-blocking.
+
+## `semver` (1.0.27)
+
+- Purpose: Parse and compare app version vs latest release tag.
+- Why chosen: Correct semantic-version comparison avoids brittle string/tuple comparisons.
+- Alternatives considered:
+  - hand-rolled version parsing: easy to get edge cases wrong.
+- Official docs consulted:
+  - [https://docs.rs/semver/latest/semver/](https://docs.rs/semver/latest/semver/)
+- Notes:
+  - Used by update-check flow after trimming optional `v`/`V` tag prefix.
+- Risks/tradeoffs:
+  - Non-semver release tags can fail parsing and are treated as a failed check state.
+
+## `serde_json` (1.0.145)
+
+- Purpose: Decode GitHub release API JSON payload into typed update-check structs.
+- Why chosen: Standard Rust JSON library with direct compatibility with `serde` derives already used in the workspace.
+- Official docs consulted:
+  - [https://docs.rs/serde_json/latest/serde_json/](https://docs.rs/serde_json/latest/serde_json/)
+- Notes:
+  - Used only in `librapix-app` update-check path.
+
 ## `ffmpeg` (system dependency, optional)
 
 - Purpose: Extract representative video frames for thumbnail generation.

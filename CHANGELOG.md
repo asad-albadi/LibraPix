@@ -5,6 +5,12 @@ All notable changes to this project are documented in this file.
 ## [Unreleased]
 
 ### Added
+- GitHub release update-check flow in `librapix-app` using GitHub latest-release endpoint (`/releases/latest`) with explicit state model: `Unknown`, `Checking`, `UpToDate`, `UpdateAvailable { version, url }`, `Failed`.
+- Header update-status chip with click behavior:
+  - opens latest release page when a newer release is available
+  - otherwise triggers manual re-check (rate-limited to once every 5 minutes)
+- Periodic in-session update re-check scheduling (24-hour interval) for long-running app sessions.
+- Startup update check scheduled after first render and run non-blocking alongside existing background tasks.
 - Reusable managed-chip UI system for tags and ignore rules with centralized styling in `ui.rs`.
 - Deterministic string-to-palette chip coloring for stable, tasteful dark-theme tag/rule visualization.
 - Edit flows for chip-managed tags and ignore rules (Library dialog, Details pane, Settings).
@@ -24,6 +30,8 @@ All notable changes to this project are documented in this file.
 - Removed `packaging/windows/` scripts and packaging README from the repository.
 
 ### Changed
+- Header now includes an update-status chip (`Checking...`, `Up to date`, `New release`) with subtle fallback behavior on failed checks.
+- Startup restore flow now batches background indexing/projection restore with update-check scheduling while keeping UI responsive.
 - Edit Library tags now render as structured colored chips with inline add/edit/remove controls.
 - Details tag UX now renders inherited and manual tags as colored chips with clear separation and chip-level remove/edit affordances.
 - Settings ignore rules now render as structured colored chips with explicit add/edit/remove and enable/disable actions.
@@ -100,6 +108,7 @@ All notable changes to this project are documented in this file.
 - Added live filesystem watch subscription over active roots using `notify`.
 - Auto-refresh now reacts to create/modify/remove file events without manual index/refresh.
 - Replaced blocking watcher channel receive with async channel delivery in Iced subscription worker.
+- Added roadmap checklist for GitHub release update-checker milestone and reconciled architecture/action docs for chip interaction policy.
 - Release workflow packaging now outputs versioned asset filenames for active platform artifacts (for example `librapix-0.2.1-windows.exe`, `librapix-0.2.1-macos-apple-silicon.dmg`, `librapix-0.2.1-linux.AppImage`).
 - App now auto-indexes and loads gallery/timeline on startup from persisted state.
 - App now auto-indexes and refreshes gallery after adding a library root.

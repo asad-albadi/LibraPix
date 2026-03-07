@@ -1,5 +1,23 @@
 # Troubleshooting
 
+## Update chip stays on "Updates" and does not show release state
+
+- Symptoms
+  - Header update chip remains on `Updates`.
+  - Clicking the chip may not visibly change state right away.
+- Affected area
+  - GitHub release update check flow.
+- Likely cause
+  - Network unavailable, GitHub API temporarily unavailable, or API request failed.
+  - Manual check cooldown (5 minutes) blocked repeated click-triggered checks.
+- Resolution
+  - Ensure internet access and retry after a few minutes.
+  - Wait for the next automatic re-check window.
+  - If a manual click was just used, wait for cooldown expiry before trying again.
+- Prevention guidance
+  - Keep update-check failure UX subtle and non-blocking.
+  - Keep manual check cooldown logic explicit to avoid request bursts.
+
 ## Library Statistics dialog shows no values yet
 
 - Symptoms

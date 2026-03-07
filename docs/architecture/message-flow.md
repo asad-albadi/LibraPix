@@ -86,8 +86,18 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
 - Startup restore
   - `Task::done(Message::StartupRestore)` fires after the first render.
   - If roots exist, spawns background work via `Task::perform` to run indexing, thumbnail generation, and gallery/timeline projections on a background thread.
+  - Startup restore also schedules a non-blocking GitHub latest-release check task.
   - UI remains interactive while background work proceeds; activity status shown in header.
   - On completion, `BackgroundWorkComplete` message applies all results to app state atomically.
+- Release update check flow
+  - State is explicit in app orchestration: `Unknown`, `Checking`, `UpToDate`, `UpdateAvailable { version, url }`, `Failed`.
+  - Header chip click emits `UpdateChipPressed`.
+  - `UpdateChipPressed` behavior:
+    - opens the latest release URL immediately when `UpdateAvailable` is active
+    - otherwise attempts a manual re-check (rate-limited to 5 minutes)
+  - A periodic tick subscription emits `UpdateCheckTick`.
+  - `UpdateCheckTick` enforces a 24-hour auto re-check policy while preventing overlapping checks.
+  - Background task completion emits `UpdateCheckCompleted`, which applies the new update-check state and successful-check timestamp.
 - Library dialog folder picker
   - `Message::LibraryDialogBrowseFolder` opens a native OS folder picker via `rfd::FileDialog`.
   - Selected path is written into dialog path state.
@@ -110,6 +120,7 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
     - `ProjectOnly`: projections/search refresh without filesystem scan/index writes
   - `BackgroundWorkComplete` handler applies all returned state atomically.
   - Multiple handlers share this pattern: `StartupRestore`, `FilesystemChanged`, `RunIndexing`, `ApplyMinFileSize`, library-dialog save operations, manual route refresh, search run, and filter changes.
+  - Release checks follow the same non-blocking task model (`Task::perform`) through `start_update_check` -> `UpdateCheckCompleted`.
 
 ## Rules
 

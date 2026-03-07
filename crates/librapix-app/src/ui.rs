@@ -241,25 +241,6 @@ pub fn modal_dialog_style(_theme: &Theme) -> container::Style {
     }
 }
 
-pub fn media_kind_badge_style(is_video: bool) -> impl Fn(&Theme) -> container::Style {
-    move |_theme| {
-        let (background, border) = if is_video {
-            (ACCENT_SUBTLE, ACCENT)
-        } else {
-            (BG_LAYER, TEXT_TERTIARY)
-        };
-        container::Style {
-            background: Some(Background::Color(background)),
-            border: Border {
-                color: border,
-                width: 1.0,
-                radius: RADIUS_PILL.into(),
-            },
-            ..container::Style::default()
-        }
-    }
-}
-
 pub fn divider_line_style(_theme: &Theme) -> container::Style {
     container::Style {
         background: Some(Background::Color(DIVIDER_COLOR)),

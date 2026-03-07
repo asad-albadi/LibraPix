@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 
 /// Project repository URL for the GitHub link in the app header.
-pub const REPO_URL: &str = "https://github.com/asad/librapix";
+pub const REPO_URL: &str = "https://github.com/asad-albadi/librapix";
 
 /// Returns the assets directory (workspace root / assets).
 /// Resolves from CARGO_MANIFEST_DIR: crates/librapix-app -> workspace root.
@@ -20,8 +20,14 @@ fn assets_dir() -> PathBuf {
 
 // ── Canonical brand (blue) ──
 
+#[allow(dead_code)]
 pub fn logo_icon_64() -> PathBuf {
     assets_dir().join("logo/blue/icon-64.png")
+}
+
+/// Blue logo as SVG for scalable display (e.g. header).
+pub fn logo_svg() -> PathBuf {
+    assets_dir().join("logo/blue/logo-blue.svg")
 }
 
 // ── UI icons (white for dark surfaces) ──
@@ -34,7 +40,6 @@ pub fn icon_timeline() -> PathBuf {
     assets_dir().join("icons/white/timeline.png")
 }
 
-#[allow(dead_code)]
 pub fn icon_search() -> PathBuf {
     assets_dir().join("icons/white/search.png")
 }

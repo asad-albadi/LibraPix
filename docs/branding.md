@@ -47,11 +47,11 @@ UI icons live under `assets/icons/` with color variants:
 
 ## App integration
 
-- **Header**: Blue logo icon (32×32) + "Libra" (primary) + "Pix" (accent) + GitHub link.
+- **Header**: Blue logo icon (32×32) + "Libra" (primary) + "Pix" (accent) + GitHub link (opens https://github.com/asad-albadi/librapix).
 - **Sidebar**: White icons for Gallery, Timeline, Index Library.
-- **Media pane**: White refresh icon, filter icon in filter row.
+- **Media pane**: White refresh icon, Filters button (opens filter dialog with type/extension/tag controls).
 - **Details panel**: White icons for Open, Show in Folder, Copy File, Copy Path.
-- **Media cards**: Type-image/type-video badges in card corner.
+- **Media cards**: Type-image/type-video icons in card corner (no container/backdrop).
 
 ## Screenshots
 

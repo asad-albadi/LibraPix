@@ -5,9 +5,10 @@ mod ui;
 use chrono::Local;
 use iced::keyboard;
 use iced::keyboard::key;
+use iced::widget::image::FilterMethod;
 use iced::widget::{
     Id, Space, button, column, container, image, operation, responsive, row, scrollable, stack,
-    text, text_input, vertical_slider,
+    svg, text, text_input, vertical_slider,
 };
 use iced::{ContentFit, Element, Length, Size, Subscription, Task, Theme};
 use librapix_config::{
@@ -101,6 +102,7 @@ enum Message {
     DismissNewMediaAnnouncement,
     RefreshDiagnostics,
     OpenGitHub,
+    ToggleFilterDialog,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -179,6 +181,7 @@ struct Librapix {
     timeline_scrub_anchor_index: Option<usize>,
     timeline_scroll_max_y: f32,
     new_media_announcement: Option<NewMediaAnnouncement>,
+    filter_dialog_open: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -319,6 +322,7 @@ impl Default for Librapix {
             timeline_scrub_anchor_index: None,
             timeline_scroll_max_y: 0.0,
             new_media_announcement: None,
+            filter_dialog_open: false,
         };
         refresh_ignore_rules_preview(&mut app);
         app
@@ -465,6 +469,7 @@ fn message_event_label(msg: &Message) -> String {
         Message::DismissNewMediaAnnouncement => "DismissNewMediaAnnouncement".into(),
         Message::RefreshDiagnostics => "RefreshDiagnostics".into(),
         Message::OpenGitHub => "OpenGitHub".into(),
+        Message::ToggleFilterDialog => "ToggleFilterDialog".into(),
     }
 }
 
@@ -808,6 +813,9 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
         Message::OpenGitHub => {
             let _ = opener::open(assets::REPO_URL);
         }
+        Message::ToggleFilterDialog => {
+            app.filter_dialog_open = !app.filter_dialog_open;
+        }
     }
 
     Task::none()
@@ -836,11 +844,11 @@ fn view(app: &Librapix) -> Element<'_, Message> {
     let is_timeline = matches!(app.state.active_route, Route::Timeline);
 
     // ── Header ──
-    let logo_path = assets::logo_icon_64();
     let brand = row![
-        image(image::Handle::from_path(logo_path))
-            .width(Length::Fixed(32.0))
-            .height(Length::Fixed(32.0)),
+        svg(svg::Handle::from_path(assets::logo_svg()))
+            .width(Length::Fixed(40.0))
+            .height(Length::Fixed(40.0))
+            .content_fit(ContentFit::Contain),
         text("Libra").size(FONT_DISPLAY).color(TEXT_PRIMARY),
         text("Pix").size(FONT_DISPLAY).color(ACCENT),
     ]
@@ -850,7 +858,9 @@ fn view(app: &Librapix) -> Element<'_, Message> {
     let github_btn = button(
         image(image::Handle::from_path(assets::icon_github()))
             .width(Length::Fixed(20.0))
-            .height(Length::Fixed(20.0)),
+            .height(Length::Fixed(20.0))
+            .content_fit(ContentFit::Contain)
+            .filter_method(FilterMethod::Linear),
     )
     .on_press(Message::OpenGitHub)
     .style(subtle_button_style)
@@ -863,14 +873,23 @@ fn view(app: &Librapix) -> Element<'_, Message> {
                 .size(FONT_CAPTION)
                 .color(TEXT_TERTIARY),
             Space::new().width(Length::Fill),
-            text_input(
-                app.i18n.text(TextKey::SearchInputLabel),
-                &app.state.search_query
-            )
-            .on_input(Message::SearchQueryChanged)
-            .on_submit(Message::RunSearchQuery)
-            .width(Length::Fixed(400.0))
-            .style(search_input_style),
+            row![
+                image(image::Handle::from_path(assets::icon_search()))
+                    .width(Length::Fixed(18.0))
+                    .height(Length::Fixed(18.0))
+                    .content_fit(ContentFit::Contain)
+                    .filter_method(FilterMethod::Linear),
+                text_input(
+                    app.i18n.text(TextKey::SearchInputLabel),
+                    &app.state.search_query
+                )
+                .on_input(Message::SearchQueryChanged)
+                .on_submit(Message::RunSearchQuery)
+                .width(Length::Fixed(380.0))
+                .style(search_input_style),
+            ]
+            .spacing(SPACE_SM)
+            .align_y(iced::Alignment::Center),
             Space::new().width(Length::Fill),
             text(app.activity_status.clone())
                 .size(FONT_CAPTION)
@@ -892,7 +911,9 @@ fn view(app: &Librapix) -> Element<'_, Message> {
             row![
                 image(image::Handle::from_path(assets::icon_gallery()))
                     .width(Length::Fixed(18.0))
-                    .height(Length::Fixed(18.0)),
+                    .height(Length::Fixed(18.0))
+                    .content_fit(ContentFit::Contain)
+                    .filter_method(FilterMethod::Linear),
                 text(app.i18n.text(TextKey::GalleryTab)).size(FONT_BODY),
             ]
             .spacing(SPACE_SM)
@@ -906,7 +927,9 @@ fn view(app: &Librapix) -> Element<'_, Message> {
             row![
                 image(image::Handle::from_path(assets::icon_timeline()))
                     .width(Length::Fixed(18.0))
-                    .height(Length::Fixed(18.0)),
+                    .height(Length::Fixed(18.0))
+                    .content_fit(ContentFit::Contain)
+                    .filter_method(FilterMethod::Linear),
                 text(app.i18n.text(TextKey::TimelineTab)).size(FONT_BODY),
             ]
             .spacing(SPACE_SM)
@@ -1032,7 +1055,9 @@ fn view(app: &Librapix) -> Element<'_, Message> {
             row![
                 image(image::Handle::from_path(assets::icon_index()))
                     .width(Length::Fixed(18.0))
-                    .height(Length::Fixed(18.0)),
+                    .height(Length::Fixed(18.0))
+                    .content_fit(ContentFit::Contain)
+                    .filter_method(FilterMethod::Linear),
                 text(app.i18n.text(TextKey::IndexRunButton)).size(FONT_BODY),
             ]
             .spacing(SPACE_SM)
@@ -1294,14 +1319,27 @@ fn view(app: &Librapix) -> Element<'_, Message> {
         .style(app_bg_style)
         .into();
 
-    if app.new_media_announcement.is_some() {
-        stack([shell, render_new_media_dialog(app)])
+    let overlay: Element<'_, Message> =
+        match (app.filter_dialog_open, app.new_media_announcement.is_some()) {
+            (true, true) => stack([
+                shell,
+                render_filter_dialog(app),
+                render_new_media_dialog(app),
+            ])
             .width(Length::Fill)
             .height(Length::Fill)
-            .into()
-    } else {
-        shell
-    }
+            .into(),
+            (true, false) => stack([shell, render_filter_dialog(app)])
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into(),
+            (false, true) => stack([shell, render_new_media_dialog(app)])
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into(),
+            (false, false) => shell,
+        };
+    overlay
 }
 
 fn render_media_panel(app: &Librapix) -> (Element<'_, Message>, Element<'_, Message>) {
@@ -1328,18 +1366,25 @@ fn render_media_panel(app: &Librapix) -> (Element<'_, Message>, Element<'_, Mess
         text(route_title).size(FONT_TITLE).color(TEXT_PRIMARY),
         Space::new().width(Length::Fill),
         button(
-            row![
-                image(image::Handle::from_path(assets::icon_refresh()))
-                    .width(Length::Fixed(16.0))
-                    .height(Length::Fixed(16.0)),
-                text(app.i18n.text(TextKey::RefreshButton)).size(FONT_BODY),
-            ]
-            .spacing(SPACE_SM)
-            .align_y(iced::Alignment::Center),
+            image(image::Handle::from_path(assets::icon_refresh()))
+                .width(Length::Fixed(18.0))
+                .height(Length::Fixed(18.0))
+                .content_fit(ContentFit::Contain)
+                .filter_method(FilterMethod::Linear),
         )
         .on_press(run_msg)
         .style(subtle_button_style)
-        .padding([SPACE_XS as u16, SPACE_MD as u16]),
+        .padding([SPACE_XS as u16, SPACE_XS as u16]),
+        button(
+            image(image::Handle::from_path(assets::icon_filter()))
+                .width(Length::Fixed(18.0))
+                .height(Length::Fixed(18.0))
+                .content_fit(ContentFit::Contain)
+                .filter_method(FilterMethod::Linear),
+        )
+        .on_press(Message::ToggleFilterDialog)
+        .style(subtle_button_style)
+        .padding([SPACE_XS as u16, SPACE_XS as u16]),
         text(format!(
             "{}: {} \u{00B7} {}: {} \u{00B7} {}: {}",
             app.i18n.text(TextKey::StatsShownLabel),
@@ -1355,100 +1400,7 @@ fn render_media_panel(app: &Librapix) -> (Element<'_, Message>, Element<'_, Mess
     .spacing(SPACE_SM)
     .align_y(iced::Alignment::Center);
 
-    let type_chips = row![
-        image(image::Handle::from_path(assets::icon_filter()))
-            .width(Length::Fixed(14.0))
-            .height(Length::Fixed(14.0)),
-        button(text(app.i18n.text(TextKey::FilterAllLabel)).size(FONT_CAPTION))
-            .on_press(Message::SetFilterMediaKind(None))
-            .style(filter_chip_style(app.filter_media_kind.is_none()))
-            .padding([SPACE_2XS as u16, SPACE_SM as u16]),
-        button(text(app.i18n.text(TextKey::FilterImagesLabel)).size(FONT_CAPTION))
-            .on_press(Message::SetFilterMediaKind(Some("image".to_owned())))
-            .style(filter_chip_style(
-                app.filter_media_kind.as_deref() == Some("image"),
-            ))
-            .padding([SPACE_2XS as u16, SPACE_SM as u16]),
-        button(text(app.i18n.text(TextKey::FilterVideosLabel)).size(FONT_CAPTION))
-            .on_press(Message::SetFilterMediaKind(Some("video".to_owned())))
-            .style(filter_chip_style(
-                app.filter_media_kind.as_deref() == Some("video"),
-            ))
-            .padding([SPACE_2XS as u16, SPACE_SM as u16]),
-    ]
-    .spacing(SPACE_XS)
-    .align_y(iced::Alignment::Center);
-
-    let ext_list: &[&str] = match app.filter_media_kind.as_deref() {
-        Some("image") => &["png", "jpg", "gif", "webp"],
-        Some("video") => &["mp4", "mov", "mkv", "webm", "avi"],
-        _ => &["png", "jpg", "gif", "webp", "mp4", "mov", "mkv", "webm"],
-    };
-    let mut ext_chips = row![
-        button(text(app.i18n.text(TextKey::FilterAllLabel)).size(FONT_CAPTION))
-            .on_press(Message::SetFilterExtension(None))
-            .style(filter_chip_style(app.filter_extension.is_none()))
-            .padding([SPACE_2XS as u16, SPACE_SM as u16]),
-    ]
-    .spacing(SPACE_XS);
-    for ext in ext_list {
-        let is_active = app.filter_extension.as_deref() == Some(ext);
-        ext_chips = ext_chips.push(
-            button(text(ext.to_uppercase()).size(FONT_CAPTION))
-                .on_press(Message::SetFilterExtension(Some((*ext).to_owned())))
-                .style(filter_chip_style(is_active))
-                .padding([SPACE_2XS as u16, SPACE_SM as u16]),
-        );
-    }
-
-    let mut tag_chip_row = row![
-        text(app.i18n.text(TextKey::FilterTagsLabel))
-            .size(FONT_CAPTION)
-            .color(TEXT_SECONDARY),
-        button(text(app.i18n.text(TextKey::FilterAllLabel)).size(FONT_CAPTION))
-            .on_press(Message::SetFilterTag(None))
-            .style(filter_chip_style(app.filter_tag.is_none()))
-            .padding([SPACE_2XS as u16, SPACE_SM as u16]),
-    ]
-    .spacing(SPACE_XS)
-    .align_y(iced::Alignment::Center);
-
-    if app.available_filter_tags.is_empty() {
-        tag_chip_row = tag_chip_row.push(
-            text(app.i18n.text(TextKey::FilterNoTagsLabel))
-                .size(FONT_CAPTION)
-                .color(TEXT_TERTIARY),
-        );
-    } else {
-        for tag in &app.available_filter_tags {
-            let active = app
-                .filter_tag
-                .as_ref()
-                .is_some_and(|selected| selected == tag);
-            tag_chip_row = tag_chip_row.push(
-                button(text(tag.as_str()).size(FONT_CAPTION))
-                    .on_press(Message::SetFilterTag(Some(tag.clone())))
-                    .style(filter_chip_style(active))
-                    .padding([SPACE_2XS as u16, SPACE_SM as u16]),
-            );
-        }
-    }
-
-    let filter_row = row![type_chips, Space::new().width(SPACE_LG), ext_chips,]
-        .spacing(SPACE_SM)
-        .align_y(iced::Alignment::Center);
-
-    let tag_filter_row: Element<'_, Message> = scrollable(tag_chip_row)
-        .direction(scrollable::Direction::Horizontal(
-            scrollable::Scrollbar::default(),
-        ))
-        .width(Length::Fill)
-        .height(Length::Shrink)
-        .into();
-
-    let header: Element<'_, Message> = column![content_header, filter_row, tag_filter_row]
-        .spacing(SPACE_SM)
-        .into();
+    let header: Element<'_, Message> = content_header.into();
 
     let search_section: Element<'_, Message> = if !app.state.search_query.trim().is_empty() {
         if app.search_items.is_empty() {
@@ -1585,15 +1537,11 @@ fn render_media_card(item: &BrowseItem, selected: bool, height: f32) -> Element<
     } else {
         assets::icon_type_image()
     };
-    let kind_badge = container(
-        image(image::Handle::from_path(kind_icon_path))
-            .width(Length::Fixed(16.0))
-            .height(Length::Fixed(16.0)),
-    )
-    .padding([SPACE_2XS as u16, SPACE_XS as u16])
-    .style(media_kind_badge_style(
-        item.media_kind.eq_ignore_ascii_case("video"),
-    ));
+    let kind_badge = image(image::Handle::from_path(kind_icon_path))
+        .width(Length::Fixed(16.0))
+        .height(Length::Fixed(16.0))
+        .content_fit(ContentFit::Contain)
+        .filter_method(FilterMethod::Linear);
 
     let thumb_overlay: Element<'_, Message> = container(
         row![Space::new().width(Length::Fill), kind_badge].align_y(iced::Alignment::Start),
@@ -1785,6 +1733,140 @@ fn render_timeline_scrubber(app: &Librapix) -> Element<'_, Message> {
         .into()
 }
 
+fn render_filter_dialog(app: &Librapix) -> Element<'_, Message> {
+    let type_chips = row![
+        button(text(app.i18n.text(TextKey::FilterAllLabel)).size(FONT_BODY))
+            .on_press(Message::SetFilterMediaKind(None))
+            .style(filter_chip_style(app.filter_media_kind.is_none()))
+            .padding([SPACE_XS as u16, SPACE_MD as u16]),
+        button(text(app.i18n.text(TextKey::FilterImagesLabel)).size(FONT_BODY))
+            .on_press(Message::SetFilterMediaKind(Some("image".to_owned())))
+            .style(filter_chip_style(
+                app.filter_media_kind.as_deref() == Some("image"),
+            ))
+            .padding([SPACE_XS as u16, SPACE_MD as u16]),
+        button(text(app.i18n.text(TextKey::FilterVideosLabel)).size(FONT_BODY))
+            .on_press(Message::SetFilterMediaKind(Some("video".to_owned())))
+            .style(filter_chip_style(
+                app.filter_media_kind.as_deref() == Some("video"),
+            ))
+            .padding([SPACE_XS as u16, SPACE_MD as u16]),
+    ]
+    .spacing(SPACE_SM);
+
+    let ext_list: &[&str] = match app.filter_media_kind.as_deref() {
+        Some("image") => &["png", "jpg", "gif", "webp"],
+        Some("video") => &["mp4", "mov", "mkv", "webm", "avi"],
+        _ => &["png", "jpg", "gif", "webp", "mp4", "mov", "mkv", "webm"],
+    };
+    let mut ext_chips = row![
+        button(text(app.i18n.text(TextKey::FilterAllLabel)).size(FONT_BODY))
+            .on_press(Message::SetFilterExtension(None))
+            .style(filter_chip_style(app.filter_extension.is_none()))
+            .padding([SPACE_XS as u16, SPACE_MD as u16]),
+    ]
+    .spacing(SPACE_SM);
+    for ext in ext_list {
+        let is_active = app.filter_extension.as_deref() == Some(ext);
+        ext_chips = ext_chips.push(
+            button(text(ext.to_uppercase()).size(FONT_BODY))
+                .on_press(Message::SetFilterExtension(Some((*ext).to_owned())))
+                .style(filter_chip_style(is_active))
+                .padding([SPACE_XS as u16, SPACE_MD as u16]),
+        );
+    }
+
+    let mut tag_chip_row = row![
+        text(app.i18n.text(TextKey::FilterTagsLabel))
+            .size(FONT_BODY)
+            .color(TEXT_SECONDARY),
+        button(text(app.i18n.text(TextKey::FilterAllLabel)).size(FONT_BODY))
+            .on_press(Message::SetFilterTag(None))
+            .style(filter_chip_style(app.filter_tag.is_none()))
+            .padding([SPACE_XS as u16, SPACE_MD as u16]),
+    ]
+    .spacing(SPACE_SM)
+    .align_y(iced::Alignment::Center);
+
+    for tag in &app.available_filter_tags {
+        let active = app
+            .filter_tag
+            .as_ref()
+            .is_some_and(|selected| selected == tag);
+        tag_chip_row = tag_chip_row.push(
+            button(text(tag.as_str()).size(FONT_BODY))
+                .on_press(Message::SetFilterTag(Some(tag.clone())))
+                .style(filter_chip_style(active))
+                .padding([SPACE_XS as u16, SPACE_MD as u16]),
+        );
+    }
+
+    let tag_section: Element<'_, Message> = if app.available_filter_tags.is_empty() {
+        row![
+            text(app.i18n.text(TextKey::FilterTagsLabel))
+                .size(FONT_BODY)
+                .color(TEXT_SECONDARY),
+            text(app.i18n.text(TextKey::FilterNoTagsLabel))
+                .size(FONT_BODY)
+                .color(TEXT_TERTIARY),
+        ]
+        .spacing(SPACE_SM)
+        .into()
+    } else {
+        scrollable(tag_chip_row)
+            .direction(scrollable::Direction::Horizontal(
+                scrollable::Scrollbar::default(),
+            ))
+            .width(Length::Fill)
+            .height(Length::Shrink)
+            .into()
+    };
+
+    let dialog_content = column![
+        text(app.i18n.text(TextKey::FiltersButtonLabel))
+            .size(FONT_TITLE)
+            .color(TEXT_PRIMARY),
+        h_divider(),
+        column![
+            section_heading(app.i18n.text(TextKey::FilterTypeLabel)),
+            type_chips,
+        ]
+        .spacing(SPACE_SM),
+        column![
+            section_heading(app.i18n.text(TextKey::FilterExtensionLabel)),
+            ext_chips,
+        ]
+        .spacing(SPACE_SM),
+        column![
+            section_heading(app.i18n.text(TextKey::FilterTagsLabel)),
+            tag_section,
+        ]
+        .spacing(SPACE_SM),
+        button(text(app.i18n.text(TextKey::DismissButton)).size(FONT_BODY))
+            .on_press(Message::ToggleFilterDialog)
+            .style(primary_button_style)
+            .padding([SPACE_SM as u16, SPACE_MD as u16]),
+    ]
+    .spacing(SPACE_LG);
+
+    let dialog = container(dialog_content)
+        .width(Length::Fill)
+        .max_width(480.0)
+        .padding(SPACE_LG as u16)
+        .style(modal_dialog_style);
+
+    container(
+        container(dialog)
+            .center_x(Length::Fill)
+            .center_y(Length::Fill),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .padding([SPACE_2XL as u16, SPACE_XL as u16])
+    .style(modal_backdrop_style)
+    .into()
+}
+
 fn render_new_media_dialog(app: &Librapix) -> Element<'_, Message> {
     let Some(announcement) = &app.new_media_announcement else {
         return column![].into();
@@ -1871,7 +1953,9 @@ fn render_new_media_dialog(app: &Librapix) -> Element<'_, Message> {
             row![
                 image(image::Handle::from_path(assets::icon_gallery()))
                     .width(Length::Fixed(16.0))
-                    .height(Length::Fixed(16.0)),
+                    .height(Length::Fixed(16.0))
+                    .content_fit(ContentFit::Contain)
+                    .filter_method(FilterMethod::Linear),
                 text(app.i18n.text(TextKey::MediaSelectButton)).size(FONT_BODY),
             ]
             .spacing(SPACE_SM)
@@ -1885,7 +1969,9 @@ fn render_new_media_dialog(app: &Librapix) -> Element<'_, Message> {
             row![
                 image(image::Handle::from_path(assets::icon_open()))
                     .width(Length::Fixed(16.0))
-                    .height(Length::Fixed(16.0)),
+                    .height(Length::Fixed(16.0))
+                    .content_fit(ContentFit::Contain)
+                    .filter_method(FilterMethod::Linear),
                 text(app.i18n.text(TextKey::DetailsOpenFileButton)).size(FONT_BODY),
             ]
             .spacing(SPACE_SM)
@@ -1899,7 +1985,9 @@ fn render_new_media_dialog(app: &Librapix) -> Element<'_, Message> {
             row![
                 image(image::Handle::from_path(assets::icon_copy_file()))
                     .width(Length::Fixed(16.0))
-                    .height(Length::Fixed(16.0)),
+                    .height(Length::Fixed(16.0))
+                    .content_fit(ContentFit::Contain)
+                    .filter_method(FilterMethod::Linear),
                 text(app.i18n.text(TextKey::DetailsCopyFileButton)).size(FONT_BODY),
             ]
             .spacing(SPACE_SM)
@@ -2271,7 +2359,9 @@ fn render_details_actions(app: &Librapix) -> Element<'_, Message> {
             row![
                 image(image::Handle::from_path(assets::icon_open()))
                     .width(Length::Fixed(16.0))
-                    .height(Length::Fixed(16.0)),
+                    .height(Length::Fixed(16.0))
+                    .content_fit(ContentFit::Contain)
+                    .filter_method(FilterMethod::Linear),
                 text(app.i18n.text(TextKey::DetailsOpenFileButton)).size(FONT_BODY),
             ]
             .spacing(SPACE_SM)
@@ -2285,7 +2375,9 @@ fn render_details_actions(app: &Librapix) -> Element<'_, Message> {
             row![
                 image(image::Handle::from_path(assets::icon_show_in_folder()))
                     .width(Length::Fixed(16.0))
-                    .height(Length::Fixed(16.0)),
+                    .height(Length::Fixed(16.0))
+                    .content_fit(ContentFit::Contain)
+                    .filter_method(FilterMethod::Linear),
                 text(app.i18n.text(TextKey::DetailsOpenFolderButton)).size(FONT_BODY),
             ]
             .spacing(SPACE_SM)
@@ -2299,7 +2391,9 @@ fn render_details_actions(app: &Librapix) -> Element<'_, Message> {
             row![
                 image(image::Handle::from_path(assets::icon_copy_file()))
                     .width(Length::Fixed(16.0))
-                    .height(Length::Fixed(16.0)),
+                    .height(Length::Fixed(16.0))
+                    .content_fit(ContentFit::Contain)
+                    .filter_method(FilterMethod::Linear),
                 text(app.i18n.text(TextKey::DetailsCopyFileButton)).size(FONT_BODY),
             ]
             .spacing(SPACE_SM)
@@ -2313,7 +2407,9 @@ fn render_details_actions(app: &Librapix) -> Element<'_, Message> {
             row![
                 image(image::Handle::from_path(assets::icon_copy_path()))
                     .width(Length::Fixed(16.0))
-                    .height(Length::Fixed(16.0)),
+                    .height(Length::Fixed(16.0))
+                    .content_fit(ContentFit::Contain)
+                    .filter_method(FilterMethod::Linear),
                 text(app.i18n.text(TextKey::DetailsCopyPathButton)).size(FONT_BODY),
             ]
             .spacing(SPACE_SM)
@@ -2321,7 +2417,7 @@ fn render_details_actions(app: &Librapix) -> Element<'_, Message> {
         )
         .on_press(Message::CopySelectedPath)
         .width(Length::Fill)
-        .style(subtle_button_style)
+        .style(action_button_style)
         .padding([SPACE_XS as u16, SPACE_MD as u16]);
 
         if size.width < 220.0 {

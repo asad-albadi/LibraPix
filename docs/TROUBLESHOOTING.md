@@ -1,5 +1,23 @@
 # Troubleshooting
 
+## Icons appear jagged or have poor antialiasing
+
+- Symptoms
+  - UI icons (sidebar, details, media badges) look pixelated or have visible aliasing.
+- Affected area
+  - All asset-based icons rendered via `image` widget.
+- Likely cause
+  - PNG icons are scaled from source resolution to display size. Iced's image widget scales images; sub-pixel or non-integer scaling can produce aliasing.
+  - Source icons may be at a different resolution than display size (e.g. 32×32 displayed at 16×16, or 16×16 displayed at 18×18).
+- Resolution
+  - All icon images use `FilterMethod::Linear` (bilinear interpolation) and `ContentFit::Contain` for smoother scaling.
+  - Provide icons at exact display sizes where possible (16×16, 18×18, 20×20, 32×32).
+  - For retina/high-DPI displays, provide 2× or 3× assets and use the same display dimensions; the framework will scale, but integer multiples often look better.
+  - Ensure source PNGs use transparency and clean edges; pre-rendered antialiasing in the asset helps.
+- Prevention guidance
+  - Export icons at target sizes from the design tool.
+  - Prefer SVG sources and export to PNG at needed resolutions.
+
 ## Release assets on Linux/macOS are extensionless binaries
 
 - Symptoms

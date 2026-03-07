@@ -73,30 +73,30 @@ jobs:
               cp "$BIN" "$APP_DIR/Contents/MacOS/librapix-app"
               chmod +x "$APP_DIR/Contents/MacOS/librapix-app"
 
-              cat > "$APP_DIR/Contents/Info.plist" <<PLIST
-              <?xml version="1.0" encoding="UTF-8"?>
-              <!DOCTYPE plist PUBLIC "-//Apple Computer//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-              <plist version="1.0">
-                <dict>
-                  <key>CFBundleName</key>
-                  <string>Librapix</string>
-                  <key>CFBundleDisplayName</key>
-                  <string>Librapix</string>
-                  <key>CFBundleIdentifier</key>
-                  <string>com.librapix.app</string>
-                  <key>CFBundleVersion</key>
-                  <string>${VERSION}</string>
-                  <key>CFBundleShortVersionString</key>
-                  <string>${VERSION}</string>
-                  <key>CFBundleExecutable</key>
-                  <string>librapix-app</string>
-                  <key>CFBundlePackageType</key>
-                  <string>APPL</string>
-                  <key>LSMinimumSystemVersion</key>
-                  <string>11.0</string>
-                </dict>
-              </plist>
-              PLIST
+              printf '%s\n' \
+                '<?xml version="1.0" encoding="UTF-8"?>' \
+                '<!DOCTYPE plist PUBLIC "-//Apple Computer//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
+                '<plist version="1.0">' \
+                '  <dict>' \
+                '    <key>CFBundleName</key>' \
+                '    <string>Librapix</string>' \
+                '    <key>CFBundleDisplayName</key>' \
+                '    <string>Librapix</string>' \
+                '    <key>CFBundleIdentifier</key>' \
+                '    <string>com.librapix.app</string>' \
+                '    <key>CFBundleVersion</key>' \
+                "    <string>${VERSION}</string>" \
+                '    <key>CFBundleShortVersionString</key>' \
+                "    <string>${VERSION}</string>" \
+                '    <key>CFBundleExecutable</key>' \
+                '    <string>librapix-app</string>' \
+                '    <key>CFBundlePackageType</key>' \
+                '    <string>APPL</string>' \
+                '    <key>LSMinimumSystemVersion</key>' \
+                '    <string>11.0</string>' \
+                '  </dict>' \
+                '</plist>' \
+                > "$APP_DIR/Contents/Info.plist"
 
               mv "$APP_DIR" "$DMG_ROOT/"
               ln -s /Applications "$DMG_ROOT/Applications"
@@ -114,22 +114,22 @@ jobs:
               cp "$BIN" "$APPDIR/usr/bin/librapix-app"
               chmod +x "$APPDIR/usr/bin/librapix-app"
 
-              cat > "$APPDIR/AppRun" <<'APPRUN'
-              #!/bin/sh
-              HERE="$(dirname "$(readlink -f "$0")")"
-              exec "$HERE/usr/bin/librapix-app" "$@"
-              APPRUN
+              printf '%s\n' \
+                '#!/bin/sh' \
+                'HERE="$(dirname "$(readlink -f "$0")")"' \
+                'exec "$HERE/usr/bin/librapix-app" "$@"' \
+                > "$APPDIR/AppRun"
               chmod +x "$APPDIR/AppRun"
 
-              cat > "$APPDIR/librapix.desktop" <<'DESKTOP'
-              [Desktop Entry]
-              Type=Application
-              Name=Librapix
-              Exec=librapix-app
-              Icon=librapix
-              Categories=Graphics;Utility;
-              Terminal=false
-              DESKTOP
+              printf '%s\n' \
+                '[Desktop Entry]' \
+                'Type=Application' \
+                'Name=Librapix' \
+                'Exec=librapix-app' \
+                'Icon=librapix' \
+                'Categories=Graphics;Utility;' \
+                'Terminal=false' \
+                > "$APPDIR/librapix.desktop"
               cp "$APPDIR/librapix.desktop" "$APPDIR/usr/share/applications/librapix.desktop"
 
               echo "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4////fwAJ+wP9KobjigAAAABJRU5ErkJggg==" | base64 --decode > "$APPDIR/librapix.png"

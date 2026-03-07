@@ -764,11 +764,8 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
         }
         Message::TimelineScrubReleased => {
             app.timeline_scrubbing = false;
-            if let Some(anchor_index) = app.timeline_scrub_anchor_index
-                && let Some(anchor) = app.timeline_anchors.get(anchor_index)
-            {
-                app.timeline_scrub_value = anchor.normalized_position.clamp(0.0, 1.0);
-            }
+            app.timeline_scrub_anchor_index =
+                scrub_value_to_anchor_index(&app.timeline_anchors, app.timeline_scrub_value);
         }
         Message::JumpToTimelineAnchor(index) => {
             return jump_to_timeline_anchor(app, index);
@@ -1705,32 +1702,23 @@ fn render_timeline_scrubber(app: &Librapix) -> Element<'_, Message> {
         Space::new().width(Length::Fixed(0.0)).into()
     };
 
-    let year_markers = timeline_year_markers(&app.timeline_anchors)
-        .into_iter()
-        .fold(column![].spacing(SPACE_2XS), |col, (label, index)| {
-            col.push(
-                button(text(label).size(FONT_CAPTION))
-                    .on_press(Message::JumpToTimelineAnchor(index))
-                    .style(subtle_button_style)
-                    .padding([SPACE_2XS as u16, SPACE_XS as u16]),
-            )
-        });
+    let year_markers = timeline_year_markers(&app.timeline_anchors);
+    let marker_track = render_timeline_year_marker_track(&year_markers);
+    let scrub_controls = row![
+        marker_track,
+        row![chip_track, slider]
+            .spacing(SPACE_XS)
+            .height(Length::Fill),
+    ]
+    .spacing(SPACE_SM)
+    .height(Length::Fill);
 
-    container(
-        column![
-            row![chip_track, slider]
-                .spacing(SPACE_XS)
-                .height(Length::Fill),
-            year_markers,
-        ]
-        .spacing(SPACE_SM)
-        .height(Length::Fill),
-    )
-    .width(Length::Fixed(96.0))
-    .height(Length::Fill)
-    .padding([SPACE_SM as u16, SPACE_XS as u16])
-    .style(scrubber_panel_style)
-    .into()
+    container(column![scrub_controls].height(Length::Fill))
+        .width(Length::Fixed(128.0))
+        .height(Length::Fill)
+        .padding([SPACE_SM as u16, SPACE_XS as u16])
+        .style(scrubber_panel_style)
+        .into()
 }
 
 fn render_new_media_dialog(app: &Librapix) -> Element<'_, Message> {
@@ -1893,26 +1881,59 @@ fn render_new_media_dialog(app: &Librapix) -> Element<'_, Message> {
     .into()
 }
 
-fn timeline_year_markers(anchors: &[TimelineAnchor]) -> Vec<(String, usize)> {
+#[derive(Debug, Clone, PartialEq)]
+struct TimelineYearMarker {
+    label: String,
+    group_index: usize,
+    normalized_position: f32,
+}
+
+fn render_timeline_year_marker_track(markers: &[TimelineYearMarker]) -> Element<'static, Message> {
+    if markers.is_empty() {
+        return Space::new().width(Length::Fixed(0.0)).into();
+    }
+
+    let mut track = column![].height(Length::Fill);
+    let mut previous_position = 0.0f32;
+
+    for marker in markers {
+        let current = marker.normalized_position.clamp(0.0, 1.0);
+        let spacer = ((current - previous_position).max(0.0) * 1000.0).round() as u16;
+        if spacer > 0 {
+            track = track.push(Space::new().height(Length::FillPortion(spacer)));
+        }
+
+        track = track.push(
+            button(text(marker.label.clone()).size(FONT_CAPTION))
+                .on_press(Message::JumpToTimelineAnchor(marker.group_index))
+                .style(subtle_button_style)
+                .padding([SPACE_2XS as u16, SPACE_XS as u16]),
+        );
+        previous_position = current;
+    }
+
+    let trailing = ((1.0 - previous_position).max(0.0) * 1000.0).round() as u16;
+    if trailing > 0 {
+        track = track.push(Space::new().height(Length::FillPortion(trailing)));
+    }
+
+    track.into()
+}
+
+fn timeline_year_markers(anchors: &[TimelineAnchor]) -> Vec<TimelineYearMarker> {
     let mut markers = Vec::new();
     let mut last_year: Option<i32> = None;
 
     for anchor in anchors {
-        match anchor.year {
-            Some(year) => {
-                if last_year != Some(year) {
-                    markers.push((year.to_string(), anchor.group_index));
-                    last_year = Some(year);
-                }
-            }
-            None => {
-                if markers
-                    .last()
-                    .is_none_or(|(label, _)| label.as_str() != "unknown")
-                {
-                    markers.push(("unknown".to_owned(), anchor.group_index));
-                }
-            }
+        if let Some(year) = anchor.year
+            && last_year != Some(year)
+        {
+            markers.push(TimelineYearMarker {
+                label: year.to_string(),
+                group_index: anchor.group_index,
+                normalized_position: anchor.normalized_position.clamp(0.0, 1.0),
+            });
+            last_year = Some(year);
         }
     }
 
@@ -1923,11 +1944,29 @@ fn timeline_year_markers(anchors: &[TimelineAnchor]) -> Vec<(String, usize)> {
     let step = (markers.len() as f32 / SCRUBBER_YEAR_MARKER_LIMIT as f32).ceil() as usize;
     let mut reduced = markers.iter().cloned().step_by(step).collect::<Vec<_>>();
     if let Some(last) = markers.last().cloned()
-        && reduced.last().map(|(_, index)| *index) != Some(last.1)
+        && reduced.last().map(|marker| marker.group_index) != Some(last.group_index)
     {
         reduced.push(last);
     }
     reduced
+}
+
+fn scroll_task_to_timeline_position(app: &Librapix, normalized: f32) -> Task<Message> {
+    let clamped = normalized.clamp(0.0, 1.0);
+    let id = Id::new(MEDIA_SCROLLABLE_ID);
+
+    if app.timeline_scroll_max_y > 0.0 {
+        let target_y = app.timeline_scroll_max_y * clamped;
+        operation::scroll_to(
+            id,
+            operation::AbsoluteOffset {
+                x: Some(0.0),
+                y: Some(target_y),
+            },
+        )
+    } else {
+        operation::snap_to(id, operation::RelativeOffset { x: 0.0, y: clamped })
+    }
 }
 
 fn apply_timeline_scrub(
@@ -1940,7 +1979,6 @@ fn apply_timeline_scrub(
     }
 
     let clamped = normalized_value.clamp(0.0, 1.0);
-    let previous_anchor = app.timeline_scrub_anchor_index;
     app.timeline_scrub_value = clamped;
     app.timeline_scrubbing = interactive;
     app.timeline_scrub_anchor_index = scrub_value_to_anchor_index(&app.timeline_anchors, clamped);
@@ -1949,14 +1987,7 @@ fn apply_timeline_scrub(
         return Task::none();
     }
 
-    if previous_anchor == app.timeline_scrub_anchor_index {
-        return Task::none();
-    }
-
-    match app.timeline_scrub_anchor_index {
-        Some(anchor_index) => scroll_task_to_timeline_anchor(app, anchor_index),
-        None => Task::none(),
-    }
+    scroll_task_to_timeline_position(app, clamped)
 }
 
 fn jump_to_timeline_anchor(app: &mut Librapix, group_index: usize) -> Task<Message> {
@@ -1977,7 +2008,7 @@ fn jump_to_timeline_anchor(app: &mut Librapix, group_index: usize) -> Task<Messa
         return Task::none();
     }
 
-    scroll_task_to_timeline_anchor(app, anchor_index)
+    scroll_task_to_timeline_position(app, app.timeline_scrub_value)
 }
 
 fn sync_timeline_scrub_from_viewport(app: &mut Librapix, absolute_y: f32, max_y: f32) {
@@ -1997,15 +2028,7 @@ fn sync_timeline_scrub_from_viewport(app: &mut Librapix, absolute_y: f32, max_y:
     };
     app.timeline_scrub_anchor_index =
         scrub_value_to_anchor_index(&app.timeline_anchors, normalized);
-    if let Some(anchor_index) = app.timeline_scrub_anchor_index {
-        if let Some(anchor) = app.timeline_anchors.get(anchor_index) {
-            app.timeline_scrub_value = anchor.normalized_position.clamp(0.0, 1.0);
-        } else {
-            app.timeline_scrub_value = normalized;
-        }
-    } else {
-        app.timeline_scrub_value = normalized;
-    }
+    app.timeline_scrub_value = normalized;
 }
 
 fn sync_timeline_scrub_selection(app: &mut Librapix, preferred_value: f32) {
@@ -2018,13 +2041,8 @@ fn sync_timeline_scrub_selection(app: &mut Librapix, preferred_value: f32) {
     }
 
     let clamped = preferred_value.clamp(0.0, 1.0);
-    let anchor_index = scrub_value_to_anchor_index(&app.timeline_anchors, clamped).unwrap_or(0);
-    let anchor_value = app.timeline_anchors[anchor_index]
-        .normalized_position
-        .clamp(0.0, 1.0);
-
-    app.timeline_scrub_anchor_index = Some(anchor_index);
-    app.timeline_scrub_value = anchor_value;
+    app.timeline_scrub_anchor_index = scrub_value_to_anchor_index(&app.timeline_anchors, clamped);
+    app.timeline_scrub_value = clamped;
     app.timeline_scrubbing = false;
     app.timeline_scroll_max_y = 0.0;
 }
@@ -2034,30 +2052,19 @@ fn scrub_value_to_anchor_index(anchors: &[TimelineAnchor], normalized: f32) -> O
         return None;
     }
 
-    let max_index = anchors.len().saturating_sub(1) as f32;
     let clamped = normalized.clamp(0.0, 1.0);
-    let index = if max_index > 0.0 {
-        (clamped * max_index).round() as usize
-    } else {
-        0
-    };
-    Some(index.min(anchors.len().saturating_sub(1)))
-}
+    let mut best_index = 0usize;
+    let mut best_distance = f32::MAX;
 
-fn scroll_task_to_timeline_anchor(app: &Librapix, anchor_index: usize) -> Task<Message> {
-    let Some(anchor) = app.timeline_anchors.get(anchor_index) else {
-        return Task::none();
-    };
-    let normalized = anchor.normalized_position.clamp(0.0, 1.0);
-    let id = Id::new(MEDIA_SCROLLABLE_ID);
+    for (index, anchor) in anchors.iter().enumerate() {
+        let distance = (anchor.normalized_position.clamp(0.0, 1.0) - clamped).abs();
+        if distance < best_distance {
+            best_distance = distance;
+            best_index = index;
+        }
+    }
 
-    operation::snap_to(
-        id,
-        operation::RelativeOffset {
-            x: 0.0,
-            y: normalized,
-        },
-    )
+    Some(best_index)
 }
 
 fn render_details_panel(app: &Librapix) -> Element<'_, Message> {
@@ -2665,25 +2672,7 @@ fn copy_file_to_clipboard(path: &Path) -> Result<(), std::io::Error> {
     }
     #[cfg(target_os = "windows")]
     {
-        // Windows Explorer file paste expects a CF_HDROP payload (file drop list),
-        // not text content from Set-Clipboard -LiteralPath.
-        let status = Command::new("powershell")
-            .args([
-                "-NoProfile",
-                "-NonInteractive",
-                "-STA",
-                "-Command",
-                windows_file_drop_clipboard_script(),
-            ])
-            .arg(path)
-            .status()?;
-        if status.success() {
-            Ok(())
-        } else {
-            Err(std::io::Error::other(
-                "powershell SetFileDropList clipboard write failed",
-            ))
-        }
+        copy_file_to_clipboard_windows(path)
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
@@ -2713,15 +2702,209 @@ fn copy_file_to_clipboard(path: &Path) -> Result<(), std::io::Error> {
     }
 }
 
+#[cfg(target_os = "windows")]
+const WINDOWS_CF_HDROP_FORMAT: u32 = 15;
+#[cfg(target_os = "windows")]
+const WINDOWS_CLIPBOARD_OPEN_RETRIES: usize = 8;
+#[cfg(target_os = "windows")]
+const WINDOWS_CLIPBOARD_RETRY_DELAY_MS: u64 = 15;
+
 #[cfg(any(test, target_os = "windows"))]
-fn windows_file_drop_clipboard_script() -> &'static str {
-    concat!(
-        "$ErrorActionPreference='Stop';",
-        "Add-Type -AssemblyName System.Windows.Forms;",
-        "$paths=New-Object System.Collections.Specialized.StringCollection;",
-        "$paths.Add($args[0])|Out-Null;",
-        "[System.Windows.Forms.Clipboard]::SetFileDropList($paths);"
-    )
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct WindowsDropFilesHeader {
+    p_files: u32,
+    x: i32,
+    y: i32,
+    f_nc: i32,
+    f_wide: i32,
+}
+
+#[cfg(any(test, target_os = "windows"))]
+fn build_windows_file_drop_payload(path: &Path) -> Result<Vec<u8>, std::io::Error> {
+    if !path.is_absolute() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "Windows file-drop clipboard payload requires an absolute path",
+        ));
+    }
+
+    let mut encoded_path = windows_path_to_utf16(path);
+    if encoded_path.is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "Windows file-drop clipboard payload cannot be empty",
+        ));
+    }
+
+    // CF_HDROP expects a UTF-16 multi-string list (one or more paths) terminated by a double NUL.
+    encoded_path.push(0);
+    encoded_path.push(0);
+
+    let header = WindowsDropFilesHeader {
+        p_files: std::mem::size_of::<WindowsDropFilesHeader>() as u32,
+        x: 0,
+        y: 0,
+        f_nc: 0,
+        f_wide: 1,
+    };
+
+    let byte_len = std::mem::size_of::<WindowsDropFilesHeader>()
+        + encoded_path.len() * std::mem::size_of::<u16>();
+    let mut payload = vec![0u8; byte_len];
+    let header_size = std::mem::size_of::<WindowsDropFilesHeader>();
+
+    // SAFETY: payload is allocated with sufficient size for the header and UTF-16 path data.
+    unsafe {
+        std::ptr::write_unaligned(
+            payload.as_mut_ptr().cast::<WindowsDropFilesHeader>(),
+            header,
+        );
+        std::ptr::copy_nonoverlapping(
+            encoded_path.as_ptr().cast::<u8>(),
+            payload.as_mut_ptr().add(header_size),
+            encoded_path.len() * std::mem::size_of::<u16>(),
+        );
+    }
+
+    Ok(payload)
+}
+
+#[cfg(any(test, target_os = "windows"))]
+fn windows_path_to_utf16(path: &Path) -> Vec<u16> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::ffi::OsStrExt;
+
+        path.as_os_str().encode_wide().collect()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        path.to_string_lossy()
+            .replace('/', "\\")
+            .encode_utf16()
+            .collect()
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn copy_file_to_clipboard_windows(path: &Path) -> Result<(), std::io::Error> {
+    use windows_sys::Win32::System::DataExchange::{EmptyClipboard, SetClipboardData};
+    use windows_sys::Win32::System::Memory::{
+        GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock,
+    };
+
+    let payload = build_windows_file_drop_payload(path)?;
+
+    // SAFETY: Win32 clipboard and global-memory APIs are called with documented ownership flow:
+    // GlobalAlloc -> GlobalLock/write -> GlobalUnlock -> SetClipboardData transfer ownership.
+    unsafe {
+        let handle = GlobalAlloc(GMEM_MOVEABLE, payload.len());
+        if handle.is_null() {
+            return Err(windows_clipboard_error("GlobalAlloc failed"));
+        }
+        let mut memory = WindowsGlobalMemory(handle);
+
+        let locked = GlobalLock(memory.0);
+        if locked.is_null() {
+            return Err(windows_clipboard_error("GlobalLock failed"));
+        }
+
+        std::ptr::copy_nonoverlapping(payload.as_ptr(), locked.cast::<u8>(), payload.len());
+
+        if GlobalUnlock(memory.0) == 0 {
+            let unlock_error = windows_sys::Win32::Foundation::GetLastError();
+            if unlock_error != 0 {
+                return Err(windows_clipboard_error("GlobalUnlock failed"));
+            }
+        }
+
+        open_windows_clipboard_with_retry()?;
+        let _clipboard_guard = WindowsClipboardGuard;
+
+        if EmptyClipboard() == 0 {
+            return Err(windows_clipboard_error("EmptyClipboard failed"));
+        }
+
+        let set_result = SetClipboardData(WINDOWS_CF_HDROP_FORMAT, memory.0);
+        if set_result.is_null() {
+            return Err(windows_clipboard_error("SetClipboardData(CF_HDROP) failed"));
+        }
+
+        // Ownership is transferred to the clipboard after successful SetClipboardData.
+        memory.release_to_clipboard();
+    }
+
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn open_windows_clipboard_with_retry() -> Result<(), std::io::Error> {
+    use windows_sys::Win32::System::DataExchange::OpenClipboard;
+
+    for _ in 0..WINDOWS_CLIPBOARD_OPEN_RETRIES {
+        // SAFETY: Null owner handle is allowed when opening the clipboard for the current task.
+        let opened = unsafe { OpenClipboard(std::ptr::null_mut()) };
+        if opened != 0 {
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(
+            WINDOWS_CLIPBOARD_RETRY_DELAY_MS,
+        ));
+    }
+
+    Err(windows_clipboard_error(
+        "OpenClipboard failed after retries",
+    ))
+}
+
+#[cfg(target_os = "windows")]
+fn windows_clipboard_error(context: &str) -> std::io::Error {
+    // SAFETY: GetLastError is thread-local and requires no additional invariants.
+    let code = unsafe { windows_sys::Win32::Foundation::GetLastError() };
+    if code == 0 {
+        std::io::Error::other(context.to_owned())
+    } else {
+        std::io::Error::other(format!(
+            "{context}: {}",
+            std::io::Error::from_raw_os_error(code as i32)
+        ))
+    }
+}
+
+#[cfg(target_os = "windows")]
+struct WindowsClipboardGuard;
+
+#[cfg(target_os = "windows")]
+impl Drop for WindowsClipboardGuard {
+    fn drop(&mut self) {
+        // SAFETY: Closing the clipboard after a successful OpenClipboard is always valid.
+        unsafe {
+            let _ = windows_sys::Win32::System::DataExchange::CloseClipboard();
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+struct WindowsGlobalMemory(windows_sys::Win32::Foundation::HGLOBAL);
+
+#[cfg(target_os = "windows")]
+impl WindowsGlobalMemory {
+    fn release_to_clipboard(&mut self) {
+        self.0 = std::ptr::null_mut();
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl Drop for WindowsGlobalMemory {
+    fn drop(&mut self) {
+        if !self.0.is_null() {
+            // SAFETY: We free only allocations still owned by this guard.
+            unsafe {
+                let _ = windows_sys::Win32::Foundation::GlobalFree(self.0);
+            }
+        }
+    }
 }
 
 fn shortcut_action_from_keyboard_event(event: &keyboard::Event) -> Option<KeyboardShortcutAction> {
@@ -3630,12 +3813,13 @@ mod tests {
         ];
 
         assert_eq!(scrub_value_to_anchor_index(&anchors, 0.01), Some(0));
+        assert_eq!(scrub_value_to_anchor_index(&anchors, 0.20), Some(1));
         assert_eq!(scrub_value_to_anchor_index(&anchors, 0.55), Some(2));
         assert_eq!(scrub_value_to_anchor_index(&anchors, 0.97), Some(3));
     }
 
     #[test]
-    fn year_markers_deduplicate_by_year_and_keep_unknown() {
+    fn year_markers_deduplicate_by_year_and_use_anchor_positions() {
         let anchors = vec![
             anchor(0, Some(2026), "2026-03-01", 0.0),
             anchor(1, Some(2026), "2026-02-01", 0.1),
@@ -3648,9 +3832,16 @@ mod tests {
         assert_eq!(
             markers,
             vec![
-                ("2026".to_owned(), 0),
-                ("2025".to_owned(), 2),
-                ("unknown".to_owned(), 4),
+                TimelineYearMarker {
+                    label: "2026".to_owned(),
+                    group_index: 0,
+                    normalized_position: 0.0,
+                },
+                TimelineYearMarker {
+                    label: "2025".to_owned(),
+                    group_index: 2,
+                    normalized_position: 0.4,
+                },
             ]
         );
     }
@@ -3773,10 +3964,37 @@ mod tests {
     }
 
     #[test]
-    fn windows_file_copy_script_uses_file_drop_list_clipboard() {
-        let script = windows_file_drop_clipboard_script();
-        assert!(script.contains("Clipboard"));
-        assert!(script.contains("SetFileDropList"));
+    fn windows_file_drop_payload_uses_dropfiles_header_and_double_nul() {
+        let path = PathBuf::from("/tmp/librapix/clip.png");
+        let payload = build_windows_file_drop_payload(&path).expect("payload should be generated");
+        let header_size = std::mem::size_of::<WindowsDropFilesHeader>();
+        assert!(payload.len() > header_size);
+
+        let header =
+            unsafe { std::ptr::read_unaligned(payload.as_ptr().cast::<WindowsDropFilesHeader>()) };
+        assert_eq!(header.p_files as usize, header_size);
+        assert_eq!(header.f_wide, 1);
+
+        let tail = &payload[header_size..];
+        assert_eq!(tail.len() % std::mem::size_of::<u16>(), 0);
+
+        let units = tail
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>();
+        assert!(units.ends_with(&[0, 0]));
+
+        let mut expected = windows_path_to_utf16(&path);
+        expected.push(0);
+        expected.push(0);
+        assert_eq!(units, expected);
+    }
+
+    #[test]
+    fn windows_file_drop_payload_rejects_relative_paths() {
+        let err = build_windows_file_drop_payload(Path::new("relative/clip.png"))
+            .expect_err("relative path should be rejected");
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
     }
 
     #[test]

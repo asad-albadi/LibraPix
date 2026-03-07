@@ -18,3 +18,10 @@ librapix-projections = { path = "../librapix-projections" }
 librapix-search = { path = "../librapix-search" }
 librapix-storage = { path = "../librapix-storage" }
 librapix-thumbnails = { path = "../librapix-thumbnails" }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_System_DataExchange",
+    "Win32_System_Memory",
+] }

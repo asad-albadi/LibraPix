@@ -453,6 +453,12 @@ impl Storage {
         Ok(collected?)
     }
 
+    pub fn delete_ignore_rule_by_id(&self, id: i64) -> Result<(), StorageError> {
+        self.connection
+            .execute("DELETE FROM ignore_rules WHERE id = ?1", params![id])?;
+        Ok(())
+    }
+
     pub fn replace_indexed_media(
         &mut self,
         entries: &[(i64, &Path, &str)],
@@ -683,6 +689,28 @@ impl Storage {
             .connection
             .prepare("SELECT id, name, kind FROM tags ORDER BY name ASC")?;
         let rows = statement.query_map([], |row| {
+            let kind_str: String = row.get(2)?;
+            let kind = TagKind::from_str(&kind_str)
+                .ok_or_else(|| rusqlite::Error::InvalidParameterName(kind_str.clone()))?;
+            Ok::<TagRecord, rusqlite::Error>(TagRecord {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                kind,
+            })
+        })?;
+        let collected: Result<Vec<_>, rusqlite::Error> = rows.collect();
+        Ok(collected?)
+    }
+
+    pub fn list_media_tags(&self, media_id: i64) -> Result<Vec<TagRecord>, StorageError> {
+        let mut statement = self.connection.prepare(
+            "SELECT t.id, t.name, t.kind
+             FROM tags t
+             JOIN media_tags mt ON mt.tag_id = t.id
+             WHERE mt.media_id = ?1
+             ORDER BY t.name ASC",
+        )?;
+        let rows = statement.query_map(params![media_id], |row| {
             let kind_str: String = row.get(2)?;
             let kind = TagKind::from_str(&kind_str)
                 .ok_or_else(|| rusqlite::Error::InvalidParameterName(kind_str.clone()))?;

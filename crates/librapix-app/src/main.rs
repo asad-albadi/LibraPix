@@ -69,14 +69,21 @@ enum Message {
     DetailsTagInputChanged(String),
     AttachAppTag,
     AttachGameTag,
-    DetachTag,
+    DetachTagByName(String),
+    DetailsStartEditTag(String),
+    DetailsApplyTagEdit,
+    DetailsCancelTagEdit,
     OpenSelectedFile,
     OpenSelectedFolder,
     CopySelectedFile,
     CopySelectedPath,
     IgnoreRuleInputChanged(String),
-    EnableIgnoreRule,
-    DisableIgnoreRule,
+    IgnoreRuleAdd,
+    IgnoreRuleToggleEnabled(i64),
+    IgnoreRuleRemove(i64),
+    IgnoreRuleStartEdit(i64),
+    IgnoreRuleApplyEdit,
+    IgnoreRuleCancelEdit,
     StartupRestore,
     FilesystemChanged,
     SetFilterMediaKind(Option<String>),
@@ -113,6 +120,9 @@ enum Message {
     LibraryDialogAddAppTag,
     LibraryDialogAddGameTag,
     LibraryDialogRemoveTag(String),
+    LibraryDialogStartEditTag(String),
+    LibraryDialogApplyTagEdit,
+    LibraryDialogCancelTagEdit,
     SaveLibraryDialog,
     SaveLibraryAndAddAnother,
     SetFilterLibrary(Option<i64>),
@@ -149,7 +159,7 @@ struct BackgroundWorkResult {
     search_preview_lines: Vec<String>,
     media_cache: std::collections::HashMap<i64, CachedDetails>,
     available_filter_tags: Vec<String>,
-    ignore_rules_preview: Vec<String>,
+    ignore_rules: Vec<librapix_storage::IgnoreRuleRecord>,
     browse_status: String,
 }
 
@@ -164,8 +174,11 @@ struct Librapix {
     details_action_status: String,
     details_preview_path: Option<PathBuf>,
     details_title: String,
+    details_tags: Vec<DetailsTagChip>,
+    details_editing_tag: Option<String>,
     ignore_rule_input: String,
-    ignore_rules_preview: Vec<String>,
+    ignore_rules: Vec<librapix_storage::IgnoreRuleRecord>,
+    ignore_rule_editing_id: Option<i64>,
     gallery_items: Vec<BrowseItem>,
     timeline_items: Vec<BrowseItem>,
     timeline_anchors: Vec<TimelineAnchor>,
@@ -200,6 +213,7 @@ struct Librapix {
     library_dialog_manual_path_open: bool,
     library_dialog_tag_input: String,
     library_dialog_tags: Vec<(String, TagKind)>,
+    library_dialog_editing_tag: Option<String>,
     library_stats_dialog_open: bool,
     library_stats_root_id: Option<i64>,
     library_stats_record: Option<SourceRootStatisticsRecord>,
@@ -236,8 +250,14 @@ struct CachedDetails {
     modified_unix_seconds: Option<i64>,
     width_px: Option<u32>,
     height_px: Option<u32>,
-    tags: Vec<String>,
     detail_thumbnail_path: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone)]
+struct DetailsTagChip {
+    name: String,
+    kind: TagKind,
+    inherited: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -327,8 +347,11 @@ impl Default for Librapix {
             details_action_status: String::new(),
             details_preview_path: None,
             details_title: String::new(),
+            details_tags: Vec::new(),
+            details_editing_tag: None,
             ignore_rule_input: String::new(),
-            ignore_rules_preview: Vec::new(),
+            ignore_rules: Vec::new(),
+            ignore_rule_editing_id: None,
             gallery_items: Vec::new(),
             timeline_items: Vec::new(),
             timeline_anchors: Vec::new(),
@@ -363,12 +386,13 @@ impl Default for Librapix {
             library_dialog_manual_path_open: false,
             library_dialog_tag_input: String::new(),
             library_dialog_tags: Vec::new(),
+            library_dialog_editing_tag: None,
             library_stats_dialog_open: false,
             library_stats_root_id: None,
             library_stats_record: None,
             filter_source_root_id: None,
         };
-        refresh_ignore_rules_preview(&mut app);
+        refresh_ignore_rules(&mut app);
         app
     }
 }
@@ -477,14 +501,21 @@ fn message_event_label(msg: &Message) -> String {
         Message::DetailsTagInputChanged(v) => format!("DetailsTagInputChanged({})", v.len()),
         Message::AttachAppTag => "AttachAppTag".into(),
         Message::AttachGameTag => "AttachGameTag".into(),
-        Message::DetachTag => "DetachTag".into(),
+        Message::DetachTagByName(name) => format!("DetachTagByName({name})"),
+        Message::DetailsStartEditTag(name) => format!("DetailsStartEditTag({name})"),
+        Message::DetailsApplyTagEdit => "DetailsApplyTagEdit".into(),
+        Message::DetailsCancelTagEdit => "DetailsCancelTagEdit".into(),
         Message::OpenSelectedFile => "OpenSelectedFile".into(),
         Message::OpenSelectedFolder => "OpenSelectedFolder".into(),
         Message::CopySelectedFile => "CopySelectedFile".into(),
         Message::CopySelectedPath => "CopySelectedPath".into(),
         Message::IgnoreRuleInputChanged(v) => format!("IgnoreRuleInputChanged({})", v.len()),
-        Message::EnableIgnoreRule => "EnableIgnoreRule".into(),
-        Message::DisableIgnoreRule => "DisableIgnoreRule".into(),
+        Message::IgnoreRuleAdd => "IgnoreRuleAdd".into(),
+        Message::IgnoreRuleToggleEnabled(id) => format!("IgnoreRuleToggleEnabled({id})"),
+        Message::IgnoreRuleRemove(id) => format!("IgnoreRuleRemove({id})"),
+        Message::IgnoreRuleStartEdit(id) => format!("IgnoreRuleStartEdit({id})"),
+        Message::IgnoreRuleApplyEdit => "IgnoreRuleApplyEdit".into(),
+        Message::IgnoreRuleCancelEdit => "IgnoreRuleCancelEdit".into(),
         Message::StartupRestore => "StartupRestore".into(),
         Message::FilesystemChanged => "FilesystemChanged".into(),
         Message::SetFilterMediaKind(k) => format!("SetFilterMediaKind({:?})", k.as_deref()),
@@ -529,6 +560,9 @@ fn message_event_label(msg: &Message) -> String {
         Message::LibraryDialogAddAppTag => "LibraryDialogAddAppTag".into(),
         Message::LibraryDialogAddGameTag => "LibraryDialogAddGameTag".into(),
         Message::LibraryDialogRemoveTag(name) => format!("LibraryDialogRemoveTag({name})"),
+        Message::LibraryDialogStartEditTag(name) => format!("LibraryDialogStartEditTag({name})"),
+        Message::LibraryDialogApplyTagEdit => "LibraryDialogApplyTagEdit".into(),
+        Message::LibraryDialogCancelTagEdit => "LibraryDialogCancelTagEdit".into(),
         Message::SaveLibraryDialog => "SaveLibraryDialog".into(),
         Message::SaveLibraryAndAddAnother => "SaveLibraryAndAddAnother".into(),
         Message::SetFilterLibrary(_) => "SetFilterLibrary".into(),
@@ -681,8 +715,19 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
         Message::AttachGameTag => {
             attach_tag_to_selected_media(app, TagKind::Game);
         }
-        Message::DetachTag => {
-            detach_tag_from_selected_media(app);
+        Message::DetachTagByName(tag_name) => {
+            detach_tag_from_selected_media(app, &tag_name);
+        }
+        Message::DetailsStartEditTag(tag_name) => {
+            app.details_editing_tag = Some(tag_name.clone());
+            app.details_tag_input = tag_name;
+        }
+        Message::DetailsApplyTagEdit => {
+            apply_details_tag_edit(app);
+        }
+        Message::DetailsCancelTagEdit => {
+            app.details_editing_tag = None;
+            app.details_tag_input.clear();
         }
         Message::OpenSelectedFile => {
             open_selected_path(app, false);
@@ -699,11 +744,24 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
         Message::IgnoreRuleInputChanged(value) => {
             app.ignore_rule_input = value;
         }
-        Message::EnableIgnoreRule => {
-            set_ignore_rule_enabled(app, true);
+        Message::IgnoreRuleAdd => {
+            add_ignore_rule(app);
         }
-        Message::DisableIgnoreRule => {
-            set_ignore_rule_enabled(app, false);
+        Message::IgnoreRuleToggleEnabled(rule_id) => {
+            toggle_ignore_rule(app, rule_id);
+        }
+        Message::IgnoreRuleRemove(rule_id) => {
+            remove_ignore_rule(app, rule_id);
+        }
+        Message::IgnoreRuleStartEdit(rule_id) => {
+            start_ignore_rule_edit(app, rule_id);
+        }
+        Message::IgnoreRuleApplyEdit => {
+            apply_ignore_rule_edit(app);
+        }
+        Message::IgnoreRuleCancelEdit => {
+            app.ignore_rule_editing_id = None;
+            app.ignore_rule_input.clear();
         }
         Message::StartupRestore => {
             if app.state.library_roots.is_empty() {
@@ -867,6 +925,24 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
         Message::LibraryDialogRemoveTag(tag_name) => {
             app.library_dialog_tags
                 .retain(|(name, _)| !name.eq_ignore_ascii_case(&tag_name));
+            if app
+                .library_dialog_editing_tag
+                .as_ref()
+                .is_some_and(|editing| editing.eq_ignore_ascii_case(&tag_name))
+            {
+                app.library_dialog_editing_tag = None;
+                app.library_dialog_tag_input.clear();
+            }
+        }
+        Message::LibraryDialogStartEditTag(tag_name) => {
+            start_library_dialog_tag_edit(app, &tag_name);
+        }
+        Message::LibraryDialogApplyTagEdit => {
+            apply_library_dialog_tag_edit(app);
+        }
+        Message::LibraryDialogCancelTagEdit => {
+            app.library_dialog_editing_tag = None;
+            app.library_dialog_tag_input.clear();
         }
         Message::SaveLibraryDialog => {
             if let Some(task) = save_library_dialog(app, false) {
@@ -1818,6 +1894,64 @@ fn render_filter_dialog(app: &Librapix) -> Element<'_, Message> {
     .into()
 }
 
+fn render_management_chip(
+    label: impl Into<String>,
+    tone_key: &str,
+    status_label: Option<String>,
+    toggle: Option<(String, Message)>,
+    edit: Option<(String, Message)>,
+    remove: Option<Message>,
+) -> Element<'static, Message> {
+    let label = label.into();
+    let tone = chip_tone_for_key(tone_key);
+    let mut controls = row![].spacing(SPACE_2XS).align_y(iced::Alignment::Center);
+    if let Some((toggle_label, msg)) = toggle {
+        controls = controls.push(
+            button(text(toggle_label).size(FONT_CAPTION))
+                .on_press(msg)
+                .style(managed_chip_action_style(tone, false))
+                .padding([SPACE_2XS as u16, SPACE_XS as u16]),
+        );
+    }
+    if let Some((edit_label, msg)) = edit {
+        controls = controls.push(
+            button(text(edit_label).size(FONT_CAPTION))
+                .on_press(msg)
+                .style(managed_chip_action_style(tone, false))
+                .padding([SPACE_2XS as u16, SPACE_XS as u16]),
+        );
+    }
+    if let Some(msg) = remove {
+        controls = controls.push(
+            button(text("x").size(FONT_CAPTION))
+                .on_press(msg)
+                .style(managed_chip_action_style(tone, true))
+                .padding([SPACE_2XS as u16, SPACE_XS as u16]),
+        );
+    }
+    let status: Element<'static, Message> = if let Some(value) = status_label {
+        text(value)
+            .size(FONT_CAPTION)
+            .color(tone.accent_text)
+            .into()
+    } else {
+        Space::new().width(Length::Shrink).into()
+    };
+    container(
+        row![
+            column![text(label).size(FONT_BODY).color(tone.text), status,].spacing(SPACE_2XS),
+            Space::new().width(Length::Fill),
+            controls,
+        ]
+        .spacing(SPACE_SM)
+        .align_y(iced::Alignment::Center),
+    )
+    .width(Length::Fill)
+    .padding([SPACE_XS as u16, SPACE_SM as u16])
+    .style(managed_chip_style(tone))
+    .into()
+}
+
 fn render_settings_dialog(app: &Librapix) -> Element<'_, Message> {
     let indexing_section = column![
         section_heading(app.i18n.text(TextKey::IndexingSectionLabel)),
@@ -1846,28 +1980,79 @@ fn render_settings_dialog(app: &Librapix) -> Element<'_, Message> {
     ]
     .spacing(SPACE_SM);
 
+    let ignore_input_actions: Element<'_, Message> = if app.ignore_rule_editing_id.is_some() {
+        row![
+            button(text(app.i18n.text(TextKey::LibrarySaveButton)).size(FONT_CAPTION))
+                .on_press(Message::IgnoreRuleApplyEdit)
+                .style(primary_button_style)
+                .padding([SPACE_2XS as u16, SPACE_SM as u16]),
+            button(text(app.i18n.text(TextKey::DismissButton)).size(FONT_CAPTION))
+                .on_press(Message::IgnoreRuleCancelEdit)
+                .style(subtle_button_style)
+                .padding([SPACE_2XS as u16, SPACE_SM as u16]),
+        ]
+        .spacing(SPACE_XS)
+        .into()
+    } else {
+        row![
+            button(text(app.i18n.text(TextKey::IgnoreRuleAddButton)).size(FONT_CAPTION))
+                .on_press(Message::IgnoreRuleAdd)
+                .style(subtle_button_style)
+                .padding([SPACE_2XS as u16, SPACE_SM as u16]),
+        ]
+        .spacing(SPACE_XS)
+        .into()
+    };
+
+    let ignore_chip_list: Element<'_, Message> = if app.ignore_rules.is_empty() {
+        text(app.i18n.text(TextKey::FilterNoTagsLabel))
+            .size(FONT_CAPTION)
+            .color(TEXT_TERTIARY)
+            .into()
+    } else {
+        app.ignore_rules
+            .iter()
+            .fold(column![].spacing(SPACE_XS), |col, rule| {
+                let status = if rule.is_enabled {
+                    app.i18n.text(TextKey::IgnoreRuleEnabled)
+                } else {
+                    app.i18n.text(TextKey::IgnoreRuleDisabled)
+                };
+                let toggle_label = if rule.is_enabled {
+                    app.i18n.text(TextKey::IgnoreRuleDisableButton)
+                } else {
+                    app.i18n.text(TextKey::IgnoreRuleAddButton)
+                };
+                col.push(render_management_chip(
+                    &rule.pattern,
+                    &rule.pattern,
+                    Some(status.to_owned()),
+                    Some((
+                        toggle_label.to_owned(),
+                        Message::IgnoreRuleToggleEnabled(rule.id),
+                    )),
+                    Some((
+                        app.i18n.text(TextKey::RootEditButton).to_owned(),
+                        Message::IgnoreRuleStartEdit(rule.id),
+                    )),
+                    Some(Message::IgnoreRuleRemove(rule.id)),
+                ))
+            })
+            .into()
+    };
+
     let ignore_section = column![
         section_heading(app.i18n.text(TextKey::IgnoreRuleInputLabel)),
         text_input("*.tmp, **/cache/**", &app.ignore_rule_input)
             .on_input(Message::IgnoreRuleInputChanged)
+            .on_submit(if app.ignore_rule_editing_id.is_some() {
+                Message::IgnoreRuleApplyEdit
+            } else {
+                Message::IgnoreRuleAdd
+            })
             .style(field_input_style),
-        row![
-            button(text(app.i18n.text(TextKey::IgnoreRuleAddButton)).size(FONT_CAPTION))
-                .on_press(Message::EnableIgnoreRule)
-                .style(subtle_button_style)
-                .padding([SPACE_2XS as u16, SPACE_SM as u16]),
-            button(text(app.i18n.text(TextKey::IgnoreRuleDisableButton)).size(FONT_CAPTION))
-                .on_press(Message::DisableIgnoreRule)
-                .style(subtle_button_style)
-                .padding([SPACE_2XS as u16, SPACE_SM as u16]),
-        ]
-        .spacing(SPACE_XS),
-        app.ignore_rules_preview
-            .iter()
-            .take(6)
-            .fold(column![].spacing(SPACE_2XS), |col, rule| {
-                col.push(text(rule.clone()).size(FONT_CAPTION).color(TEXT_TERTIARY))
-            }),
+        ignore_input_actions,
+        ignore_chip_list,
         h_divider(),
         row![
             text(app.i18n.text(TextKey::MinFileSizeLabel))
@@ -2086,33 +2271,56 @@ fn render_library_dialog(app: &Librapix) -> Element<'_, Message> {
         column![].into()
     };
 
-    let tags_list = if app.library_dialog_tags.is_empty() {
-        column![
-            text(app.i18n.text(TextKey::FilterNoTagsLabel))
-                .size(FONT_CAPTION)
-                .color(TEXT_TERTIARY)
-        ]
+    let tags_list: Element<'_, Message> = if app.library_dialog_tags.is_empty() {
+        text(app.i18n.text(TextKey::FilterNoTagsLabel))
+            .size(FONT_CAPTION)
+            .color(TEXT_TERTIARY)
+            .into()
     } else {
         app.library_dialog_tags
             .iter()
-            .fold(column![].spacing(SPACE_2XS), |col, (name, kind)| {
-                col.push(
-                    row![
-                        text(format!("{name} ({})", kind.as_str()))
-                            .size(FONT_CAPTION)
-                            .color(TEXT_SECONDARY),
-                        Space::new().width(Length::Fill),
-                        button(
-                            text(app.i18n.text(TextKey::RootTagRemoveButton)).size(FONT_CAPTION)
-                        )
-                        .on_press(Message::LibraryDialogRemoveTag(name.clone()))
-                        .style(subtle_button_style)
-                        .padding([SPACE_2XS as u16, SPACE_XS as u16]),
-                    ]
-                    .spacing(SPACE_XS)
-                    .align_y(iced::Alignment::Center),
-                )
+            .fold(column![].spacing(SPACE_XS), |col, (name, kind)| {
+                col.push(render_management_chip(
+                    name,
+                    name,
+                    Some(kind.as_str().to_owned()),
+                    None,
+                    Some((
+                        app.i18n.text(TextKey::RootEditButton).to_owned(),
+                        Message::LibraryDialogStartEditTag(name.clone()),
+                    )),
+                    Some(Message::LibraryDialogRemoveTag(name.clone())),
+                ))
             })
+            .into()
+    };
+
+    let library_tag_actions: Element<'_, Message> = if app.library_dialog_editing_tag.is_some() {
+        row![
+            button(text(app.i18n.text(TextKey::LibrarySaveButton)).size(FONT_CAPTION))
+                .on_press(Message::LibraryDialogApplyTagEdit)
+                .style(primary_button_style)
+                .padding([SPACE_2XS as u16, SPACE_SM as u16]),
+            button(text(app.i18n.text(TextKey::DismissButton)).size(FONT_CAPTION))
+                .on_press(Message::LibraryDialogCancelTagEdit)
+                .style(subtle_button_style)
+                .padding([SPACE_2XS as u16, SPACE_SM as u16]),
+        ]
+        .spacing(SPACE_XS)
+        .into()
+    } else {
+        row![
+            button(text(app.i18n.text(TextKey::RootTagAddButton)).size(FONT_CAPTION))
+                .on_press(Message::LibraryDialogAddAppTag)
+                .style(subtle_button_style)
+                .padding([SPACE_2XS as u16, SPACE_SM as u16]),
+            button(text(app.i18n.text(TextKey::RootTagGameButton)).size(FONT_CAPTION))
+                .on_press(Message::LibraryDialogAddGameTag)
+                .style(subtle_button_style)
+                .padding([SPACE_2XS as u16, SPACE_SM as u16]),
+        ]
+        .spacing(SPACE_XS)
+        .into()
     };
 
     let lifecycle_actions: Element<'_, Message> = if edit_root_id.is_some() {
@@ -2198,18 +2406,13 @@ fn render_library_dialog(app: &Librapix) -> Element<'_, Message> {
                 &app.library_dialog_tag_input,
             )
             .on_input(Message::LibraryDialogTagInputChanged)
+            .on_submit(if app.library_dialog_editing_tag.is_some() {
+                Message::LibraryDialogApplyTagEdit
+            } else {
+                Message::LibraryDialogAddAppTag
+            })
             .style(field_input_style),
-            row![
-                button(text(app.i18n.text(TextKey::RootTagAddButton)).size(FONT_CAPTION))
-                    .on_press(Message::LibraryDialogAddAppTag)
-                    .style(subtle_button_style)
-                    .padding([SPACE_2XS as u16, SPACE_SM as u16]),
-                button(text(app.i18n.text(TextKey::RootTagGameButton)).size(FONT_CAPTION))
-                    .on_press(Message::LibraryDialogAddGameTag)
-                    .style(subtle_button_style)
-                    .padding([SPACE_2XS as u16, SPACE_SM as u16]),
-            ]
-            .spacing(SPACE_XS),
+            library_tag_actions,
             tags_list,
         ]
         .spacing(SPACE_SM),
@@ -2805,6 +3008,93 @@ fn render_details_panel(app: &Librapix) -> Element<'_, Message> {
             })
     };
 
+    let details_tag_input_actions: Element<'_, Message> = if app.details_editing_tag.is_some() {
+        row![
+            button(text(app.i18n.text(TextKey::LibrarySaveButton)).size(FONT_BODY))
+                .on_press(Message::DetailsApplyTagEdit)
+                .style(primary_button_style)
+                .padding([SPACE_XS as u16, SPACE_MD as u16]),
+            button(text(app.i18n.text(TextKey::DismissButton)).size(FONT_BODY))
+                .on_press(Message::DetailsCancelTagEdit)
+                .style(subtle_button_style)
+                .padding([SPACE_XS as u16, SPACE_MD as u16]),
+        ]
+        .spacing(SPACE_XS)
+        .into()
+    } else {
+        row![
+            button(text(app.i18n.text(TextKey::DetailsAttachTagButton)).size(FONT_BODY))
+                .on_press(Message::AttachAppTag)
+                .style(action_button_style)
+                .padding([SPACE_XS as u16, SPACE_MD as u16]),
+            button(text(app.i18n.text(TextKey::DetailsAttachGameTagButton)).size(FONT_BODY))
+                .on_press(Message::AttachGameTag)
+                .style(action_button_style)
+                .padding([SPACE_XS as u16, SPACE_MD as u16]),
+        ]
+        .spacing(SPACE_XS)
+        .into()
+    };
+
+    let inherited_tag_chips: Vec<&DetailsTagChip> = app
+        .details_tags
+        .iter()
+        .filter(|tag| tag.inherited)
+        .collect();
+    let manual_tag_chips: Vec<&DetailsTagChip> = app
+        .details_tags
+        .iter()
+        .filter(|tag| !tag.inherited)
+        .collect();
+    let details_tag_list: Element<'_, Message> = if app.details_tags.is_empty() {
+        text(app.i18n.text(TextKey::FilterNoTagsLabel))
+            .size(FONT_CAPTION)
+            .color(TEXT_TERTIARY)
+            .into()
+    } else {
+        let inherited_section: Element<'_, Message> = if inherited_tag_chips.is_empty() {
+            Space::new().height(Length::Shrink).into()
+        } else {
+            let list = inherited_tag_chips
+                .iter()
+                .fold(column![].spacing(SPACE_XS), |col, tag| {
+                    col.push(render_management_chip(
+                        &tag.name,
+                        &tag.name,
+                        Some(app.i18n.text(TextKey::InheritedTagLabel).to_owned()),
+                        None,
+                        None,
+                        Some(Message::DetachTagByName(tag.name.clone())),
+                    ))
+                });
+            column![
+                section_heading(app.i18n.text(TextKey::InheritedTagLabel)),
+                list,
+            ]
+            .spacing(SPACE_XS)
+            .into()
+        };
+        let manual_section =
+            manual_tag_chips
+                .iter()
+                .fold(column![].spacing(SPACE_XS), |col, tag| {
+                    col.push(render_management_chip(
+                        &tag.name,
+                        &tag.name,
+                        Some(tag.kind.as_str().to_owned()),
+                        None,
+                        Some((
+                            app.i18n.text(TextKey::RootEditButton).to_owned(),
+                            Message::DetailsStartEditTag(tag.name.clone()),
+                        )),
+                        Some(Message::DetachTagByName(tag.name.clone())),
+                    ))
+                });
+        column![inherited_section, manual_section]
+            .spacing(SPACE_SM)
+            .into()
+    };
+
     column![
         preview,
         text(app.details_title.clone())
@@ -2824,22 +3114,14 @@ fn render_details_panel(app: &Librapix) -> Element<'_, Message> {
                 &app.details_tag_input
             )
             .on_input(Message::DetailsTagInputChanged)
+            .on_submit(if app.details_editing_tag.is_some() {
+                Message::DetailsApplyTagEdit
+            } else {
+                Message::AttachAppTag
+            })
             .style(field_input_style),
-            row![
-                button(text(app.i18n.text(TextKey::DetailsAttachTagButton)).size(FONT_BODY))
-                    .on_press(Message::AttachAppTag)
-                    .style(action_button_style)
-                    .padding([SPACE_XS as u16, SPACE_MD as u16]),
-                button(text(app.i18n.text(TextKey::DetailsAttachGameTagButton)).size(FONT_BODY))
-                    .on_press(Message::AttachGameTag)
-                    .style(action_button_style)
-                    .padding([SPACE_XS as u16, SPACE_MD as u16]),
-                button(text(app.i18n.text(TextKey::DetailsDetachTagButton)).size(FONT_BODY))
-                    .on_press(Message::DetachTag)
-                    .style(subtle_button_style)
-                    .padding([SPACE_XS as u16, SPACE_MD as u16]),
-            ]
-            .spacing(SPACE_XS),
+            details_tag_input_actions,
+            details_tag_list,
         ]
         .spacing(SPACE_SM),
         h_divider(),
@@ -3058,6 +3340,7 @@ fn open_add_library_dialog(app: &mut Librapix) {
     app.library_dialog_display_name_input.clear();
     app.library_dialog_tag_input.clear();
     app.library_dialog_tags.clear();
+    app.library_dialog_editing_tag = None;
 }
 
 fn open_edit_library_dialog(app: &mut Librapix, root_id: i64) {
@@ -3082,6 +3365,7 @@ fn open_edit_library_dialog(app: &mut Librapix, root_id: i64) {
     })
     .unwrap_or_default();
     app.library_dialog_tag_input.clear();
+    app.library_dialog_editing_tag = None;
 }
 
 fn open_library_statistics_dialog(app: &mut Librapix, root_id: i64) {
@@ -3110,6 +3394,42 @@ fn add_library_dialog_tag(app: &mut Librapix, kind: TagKind) {
         return;
     }
     app.library_dialog_tags.push((tag, kind));
+    app.library_dialog_editing_tag = None;
+    app.library_dialog_tag_input.clear();
+}
+
+fn start_library_dialog_tag_edit(app: &mut Librapix, tag_name: &str) {
+    if let Some((name, _)) = app
+        .library_dialog_tags
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case(tag_name))
+    {
+        app.library_dialog_tag_input = name.clone();
+        app.library_dialog_editing_tag = Some(name.clone());
+    }
+}
+
+fn apply_library_dialog_tag_edit(app: &mut Librapix) {
+    let Some(original) = app.library_dialog_editing_tag.clone() else {
+        return;
+    };
+    let edited = app.library_dialog_tag_input.trim().to_owned();
+    if edited.is_empty() {
+        return;
+    }
+    if app.library_dialog_tags.iter().any(|(name, _)| {
+        !name.eq_ignore_ascii_case(&original) && name.eq_ignore_ascii_case(&edited)
+    }) {
+        return;
+    }
+    if let Some((name, _)) = app
+        .library_dialog_tags
+        .iter_mut()
+        .find(|(name, _)| name.eq_ignore_ascii_case(&original))
+    {
+        *name = edited;
+    }
+    app.library_dialog_editing_tag = None;
     app.library_dialog_tag_input.clear();
 }
 
@@ -3194,6 +3514,7 @@ fn save_library_dialog(app: &mut Librapix, keep_open_for_add: bool) -> Option<Ta
         app.library_dialog_display_name_input.clear();
         app.library_dialog_tag_input.clear();
         app.library_dialog_tags.clear();
+        app.library_dialog_editing_tag = None;
     } else {
         app.library_dialog_open = false;
     }
@@ -3214,43 +3535,92 @@ fn refresh_roots(app: &mut Librapix) {
     .unwrap_or_default();
     app.state.apply(AppMessage::ReplaceLibraryRoots);
     app.state.replace_library_roots(roots);
-    refresh_ignore_rules_preview(app);
+    refresh_ignore_rules(app);
 }
 
-fn refresh_ignore_rules_preview(app: &mut Librapix) {
-    let rows = with_storage(&app.runtime, |storage| storage.list_ignore_rules("global"))
-        .map(|rows| {
-            rows.into_iter()
-                .map(|row| {
-                    let status = if row.is_enabled {
-                        app.i18n.text(TextKey::IgnoreRuleEnabled)
-                    } else {
-                        app.i18n.text(TextKey::IgnoreRuleDisabled)
-                    };
-                    format!("{} ({status})", row.pattern)
-                })
-                .collect::<Vec<_>>()
-        })
+fn refresh_ignore_rules(app: &mut Librapix) {
+    app.ignore_rules = with_storage(&app.runtime, |storage| storage.list_ignore_rules("global"))
         .unwrap_or_default();
-    app.ignore_rules_preview = rows;
 }
 
-fn set_ignore_rule_enabled(app: &mut Librapix, is_enabled: bool) {
+fn add_ignore_rule(app: &mut Librapix) {
     let pattern = app.ignore_rule_input.trim();
     if pattern.is_empty() {
         return;
     }
     let _ = with_storage(&app.runtime, |storage| {
-        storage.upsert_ignore_rule("global", pattern, is_enabled)
+        storage.upsert_ignore_rule("global", pattern, true)
     });
-    refresh_ignore_rules_preview(app);
+    app.ignore_rule_input.clear();
+    app.ignore_rule_editing_id = None;
+    refresh_ignore_rules(app);
+}
+
+fn toggle_ignore_rule(app: &mut Librapix, rule_id: i64) {
+    let Some(rule) = app.ignore_rules.iter().find(|rule| rule.id == rule_id) else {
+        return;
+    };
+    let _ = with_storage(&app.runtime, |storage| {
+        storage.upsert_ignore_rule(&rule.scope, &rule.pattern, !rule.is_enabled)
+    });
+    refresh_ignore_rules(app);
+}
+
+fn remove_ignore_rule(app: &mut Librapix, rule_id: i64) {
+    let _ = with_storage(&app.runtime, |storage| {
+        storage.delete_ignore_rule_by_id(rule_id)
+    });
+    if app.ignore_rule_editing_id == Some(rule_id) {
+        app.ignore_rule_editing_id = None;
+        app.ignore_rule_input.clear();
+    }
+    refresh_ignore_rules(app);
+}
+
+fn start_ignore_rule_edit(app: &mut Librapix, rule_id: i64) {
+    if let Some(rule) = app.ignore_rules.iter().find(|rule| rule.id == rule_id) {
+        app.ignore_rule_input = rule.pattern.clone();
+        app.ignore_rule_editing_id = Some(rule.id);
+    }
+}
+
+fn apply_ignore_rule_edit(app: &mut Librapix) {
+    let Some(rule_id) = app.ignore_rule_editing_id else {
+        return;
+    };
+    let pattern = app.ignore_rule_input.trim().to_owned();
+    if pattern.is_empty() {
+        return;
+    }
+    let Some(rule) = app.ignore_rules.iter().find(|rule| rule.id == rule_id) else {
+        return;
+    };
+    if rule.pattern.eq_ignore_ascii_case(&pattern) {
+        app.ignore_rule_editing_id = None;
+        app.ignore_rule_input.clear();
+        return;
+    }
+
+    let scope = rule.scope.clone();
+    let is_enabled = rule.is_enabled;
+    let _ = with_storage(&app.runtime, |storage| {
+        storage.upsert_ignore_rule(&scope, &pattern, is_enabled)?;
+        storage.delete_ignore_rule_by_id(rule_id)?;
+        Ok(())
+    });
+    app.ignore_rule_editing_id = None;
+    app.ignore_rule_input.clear();
+    refresh_ignore_rules(app);
 }
 
 fn load_media_details(app: &mut Librapix) {
+    app.details_editing_tag = None;
+    app.details_tag_input.clear();
     let Some(media_id) = app.state.selected_media_id else {
         app.details_action_status = app.i18n.text(TextKey::DetailsNoSelectionLabel).to_owned();
         app.details_preview_path = None;
         app.details_title.clear();
+        app.details_tags.clear();
         return;
     };
     let details = with_storage(&app.runtime, |storage| {
@@ -3293,11 +3663,13 @@ fn load_media_details(app: &mut Librapix) {
                 details.absolute_path.display()
             ),
         ];
+        refresh_details_tags(app, media_id);
         app.details_action_status = app.i18n.text(TextKey::DetailsActionSuccess).to_owned();
     } else {
         app.details_lines.clear();
         app.details_preview_path = None;
         app.details_title.clear();
+        app.details_tags.clear();
         app.details_action_status = app.i18n.text(TextKey::DetailsActionFailed).to_owned();
     }
 }
@@ -3317,6 +3689,8 @@ fn attach_tag_to_selected_media(app: &mut Librapix, kind: TagKind) {
     }) {
         Ok(_) => {
             app.details_action_status = app.i18n.text(TextKey::DetailsActionSuccess).to_owned();
+            app.details_tag_input.clear();
+            app.details_editing_tag = None;
             load_media_details(app);
         }
         Err(_) => {
@@ -3325,12 +3699,12 @@ fn attach_tag_to_selected_media(app: &mut Librapix, kind: TagKind) {
     }
 }
 
-fn detach_tag_from_selected_media(app: &mut Librapix) {
+fn detach_tag_from_selected_media(app: &mut Librapix, tag_name: &str) {
     let Some(media_id) = app.state.selected_media_id else {
         app.details_action_status = app.i18n.text(TextKey::DetailsNoSelectionLabel).to_owned();
         return;
     };
-    let tag = app.details_tag_input.trim();
+    let tag = tag_name.trim();
     if tag.is_empty() {
         app.details_action_status = app.i18n.text(TextKey::DetailsActionFailed).to_owned();
         return;
@@ -3340,12 +3714,98 @@ fn detach_tag_from_selected_media(app: &mut Librapix) {
     }) {
         Ok(_) => {
             app.details_action_status = app.i18n.text(TextKey::DetailsActionSuccess).to_owned();
+            if app
+                .details_editing_tag
+                .as_ref()
+                .is_some_and(|editing| editing.eq_ignore_ascii_case(tag))
+            {
+                app.details_editing_tag = None;
+                app.details_tag_input.clear();
+            }
             load_media_details(app);
         }
         Err(_) => {
             app.details_action_status = app.i18n.text(TextKey::DetailsActionFailed).to_owned();
         }
     }
+}
+
+fn apply_details_tag_edit(app: &mut Librapix) {
+    let Some(media_id) = app.state.selected_media_id else {
+        app.details_action_status = app.i18n.text(TextKey::DetailsNoSelectionLabel).to_owned();
+        return;
+    };
+    let Some(original_name) = app.details_editing_tag.clone() else {
+        return;
+    };
+    let edited_name = app.details_tag_input.trim().to_owned();
+    if edited_name.is_empty() {
+        app.details_action_status = app.i18n.text(TextKey::DetailsActionFailed).to_owned();
+        return;
+    }
+    let Some(existing) = app
+        .details_tags
+        .iter()
+        .find(|tag| tag.name.eq_ignore_ascii_case(&original_name))
+    else {
+        return;
+    };
+    if existing.name.eq_ignore_ascii_case(&edited_name) {
+        app.details_editing_tag = None;
+        app.details_tag_input.clear();
+        return;
+    }
+    let kind = existing.kind;
+    let result = with_storage(&app.runtime, |storage| {
+        storage.detach_tag_name_from_media(media_id, &original_name)?;
+        storage.attach_tag_name_to_media(media_id, &edited_name, kind)?;
+        Ok(())
+    });
+    match result {
+        Ok(_) => {
+            app.details_action_status = app.i18n.text(TextKey::DetailsActionSuccess).to_owned();
+            app.details_editing_tag = None;
+            app.details_tag_input.clear();
+            load_media_details(app);
+        }
+        Err(_) => {
+            app.details_action_status = app.i18n.text(TextKey::DetailsActionFailed).to_owned();
+        }
+    }
+}
+
+fn refresh_details_tags(app: &mut Librapix, media_id: i64) {
+    let media_row = with_storage(&app.runtime, |storage| {
+        storage.get_media_read_model_by_id(media_id)
+    })
+    .ok()
+    .flatten();
+    let Some(media_row) = media_row else {
+        app.details_tags.clear();
+        return;
+    };
+    let root_tags = with_storage(&app.runtime, |storage| {
+        storage.list_source_root_tags(media_row.source_root_id)
+    })
+    .unwrap_or_default();
+    let media_tags =
+        with_storage(&app.runtime, |storage| storage.list_media_tags(media_id)).unwrap_or_default();
+
+    let inherited_names = root_tags
+        .into_iter()
+        .map(|tag| tag.tag_name.to_ascii_lowercase())
+        .collect::<std::collections::HashSet<_>>();
+
+    let mut tags = media_tags
+        .into_iter()
+        .map(|tag| DetailsTagChip {
+            inherited: inherited_names.contains(&tag.name.to_ascii_lowercase()),
+            name: tag.name,
+            kind: tag.kind,
+        })
+        .collect::<Vec<_>>();
+    tags.sort_by(|left, right| left.name.to_lowercase().cmp(&right.name.to_lowercase()));
+    app.details_tags = tags;
 }
 
 fn open_selected_path(app: &mut Librapix, containing_folder: bool) {
@@ -3957,7 +4417,6 @@ fn populate_media_cache(
                 modified_unix_seconds: row.modified_unix_seconds,
                 width_px: row.width_px,
                 height_px: row.height_px,
-                tags: row.tags.clone(),
                 detail_thumbnail_path,
             },
         );
@@ -3965,10 +4424,13 @@ fn populate_media_cache(
 }
 
 fn load_media_details_cached(app: &mut Librapix) {
+    app.details_editing_tag = None;
+    app.details_tag_input.clear();
     let Some(media_id) = app.state.selected_media_id else {
         app.details_action_status = app.i18n.text(TextKey::DetailsNoSelectionLabel).to_owned();
         app.details_preview_path = None;
         app.details_title.clear();
+        app.details_tags.clear();
         return;
     };
 
@@ -4006,13 +4468,7 @@ fn load_media_details_cached(app: &mut Librapix) {
                 cached.absolute_path.display()
             ),
         ];
-        if !cached.tags.is_empty() {
-            app.details_lines.push(format!(
-                "{}: {}",
-                app.i18n.text(TextKey::DetailsTagsSectionLabel),
-                cached.tags.join(", ")
-            ));
-        }
+        refresh_details_tags(app, media_id);
         app.details_action_status = app.i18n.text(TextKey::DetailsActionSuccess).to_owned();
     } else {
         load_media_details(app);
@@ -4097,21 +4553,7 @@ fn do_background_work(input: BackgroundWorkInput) -> BackgroundWorkResult {
     let _ = storage.reconcile_source_root_availability();
     let _ = storage.ensure_default_ignore_rules();
 
-    out.ignore_rules_preview = storage
-        .list_ignore_rules("global")
-        .map(|rows| {
-            rows.into_iter()
-                .map(|row| {
-                    let status = if row.is_enabled {
-                        i18n.text(TextKey::IgnoreRuleEnabled)
-                    } else {
-                        i18n.text(TextKey::IgnoreRuleDisabled)
-                    };
-                    format!("{} ({status})", row.pattern)
-                })
-                .collect()
-        })
-        .unwrap_or_default();
+    out.ignore_rules = storage.list_ignore_rules("global").unwrap_or_default();
 
     let _ = selected_root_id;
 
@@ -4599,7 +5041,7 @@ fn apply_background_result(app: &mut Librapix, result: BackgroundWorkResult) {
         app.filter_tag = None;
     }
     app.browse_status = result.browse_status;
-    app.ignore_rules_preview = result.ignore_rules_preview;
+    app.ignore_rules = result.ignore_rules;
     if matches!(result.mode, BackgroundWorkMode::IndexAndProject)
         && app.state.search_query.trim().is_empty()
     {
@@ -4802,7 +5244,6 @@ mod tests {
                 modified_unix_seconds: Some(100),
                 width_px: Some(10),
                 height_px: Some(10),
-                tags: Vec::new(),
                 detail_thumbnail_path: None,
             },
         );
@@ -4815,7 +5256,6 @@ mod tests {
                 modified_unix_seconds: Some(300),
                 width_px: Some(1920),
                 height_px: Some(1080),
-                tags: Vec::new(),
                 detail_thumbnail_path: None,
             },
         );
@@ -4828,7 +5268,6 @@ mod tests {
                 modified_unix_seconds: Some(200),
                 width_px: Some(800),
                 height_px: Some(600),
-                tags: Vec::new(),
                 detail_thumbnail_path: None,
             },
         );

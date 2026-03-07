@@ -134,6 +134,360 @@ pub const RADIUS_MD: f32 = 6.0;
 pub const RADIUS_LG: f32 = 8.0;
 pub const RADIUS_PILL: f32 = 16.0;
 
+#[derive(Debug, Clone, Copy)]
+pub struct ChipTone {
+    pub background: Color,
+    pub background_hover: Color,
+    pub border: Color,
+    pub text: Color,
+    pub accent_text: Color,
+}
+
+const CHIP_PALETTE: [ChipTone; 12] = [
+    ChipTone {
+        background: Color {
+            r: 0.204,
+            g: 0.165,
+            b: 0.235,
+            a: 1.0,
+        },
+        background_hover: Color {
+            r: 0.243,
+            g: 0.200,
+            b: 0.278,
+            a: 1.0,
+        },
+        border: Color {
+            r: 0.463,
+            g: 0.373,
+            b: 0.565,
+            a: 1.0,
+        },
+        text: TEXT_PRIMARY,
+        accent_text: Color {
+            r: 0.839,
+            g: 0.722,
+            b: 0.941,
+            a: 1.0,
+        },
+    },
+    ChipTone {
+        background: Color {
+            r: 0.169,
+            g: 0.216,
+            b: 0.267,
+            a: 1.0,
+        },
+        background_hover: Color {
+            r: 0.204,
+            g: 0.255,
+            b: 0.314,
+            a: 1.0,
+        },
+        border: Color {
+            r: 0.345,
+            g: 0.486,
+            b: 0.612,
+            a: 1.0,
+        },
+        text: TEXT_PRIMARY,
+        accent_text: Color {
+            r: 0.702,
+            g: 0.843,
+            b: 0.980,
+            a: 1.0,
+        },
+    },
+    ChipTone {
+        background: Color {
+            r: 0.149,
+            g: 0.224,
+            b: 0.188,
+            a: 1.0,
+        },
+        background_hover: Color {
+            r: 0.184,
+            g: 0.267,
+            b: 0.224,
+            a: 1.0,
+        },
+        border: Color {
+            r: 0.341,
+            g: 0.549,
+            b: 0.451,
+            a: 1.0,
+        },
+        text: TEXT_PRIMARY,
+        accent_text: Color {
+            r: 0.718,
+            g: 0.941,
+            b: 0.812,
+            a: 1.0,
+        },
+    },
+    ChipTone {
+        background: Color {
+            r: 0.239,
+            g: 0.204,
+            b: 0.145,
+            a: 1.0,
+        },
+        background_hover: Color {
+            r: 0.286,
+            g: 0.243,
+            b: 0.180,
+            a: 1.0,
+        },
+        border: Color {
+            r: 0.620,
+            g: 0.494,
+            b: 0.302,
+            a: 1.0,
+        },
+        text: TEXT_PRIMARY,
+        accent_text: Color {
+            r: 0.980,
+            g: 0.839,
+            b: 0.663,
+            a: 1.0,
+        },
+    },
+    ChipTone {
+        background: Color {
+            r: 0.239,
+            g: 0.173,
+            b: 0.149,
+            a: 1.0,
+        },
+        background_hover: Color {
+            r: 0.282,
+            g: 0.204,
+            b: 0.176,
+            a: 1.0,
+        },
+        border: Color {
+            r: 0.643,
+            g: 0.427,
+            b: 0.373,
+            a: 1.0,
+        },
+        text: TEXT_PRIMARY,
+        accent_text: Color {
+            r: 0.980,
+            g: 0.776,
+            b: 0.722,
+            a: 1.0,
+        },
+    },
+    ChipTone {
+        background: Color {
+            r: 0.247,
+            g: 0.161,
+            b: 0.184,
+            a: 1.0,
+        },
+        background_hover: Color {
+            r: 0.294,
+            g: 0.196,
+            b: 0.220,
+            a: 1.0,
+        },
+        border: Color {
+            r: 0.620,
+            g: 0.349,
+            b: 0.467,
+            a: 1.0,
+        },
+        text: TEXT_PRIMARY,
+        accent_text: Color {
+            r: 0.961,
+            g: 0.698,
+            b: 0.812,
+            a: 1.0,
+        },
+    },
+    ChipTone {
+        background: Color {
+            r: 0.173,
+            g: 0.188,
+            b: 0.255,
+            a: 1.0,
+        },
+        background_hover: Color {
+            r: 0.208,
+            g: 0.227,
+            b: 0.306,
+            a: 1.0,
+        },
+        border: Color {
+            r: 0.408,
+            g: 0.447,
+            b: 0.678,
+            a: 1.0,
+        },
+        text: TEXT_PRIMARY,
+        accent_text: Color {
+            r: 0.733,
+            g: 0.761,
+            b: 0.961,
+            a: 1.0,
+        },
+    },
+    ChipTone {
+        background: Color {
+            r: 0.149,
+            g: 0.243,
+            b: 0.251,
+            a: 1.0,
+        },
+        background_hover: Color {
+            r: 0.184,
+            g: 0.290,
+            b: 0.298,
+            a: 1.0,
+        },
+        border: Color {
+            r: 0.325,
+            g: 0.588,
+            b: 0.608,
+            a: 1.0,
+        },
+        text: TEXT_PRIMARY,
+        accent_text: Color {
+            r: 0.698,
+            g: 0.929,
+            b: 0.961,
+            a: 1.0,
+        },
+    },
+    ChipTone {
+        background: Color {
+            r: 0.208,
+            g: 0.231,
+            b: 0.157,
+            a: 1.0,
+        },
+        background_hover: Color {
+            r: 0.247,
+            g: 0.275,
+            b: 0.188,
+            a: 1.0,
+        },
+        border: Color {
+            r: 0.502,
+            g: 0.604,
+            b: 0.357,
+            a: 1.0,
+        },
+        text: TEXT_PRIMARY,
+        accent_text: Color {
+            r: 0.851,
+            g: 0.937,
+            b: 0.714,
+            a: 1.0,
+        },
+    },
+    ChipTone {
+        background: Color {
+            r: 0.251,
+            g: 0.224,
+            b: 0.161,
+            a: 1.0,
+        },
+        background_hover: Color {
+            r: 0.302,
+            g: 0.271,
+            b: 0.196,
+            a: 1.0,
+        },
+        border: Color {
+            r: 0.659,
+            g: 0.565,
+            b: 0.357,
+            a: 1.0,
+        },
+        text: TEXT_PRIMARY,
+        accent_text: Color {
+            r: 0.949,
+            g: 0.902,
+            b: 0.725,
+            a: 1.0,
+        },
+    },
+    ChipTone {
+        background: Color {
+            r: 0.161,
+            g: 0.161,
+            b: 0.231,
+            a: 1.0,
+        },
+        background_hover: Color {
+            r: 0.196,
+            g: 0.196,
+            b: 0.278,
+            a: 1.0,
+        },
+        border: Color {
+            r: 0.380,
+            g: 0.380,
+            b: 0.620,
+            a: 1.0,
+        },
+        text: TEXT_PRIMARY,
+        accent_text: Color {
+            r: 0.776,
+            g: 0.776,
+            b: 0.980,
+            a: 1.0,
+        },
+    },
+    ChipTone {
+        background: Color {
+            r: 0.231,
+            g: 0.161,
+            b: 0.208,
+            a: 1.0,
+        },
+        background_hover: Color {
+            r: 0.282,
+            g: 0.196,
+            b: 0.255,
+            a: 1.0,
+        },
+        border: Color {
+            r: 0.596,
+            g: 0.380,
+            b: 0.502,
+            a: 1.0,
+        },
+        text: TEXT_PRIMARY,
+        accent_text: Color {
+            r: 0.929,
+            g: 0.757,
+            b: 0.871,
+            a: 1.0,
+        },
+    },
+];
+
+fn stable_color_index(value: &str, size: usize) -> usize {
+    if size == 0 {
+        return 0;
+    }
+    // FNV-1a hash: deterministic across sessions/processes.
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for byte in value.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    (hash as usize) % size
+}
+
+pub fn chip_tone_for_key(key: &str) -> ChipTone {
+    let index = stable_color_index(key.trim().to_ascii_lowercase().as_str(), CHIP_PALETTE.len());
+    CHIP_PALETTE[index]
+}
+
 // ── Container Styles ──
 
 pub fn app_bg_style(_theme: &Theme) -> container::Style {
@@ -328,6 +682,51 @@ pub fn filter_chip_style(active: bool) -> impl Fn(&Theme, button::Status) -> but
             background: Some(Background::Color(bg)),
             text_color,
             border: iced::border::rounded(RADIUS_PILL),
+            ..button::Style::default()
+        }
+    }
+}
+
+pub fn managed_chip_style(tone: ChipTone) -> impl Fn(&Theme) -> container::Style {
+    move |_theme| container::Style {
+        background: Some(Background::Color(tone.background)),
+        border: Border {
+            color: tone.border,
+            width: 1.0,
+            radius: RADIUS_PILL.into(),
+        },
+        ..container::Style::default()
+    }
+}
+
+pub fn managed_chip_action_style(
+    tone: ChipTone,
+    destructive: bool,
+) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |_theme, status| {
+        let text_color = if destructive {
+            WARNING_COLOR
+        } else {
+            tone.accent_text
+        };
+        let (bg, border_color) = match status {
+            button::Status::Active => (Color::TRANSPARENT, Color::TRANSPARENT),
+            button::Status::Hovered => (tone.background_hover, tone.border),
+            button::Status::Pressed => (tone.background_hover, tone.border),
+            button::Status::Disabled => (Color::TRANSPARENT, Color::TRANSPARENT),
+        };
+        button::Style {
+            background: Some(Background::Color(bg)),
+            text_color,
+            border: Border {
+                color: border_color,
+                width: if matches!(status, button::Status::Active) {
+                    0.0
+                } else {
+                    1.0
+                },
+                radius: RADIUS_PILL.into(),
+            },
             ..button::Style::default()
         }
     }

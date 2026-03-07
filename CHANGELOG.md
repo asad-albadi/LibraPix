@@ -42,6 +42,7 @@ All notable changes to this project are documented in this file.
 - UI branding and icon assets are now embedded directly into the app binary using `include_bytes!`, removing runtime dependency on external asset folders.
 - Windows EXE and Linux AppImage release artifacts now render in-app icons/logo without companion asset packages.
 - Fixed startup responsiveness regression after embedded-asset migration by caching image/SVG handles in static lazy storage instead of rebuilding handles in render paths.
+- New-file detected dialog now uses the same content-sized modal behavior as other dialogs, removing extra bottom gap below actions.
 
 ### Added
 - Branding integration: blue logo in app header, GitHub link button, asset-based icons throughout UI.

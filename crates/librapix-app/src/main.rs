@@ -2659,11 +2659,10 @@ fn render_new_media_dialog(app: &Librapix) -> Element<'_, Message> {
     ]
     .spacing(SPACE_2XS);
 
-    let actions = responsive(move |size: Size| {
-        let primary_padding = [SPACE_XS as u16, SPACE_MD as u16];
-        let subtle_padding = [SPACE_XS as u16, SPACE_MD as u16];
-
-        let view = button(
+    let primary_padding = [SPACE_XS as u16, SPACE_MD as u16];
+    let subtle_padding = [SPACE_XS as u16, SPACE_MD as u16];
+    let actions = row![
+        button(
             row![
                 image(assets::icon_gallery())
                     .width(Length::Fixed(16.0))
@@ -2678,8 +2677,8 @@ fn render_new_media_dialog(app: &Librapix) -> Element<'_, Message> {
         .on_press(Message::SelectMedia(announcement.media_id))
         .width(Length::Fill)
         .style(subtle_button_style)
-        .padding(subtle_padding);
-        let open = button(
+        .padding(subtle_padding),
+        button(
             row![
                 image(assets::icon_open())
                     .width(Length::Fixed(16.0))
@@ -2694,8 +2693,8 @@ fn render_new_media_dialog(app: &Librapix) -> Element<'_, Message> {
         .on_press(Message::OpenMediaById(announcement.media_id))
         .width(Length::Fill)
         .style(action_button_style)
-        .padding(primary_padding);
-        let copy_file = button(
+        .padding(primary_padding),
+        button(
             row![
                 image(assets::icon_copy_file())
                     .width(Length::Fixed(16.0))
@@ -2710,26 +2709,14 @@ fn render_new_media_dialog(app: &Librapix) -> Element<'_, Message> {
         .on_press(Message::CopyMediaFileById(announcement.media_id))
         .width(Length::Fill)
         .style(action_button_style)
-        .padding(primary_padding);
-        let dismiss = button(text(app.i18n.text(TextKey::DismissButton)).size(FONT_BODY))
+        .padding(primary_padding),
+        button(text(app.i18n.text(TextKey::DismissButton)).size(FONT_BODY))
             .on_press(Message::DismissNewMediaAnnouncement)
             .width(Length::Fill)
             .style(subtle_button_style)
-            .padding(subtle_padding);
-
-        if size.width < 460.0 {
-            column![
-                row![view, open].spacing(SPACE_XS),
-                row![copy_file, dismiss].spacing(SPACE_XS),
-            ]
-            .spacing(SPACE_XS)
-            .into()
-        } else {
-            row![view, open, copy_file, dismiss]
-                .spacing(SPACE_XS)
-                .into()
-        }
-    });
+            .padding(subtle_padding),
+    ]
+    .spacing(SPACE_XS);
 
     let dialog_content = column![
         text(app.i18n.text(TextKey::NewFileAnnouncementTitle))
@@ -2749,18 +2736,11 @@ fn render_new_media_dialog(app: &Librapix) -> Element<'_, Message> {
     ]
     .spacing(SPACE_SM);
 
-    let dialog = container(
-        scrollable(dialog_content)
-            .direction(scrollable::Direction::Vertical(
-                scrollable::Scrollbar::default(),
-            ))
-            .height(Length::Fill),
-    )
-    .width(Length::Fill)
-    .max_width(640.0)
-    .max_height(640.0)
-    .padding(SPACE_LG as u16)
-    .style(modal_dialog_style);
+    let dialog = container(dialog_content)
+        .width(Length::Fill)
+        .max_width(640.0)
+        .padding(SPACE_LG as u16)
+        .style(modal_dialog_style);
 
     container(
         container(dialog)

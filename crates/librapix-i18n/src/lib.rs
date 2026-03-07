@@ -21,6 +21,7 @@ pub enum TextKey {
     RootRemoveButton,
     RootRefreshButton,
     RootEditButton,
+    RootStatsButton,
     RootSelectButton,
     RootStatusLabel,
     RootActionSuccess,
@@ -156,6 +157,20 @@ pub enum TextKey {
     AboutCreatorLabel,
     AboutWeekendProjectNote,
     AboutVibeCodeNote,
+    LibraryStatsDialogTitle,
+    LibraryStatsSummarySectionLabel,
+    LibraryStatsIndexingSectionLabel,
+    LibraryStatsNotAvailableLabel,
+    LibraryStatsTotalSizeLabel,
+    LibraryStatsTotalMediaLabel,
+    LibraryStatsTotalImagesLabel,
+    LibraryStatsTotalVideosLabel,
+    LibraryStatsImageSizeLabel,
+    LibraryStatsVideoSizeLabel,
+    LibraryStatsMissingLabel,
+    LibraryStatsLastIndexedLabel,
+    LibraryStatsOldestFileLabel,
+    LibraryStatsNewestFileLabel,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -201,6 +216,7 @@ fn en_us(key: TextKey) -> &'static str {
         TextKey::RootRemoveButton => "Remove",
         TextKey::RootRefreshButton => "Refresh",
         TextKey::RootEditButton => "Edit",
+        TextKey::RootStatsButton => "Stats",
         TextKey::RootSelectButton => "Select",
         TextKey::RootStatusLabel => "Root status",
         TextKey::RootActionSuccess => "Done",
@@ -338,5 +354,21 @@ fn en_us(key: TextKey) -> &'static str {
         TextKey::AboutCreatorLabel => "Creator: Asad Al Badi",
         TextKey::AboutWeekendProjectNote => "This is a weekend project.",
         TextKey::AboutVibeCodeNote => "Built with Codex and Cursor in a vibe-coded workflow.",
+        TextKey::LibraryStatsDialogTitle => "Library Statistics",
+        TextKey::LibraryStatsSummarySectionLabel => "SUMMARY",
+        TextKey::LibraryStatsIndexingSectionLabel => "INDEXING",
+        TextKey::LibraryStatsNotAvailableLabel => {
+            "No maintained statistics yet. Run indexing for this library."
+        }
+        TextKey::LibraryStatsTotalSizeLabel => "Total size",
+        TextKey::LibraryStatsTotalMediaLabel => "Total media",
+        TextKey::LibraryStatsTotalImagesLabel => "Total images",
+        TextKey::LibraryStatsTotalVideosLabel => "Total videos",
+        TextKey::LibraryStatsImageSizeLabel => "Total image size",
+        TextKey::LibraryStatsVideoSizeLabel => "Total video size",
+        TextKey::LibraryStatsMissingLabel => "Missing count",
+        TextKey::LibraryStatsLastIndexedLabel => "Last indexed",
+        TextKey::LibraryStatsOldestFileLabel => "Oldest file",
+        TextKey::LibraryStatsNewestFileLabel => "Newest file",
     }
 }

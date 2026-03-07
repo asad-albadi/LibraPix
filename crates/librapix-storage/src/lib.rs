@@ -5,6 +5,7 @@ use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SourceRootLifecycle {
@@ -160,6 +161,21 @@ pub struct SourceRootTagRecord {
     pub source_root_id: i64,
     pub tag_name: String,
     pub tag_kind: TagKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceRootStatisticsRecord {
+    pub source_root_id: i64,
+    pub total_size_bytes: u64,
+    pub total_media_count: u64,
+    pub total_images_count: u64,
+    pub total_videos_count: u64,
+    pub total_image_size_bytes: u64,
+    pub total_video_size_bytes: u64,
+    pub missing_count: u64,
+    pub oldest_modified_unix_seconds: Option<i64>,
+    pub newest_modified_unix_seconds: Option<i64>,
+    pub last_indexed_unix_seconds: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -712,6 +728,147 @@ impl Storage {
             .map_err(StorageError::Sql)
     }
 
+    pub fn refresh_source_root_statistics(&self, root_ids: &[i64]) -> Result<(), StorageError> {
+        if root_ids.is_empty() {
+            return Ok(());
+        }
+
+        let now_unix_seconds = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| i64::try_from(duration.as_secs()).unwrap_or(i64::MAX))
+            .unwrap_or(0);
+
+        for root_id in root_ids {
+            let (
+                total_size_bytes,
+                total_media_count,
+                total_images_count,
+                total_videos_count,
+                total_image_size_bytes,
+                total_video_size_bytes,
+                missing_count,
+                oldest_modified_unix_seconds,
+                newest_modified_unix_seconds,
+            ) = self.connection.query_row(
+                "SELECT
+                    COALESCE(SUM(CASE WHEN metadata_status != 'missing' THEN file_size_bytes ELSE 0 END), 0),
+                    COALESCE(SUM(CASE WHEN metadata_status != 'missing' THEN 1 ELSE 0 END), 0),
+                    COALESCE(SUM(CASE WHEN metadata_status != 'missing' AND media_kind = 'image' THEN 1 ELSE 0 END), 0),
+                    COALESCE(SUM(CASE WHEN metadata_status != 'missing' AND media_kind = 'video' THEN 1 ELSE 0 END), 0),
+                    COALESCE(SUM(CASE WHEN metadata_status != 'missing' AND media_kind = 'image' THEN file_size_bytes ELSE 0 END), 0),
+                    COALESCE(SUM(CASE WHEN metadata_status != 'missing' AND media_kind = 'video' THEN file_size_bytes ELSE 0 END), 0),
+                    COALESCE(SUM(CASE WHEN metadata_status = 'missing' THEN 1 ELSE 0 END), 0),
+                    MIN(CASE WHEN metadata_status != 'missing' THEN modified_unix_seconds END),
+                    MAX(CASE WHEN metadata_status != 'missing' THEN modified_unix_seconds END)
+                 FROM indexed_media
+                 WHERE source_root_id = ?1",
+                params![root_id],
+                |row| {
+                    Ok((
+                        row.get::<usize, i64>(0)?,
+                        row.get::<usize, i64>(1)?,
+                        row.get::<usize, i64>(2)?,
+                        row.get::<usize, i64>(3)?,
+                        row.get::<usize, i64>(4)?,
+                        row.get::<usize, i64>(5)?,
+                        row.get::<usize, i64>(6)?,
+                        row.get::<usize, Option<i64>>(7)?,
+                        row.get::<usize, Option<i64>>(8)?,
+                    ))
+                },
+            )?;
+
+            self.connection.execute(
+                "INSERT INTO source_root_statistics (
+                    source_root_id,
+                    total_size_bytes,
+                    total_media_count,
+                    total_images_count,
+                    total_videos_count,
+                    total_image_size_bytes,
+                    total_video_size_bytes,
+                    missing_count,
+                    oldest_modified_unix_seconds,
+                    newest_modified_unix_seconds,
+                    last_indexed_unix_seconds,
+                    updated_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, CURRENT_TIMESTAMP)
+                 ON CONFLICT(source_root_id) DO UPDATE SET
+                    total_size_bytes = excluded.total_size_bytes,
+                    total_media_count = excluded.total_media_count,
+                    total_images_count = excluded.total_images_count,
+                    total_videos_count = excluded.total_videos_count,
+                    total_image_size_bytes = excluded.total_image_size_bytes,
+                    total_video_size_bytes = excluded.total_video_size_bytes,
+                    missing_count = excluded.missing_count,
+                    oldest_modified_unix_seconds = excluded.oldest_modified_unix_seconds,
+                    newest_modified_unix_seconds = excluded.newest_modified_unix_seconds,
+                    last_indexed_unix_seconds = excluded.last_indexed_unix_seconds,
+                    updated_at = CURRENT_TIMESTAMP",
+                params![
+                    root_id,
+                    total_size_bytes.max(0),
+                    total_media_count.max(0),
+                    total_images_count.max(0),
+                    total_videos_count.max(0),
+                    total_image_size_bytes.max(0),
+                    total_video_size_bytes.max(0),
+                    missing_count.max(0),
+                    oldest_modified_unix_seconds,
+                    newest_modified_unix_seconds,
+                    now_unix_seconds,
+                ],
+            )?;
+        }
+
+        Ok(())
+    }
+
+    pub fn get_source_root_statistics(
+        &self,
+        root_id: i64,
+    ) -> Result<Option<SourceRootStatisticsRecord>, StorageError> {
+        self.connection
+            .query_row(
+                "SELECT
+                    source_root_id,
+                    total_size_bytes,
+                    total_media_count,
+                    total_images_count,
+                    total_videos_count,
+                    total_image_size_bytes,
+                    total_video_size_bytes,
+                    missing_count,
+                    oldest_modified_unix_seconds,
+                    newest_modified_unix_seconds,
+                    last_indexed_unix_seconds
+                 FROM source_root_statistics
+                 WHERE source_root_id = ?1",
+                params![root_id],
+                |row| {
+                    Ok(SourceRootStatisticsRecord {
+                        source_root_id: row.get(0)?,
+                        total_size_bytes: row.get::<usize, i64>(1).map_or(0, |v| v.max(0) as u64),
+                        total_media_count: row.get::<usize, i64>(2).map_or(0, |v| v.max(0) as u64),
+                        total_images_count: row.get::<usize, i64>(3).map_or(0, |v| v.max(0) as u64),
+                        total_videos_count: row.get::<usize, i64>(4).map_or(0, |v| v.max(0) as u64),
+                        total_image_size_bytes: row
+                            .get::<usize, i64>(5)
+                            .map_or(0, |v| v.max(0) as u64),
+                        total_video_size_bytes: row
+                            .get::<usize, i64>(6)
+                            .map_or(0, |v| v.max(0) as u64),
+                        missing_count: row.get::<usize, i64>(7).map_or(0, |v| v.max(0) as u64),
+                        oldest_modified_unix_seconds: row.get(8)?,
+                        newest_modified_unix_seconds: row.get(9)?,
+                        last_indexed_unix_seconds: row.get(10)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(StorageError::Sql)
+    }
+
     pub fn list_media_read_models(
         &self,
         limit: usize,
@@ -982,7 +1139,7 @@ mod tests {
         let version = storage
             .migration_version()
             .expect("migration version should be queryable");
-        assert_eq!(version, 7);
+        assert_eq!(version, 8);
 
         let _ = std::fs::remove_file(db);
     }
@@ -1070,6 +1227,83 @@ mod tests {
         let media = storage.list_indexed_media().expect("media should list");
         assert_eq!(media.len(), 1);
         assert_eq!(media[0].metadata_status, IndexedMetadataStatus::Missing);
+
+        let _ = std::fs::remove_file(db);
+    }
+
+    #[test]
+    fn refresh_source_root_statistics_persists_expected_totals() {
+        let db = temp_db_file("root-stats");
+        let mut storage = Storage::open(&db).expect("database should open");
+        storage
+            .upsert_source_root(Path::new("/tmp/librapix-root-stats"))
+            .expect("root insert should work");
+        let root_id = storage
+            .list_source_roots()
+            .expect("roots should list")
+            .first()
+            .expect("one root expected")
+            .id;
+
+        storage
+            .apply_incremental_index(
+                &[
+                    IndexedMediaWrite {
+                        source_root_id: root_id,
+                        absolute_path: PathBuf::from("/tmp/librapix-root-stats/a.png"),
+                        media_kind: "image".to_owned(),
+                        file_size_bytes: 100,
+                        modified_unix_seconds: Some(1000),
+                        width_px: Some(10),
+                        height_px: Some(10),
+                        metadata_status: IndexedMetadataStatus::Ok,
+                    },
+                    IndexedMediaWrite {
+                        source_root_id: root_id,
+                        absolute_path: PathBuf::from("/tmp/librapix-root-stats/b.mp4"),
+                        media_kind: "video".to_owned(),
+                        file_size_bytes: 300,
+                        modified_unix_seconds: Some(2000),
+                        width_px: None,
+                        height_px: None,
+                        metadata_status: IndexedMetadataStatus::Ok,
+                    },
+                ],
+                &[root_id],
+            )
+            .expect("apply should work");
+        storage
+            .apply_incremental_index(
+                &[IndexedMediaWrite {
+                    source_root_id: root_id,
+                    absolute_path: PathBuf::from("/tmp/librapix-root-stats/a.png"),
+                    media_kind: "image".to_owned(),
+                    file_size_bytes: 100,
+                    modified_unix_seconds: Some(1000),
+                    width_px: Some(10),
+                    height_px: Some(10),
+                    metadata_status: IndexedMetadataStatus::Ok,
+                }],
+                &[root_id],
+            )
+            .expect("incremental refresh should work");
+
+        storage
+            .refresh_source_root_statistics(&[root_id])
+            .expect("stats refresh should work");
+        let stats = storage
+            .get_source_root_statistics(root_id)
+            .expect("stats query should work")
+            .expect("stats should exist");
+
+        assert_eq!(stats.total_size_bytes, 100);
+        assert_eq!(stats.total_media_count, 1);
+        assert_eq!(stats.total_images_count, 1);
+        assert_eq!(stats.total_videos_count, 0);
+        assert_eq!(stats.total_image_size_bytes, 100);
+        assert_eq!(stats.total_video_size_bytes, 0);
+        assert_eq!(stats.missing_count, 1);
+        assert!(stats.last_indexed_unix_seconds.is_some());
 
         let _ = std::fs::remove_file(db);
     }

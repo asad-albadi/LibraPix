@@ -28,7 +28,8 @@ use librapix_projections::timeline::{
 };
 use librapix_search::{FuzzySearchStrategy, SearchDocument, SearchQuery, SearchStrategy};
 use librapix_storage::{
-    IndexedMediaWrite, IndexedMetadataStatus, SourceRootLifecycle, Storage, TagKind,
+    IndexedMediaWrite, IndexedMetadataStatus, SourceRootLifecycle, SourceRootStatisticsRecord,
+    Storage, TagKind,
 };
 use librapix_thumbnails::{ensure_image_thumbnail, ensure_video_thumbnail};
 use notify::{EventKind, RecursiveMode, Watcher};
@@ -101,7 +102,9 @@ enum Message {
     CloseAbout,
     OpenAddLibraryDialog,
     OpenEditLibraryDialog(i64),
+    OpenLibraryStatisticsDialog(i64),
     CloseLibraryDialog,
+    CloseLibraryStatisticsDialog,
     LibraryDialogBrowseFolder,
     LibraryDialogPathInputChanged(String),
     LibraryDialogDisplayNameChanged(String),
@@ -197,6 +200,9 @@ struct Librapix {
     library_dialog_manual_path_open: bool,
     library_dialog_tag_input: String,
     library_dialog_tags: Vec<(String, TagKind)>,
+    library_stats_dialog_open: bool,
+    library_stats_root_id: Option<i64>,
+    library_stats_record: Option<SourceRootStatisticsRecord>,
     filter_source_root_id: Option<i64>,
 }
 
@@ -357,6 +363,9 @@ impl Default for Librapix {
             library_dialog_manual_path_open: false,
             library_dialog_tag_input: String::new(),
             library_dialog_tags: Vec::new(),
+            library_stats_dialog_open: false,
+            library_stats_root_id: None,
+            library_stats_record: None,
             filter_source_root_id: None,
         };
         refresh_ignore_rules_preview(&mut app);
@@ -503,7 +512,9 @@ fn message_event_label(msg: &Message) -> String {
         Message::CloseAbout => "CloseAbout".into(),
         Message::OpenAddLibraryDialog => "OpenAddLibraryDialog".into(),
         Message::OpenEditLibraryDialog(id) => format!("OpenEditLibraryDialog({id})"),
+        Message::OpenLibraryStatisticsDialog(id) => format!("OpenLibraryStatisticsDialog({id})"),
         Message::CloseLibraryDialog => "CloseLibraryDialog".into(),
+        Message::CloseLibraryStatisticsDialog => "CloseLibraryStatisticsDialog".into(),
         Message::LibraryDialogBrowseFolder => "LibraryDialogBrowseFolder".into(),
         Message::LibraryDialogPathInputChanged(v) => {
             format!("LibraryDialogPathInputChanged({})", v.len())
@@ -562,6 +573,7 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
                 if matches!(app.library_dialog_mode, LibraryDialogMode::Edit(_)) {
                     app.library_dialog_open = false;
                 }
+                app.library_stats_dialog_open = false;
             }
         }
         Message::ReactivateRoot => {
@@ -576,6 +588,7 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
                 if matches!(app.library_dialog_mode, LibraryDialogMode::Edit(_)) {
                     app.library_dialog_open = false;
                 }
+                app.library_stats_dialog_open = false;
             }
         }
         Message::RemoveRoot => {
@@ -587,6 +600,7 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
                 app.state.clear_selection_and_input();
                 app.root_status = app.i18n.text(TextKey::RootActionSuccess).to_owned();
                 app.library_dialog_open = false;
+                app.library_stats_dialog_open = false;
                 app.activity_status = app.i18n.text(TextKey::LoadingGalleryLabel).to_owned();
                 return spawn_background_work(
                     app,
@@ -818,8 +832,14 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
         Message::OpenEditLibraryDialog(root_id) => {
             open_edit_library_dialog(app, root_id);
         }
+        Message::OpenLibraryStatisticsDialog(root_id) => {
+            open_library_statistics_dialog(app, root_id);
+        }
         Message::CloseLibraryDialog => {
             app.library_dialog_open = false;
+        }
+        Message::CloseLibraryStatisticsDialog => {
+            app.library_stats_dialog_open = false;
         }
         Message::LibraryDialogBrowseFolder => {
             if let Some(path) = rfd::FileDialog::new().pick_folder() {
@@ -1017,16 +1037,7 @@ fn view(app: &Librapix) -> Element<'_, Message> {
             .iter()
             .fold(column![].spacing(SPACE_2XS), |col, root| {
                 let is_selected = app.state.selected_root_id == Some(root.id);
-                let label = root
-                    .display_name
-                    .clone()
-                    .filter(|s| !s.trim().is_empty())
-                    .unwrap_or_else(|| {
-                        root.normalized_path
-                            .file_name()
-                            .map(|n| n.to_string_lossy().to_string())
-                            .unwrap_or_else(|| root.normalized_path.display().to_string())
-                    });
+                let label = display_name_for_root(root);
                 let status_color = match root.lifecycle {
                     RootLifecycle::Active => SUCCESS_COLOR,
                     RootLifecycle::Unavailable => WARNING_COLOR,
@@ -1052,6 +1063,10 @@ fn view(app: &Librapix) -> Element<'_, Message> {
                         .padding([SPACE_XS as u16, SPACE_SM as u16]),
                         button(text(app.i18n.text(TextKey::RootEditButton)).size(FONT_CAPTION))
                             .on_press(Message::OpenEditLibraryDialog(root.id))
+                            .style(subtle_button_style)
+                            .padding([SPACE_2XS as u16, SPACE_SM as u16]),
+                        button(text(app.i18n.text(TextKey::RootStatsButton)).size(FONT_CAPTION))
+                            .on_press(Message::OpenLibraryStatisticsDialog(root.id))
                             .style(subtle_button_style)
                             .padding([SPACE_2XS as u16, SPACE_SM as u16]),
                     ]
@@ -1183,6 +1198,12 @@ fn view(app: &Librapix) -> Element<'_, Message> {
     }
     if app.library_dialog_open {
         overlay = stack([overlay, render_library_dialog(app)])
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into();
+    }
+    if app.library_stats_dialog_open {
+        overlay = stack([overlay, render_library_statistics_dialog(app)])
             .width(Length::Fill)
             .height(Length::Fill)
             .into();
@@ -2231,6 +2252,130 @@ fn render_library_dialog(app: &Librapix) -> Element<'_, Message> {
     .into()
 }
 
+fn render_library_statistics_dialog(app: &Librapix) -> Element<'_, Message> {
+    let root = app.library_stats_root_id.and_then(|root_id| {
+        app.state
+            .library_roots
+            .iter()
+            .find(|root| root.id == root_id)
+    });
+
+    let title_suffix = root
+        .map(display_name_for_root)
+        .unwrap_or_else(|| app.i18n.text(TextKey::LibrarySectionLabel).to_owned());
+    let dialog_title = format!(
+        "{}: {title_suffix}",
+        app.i18n.text(TextKey::LibraryStatsDialogTitle)
+    );
+
+    let path_line: Element<'_, Message> = if let Some(root) = root {
+        text(root.normalized_path.display().to_string())
+            .size(FONT_CAPTION)
+            .color(TEXT_TERTIARY)
+            .into()
+    } else {
+        column![].into()
+    };
+
+    let stats_body: Element<'_, Message> = if let Some(stats) = &app.library_stats_record {
+        column![
+            section_heading(app.i18n.text(TextKey::LibraryStatsSummarySectionLabel)),
+            render_stats_row(
+                app.i18n.text(TextKey::LibraryStatsTotalSizeLabel),
+                format::format_file_size(stats.total_size_bytes),
+            ),
+            render_stats_row(
+                app.i18n.text(TextKey::LibraryStatsTotalMediaLabel),
+                stats.total_media_count.to_string(),
+            ),
+            render_stats_row(
+                app.i18n.text(TextKey::LibraryStatsTotalImagesLabel),
+                stats.total_images_count.to_string(),
+            ),
+            render_stats_row(
+                app.i18n.text(TextKey::LibraryStatsTotalVideosLabel),
+                stats.total_videos_count.to_string(),
+            ),
+            render_stats_row(
+                app.i18n.text(TextKey::LibraryStatsImageSizeLabel),
+                format::format_file_size(stats.total_image_size_bytes),
+            ),
+            render_stats_row(
+                app.i18n.text(TextKey::LibraryStatsVideoSizeLabel),
+                format::format_file_size(stats.total_video_size_bytes),
+            ),
+            h_divider(),
+            section_heading(app.i18n.text(TextKey::LibraryStatsIndexingSectionLabel)),
+            render_stats_row(
+                app.i18n.text(TextKey::LibraryStatsMissingLabel),
+                stats.missing_count.to_string(),
+            ),
+            render_stats_row(
+                app.i18n.text(TextKey::LibraryStatsLastIndexedLabel),
+                format::format_timestamp(stats.last_indexed_unix_seconds),
+            ),
+            render_stats_row(
+                app.i18n.text(TextKey::LibraryStatsOldestFileLabel),
+                format::format_timestamp(stats.oldest_modified_unix_seconds),
+            ),
+            render_stats_row(
+                app.i18n.text(TextKey::LibraryStatsNewestFileLabel),
+                format::format_timestamp(stats.newest_modified_unix_seconds),
+            ),
+        ]
+        .spacing(SPACE_SM)
+        .into()
+    } else {
+        text(app.i18n.text(TextKey::LibraryStatsNotAvailableLabel))
+            .size(FONT_BODY)
+            .color(TEXT_SECONDARY)
+            .into()
+    };
+
+    let dialog_content = column![
+        row![
+            text(dialog_title).size(FONT_TITLE).color(TEXT_PRIMARY),
+            Space::new().width(Length::Fill),
+            button(text(app.i18n.text(TextKey::DismissButton)).size(FONT_BODY))
+                .on_press(Message::CloseLibraryStatisticsDialog)
+                .style(subtle_button_style)
+                .padding([SPACE_XS as u16, SPACE_MD as u16]),
+        ]
+        .align_y(iced::Alignment::Center),
+        path_line,
+        h_divider(),
+        stats_body,
+    ]
+    .spacing(SPACE_LG);
+
+    let dialog = container(dialog_content)
+        .width(Length::Fill)
+        .max_width(560.0)
+        .padding(SPACE_LG as u16)
+        .style(modal_dialog_style);
+
+    container(
+        container(dialog)
+            .center_x(Length::Fill)
+            .center_y(Length::Fill),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .padding([SPACE_2XL as u16, SPACE_XL as u16])
+    .style(modal_backdrop_style)
+    .into()
+}
+
+fn render_stats_row<'a>(label: &'a str, value: String) -> Element<'a, Message> {
+    row![
+        text(label).size(FONT_BODY).color(TEXT_SECONDARY),
+        Space::new().width(Length::Fill),
+        text(value).size(FONT_BODY).color(TEXT_PRIMARY),
+    ]
+    .align_y(iced::Alignment::Center)
+    .into()
+}
+
 fn render_new_media_dialog(app: &Librapix) -> Element<'_, Message> {
     let Some(announcement) = &app.new_media_announcement else {
         return column![].into();
@@ -2892,9 +3037,22 @@ fn normalized_input_path(value: &str) -> Option<PathBuf> {
     Some(lexical_normalize_path(&PathBuf::from(trimmed), &cwd))
 }
 
+fn display_name_for_root(root: &LibraryRootView) -> String {
+    root.display_name
+        .clone()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| {
+            root.normalized_path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| root.normalized_path.display().to_string())
+        })
+}
+
 fn open_add_library_dialog(app: &mut Librapix) {
     app.library_dialog_mode = LibraryDialogMode::Add;
     app.library_dialog_open = true;
+    app.library_stats_dialog_open = false;
     app.library_dialog_manual_path_open = false;
     app.library_dialog_path_input.clear();
     app.library_dialog_display_name_input.clear();
@@ -2907,6 +3065,7 @@ fn open_edit_library_dialog(app: &mut Librapix, root_id: i64) {
     app.state.set_selected_root(Some(root_id));
     app.library_dialog_mode = LibraryDialogMode::Edit(root_id);
     app.library_dialog_open = true;
+    app.library_stats_dialog_open = false;
     app.library_dialog_manual_path_open = false;
 
     if let Some(root) = app.state.library_roots.iter().find(|r| r.id == root_id) {
@@ -2923,6 +3082,18 @@ fn open_edit_library_dialog(app: &mut Librapix, root_id: i64) {
     })
     .unwrap_or_default();
     app.library_dialog_tag_input.clear();
+}
+
+fn open_library_statistics_dialog(app: &mut Librapix, root_id: i64) {
+    app.state.apply(AppMessage::SetSelectedRoot);
+    app.state.set_selected_root(Some(root_id));
+    app.library_stats_root_id = Some(root_id);
+    app.library_stats_record = with_storage(&app.runtime, |storage| {
+        storage.get_source_root_statistics(root_id)
+    })
+    .ok()
+    .flatten();
+    app.library_stats_dialog_open = true;
 }
 
 fn add_library_dialog_tag(app: &mut Librapix, kind: TagKind) {
@@ -4014,6 +4185,7 @@ fn do_background_work(input: BackgroundWorkInput) -> BackgroundWorkResult {
             let _ = storage.ensure_media_kind_tags_attached();
             let _ = storage.ensure_root_tags_exist();
             let _ = storage.apply_root_auto_tags();
+            let _ = storage.refresh_source_root_statistics(&result.scanned_root_ids);
 
             let read_models = storage.list_all_media_read_models().ok()?;
 
@@ -4435,6 +4607,15 @@ fn apply_background_result(app: &mut Librapix, result: BackgroundWorkResult) {
     }
     if let Some(announcement) = announcement {
         app.new_media_announcement = Some(announcement);
+    }
+    if app.library_stats_dialog_open
+        && let Some(root_id) = app.library_stats_root_id
+    {
+        app.library_stats_record = with_storage(&app.runtime, |storage| {
+            storage.get_source_root_statistics(root_id)
+        })
+        .ok()
+        .flatten();
     }
     app.activity_status.clear();
 }

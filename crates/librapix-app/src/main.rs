@@ -2221,7 +2221,7 @@ fn render_about_dialog(app: &Librapix) -> Element<'_, Message> {
         text(app.i18n.text(TextKey::AboutWeekendProjectNote))
             .size(FONT_BODY)
             .color(TEXT_SECONDARY),
-        text(app.i18n.text(TextKey::AboutVibeCodeNote))
+        text(app.i18n.text(TextKey::AboutSecondNote))
             .size(FONT_BODY)
             .color(TEXT_SECONDARY),
     ]

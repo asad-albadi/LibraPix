@@ -21,22 +21,22 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            asset_name: librapix-linux.AppImage
+            asset_suffix: linux.AppImage
             package: appimage
 
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            asset_name: librapix-windows.exe
+            asset_suffix: windows.exe
             package: exe
 
           - os: macos-latest
             target: x86_64-apple-darwin
-            asset_name: librapix-macos-intel.dmg
+            asset_suffix: macos-intel.dmg
             package: dmg
 
           - os: macos-latest
             target: aarch64-apple-darwin
-            asset_name: librapix-macos-apple-silicon.dmg
+            asset_suffix: macos-apple-silicon.dmg
             package: dmg
 
     runs-on: ${{ matrix.os }}
@@ -58,13 +58,14 @@ jobs:
           BIN=target/${{ matrix.target }}/release/librapix-app
           VERSION="${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}"
           VERSION="${VERSION#v}"
+          ASSET_NAME="librapix-${VERSION}-${{ matrix.asset_suffix }}"
           if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
             BIN=$BIN.exe
           fi
 
           case "${{ matrix.package }}" in
             exe)
-              cp "$BIN" "dist/${{ matrix.asset_name }}"
+              cp "$BIN" "dist/$ASSET_NAME"
               ;;
             dmg)
               APP_DIR="dist/Librapix.app"
@@ -105,7 +106,7 @@ jobs:
                 -srcfolder "$DMG_ROOT" \
                 -ov \
                 -format UDZO \
-                "dist/${{ matrix.asset_name }}"
+                "dist/$ASSET_NAME"
               rm -rf "$DMG_ROOT"
               ;;
             appimage)
@@ -138,7 +139,7 @@ jobs:
               curl -L -o appimagetool.AppImage \
                 https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
               chmod +x appimagetool.AppImage
-              ARCH=x86_64 ./appimagetool.AppImage --appimage-extract-and-run "$APPDIR" "dist/${{ matrix.asset_name }}"
+              ARCH=x86_64 ./appimagetool.AppImage --appimage-extract-and-run "$APPDIR" "dist/$ASSET_NAME"
               ;;
             *)
               echo "Unknown package type: ${{ matrix.package }}"

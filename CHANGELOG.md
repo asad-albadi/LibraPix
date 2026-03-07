@@ -49,7 +49,7 @@ All notable changes to this project are documented in this file.
 - Added live filesystem watch subscription over active roots using `notify`.
 - Auto-refresh now reacts to create/modify/remove file events without manual index/refresh.
 - Replaced blocking watcher channel receive with async channel delivery in Iced subscription worker.
-- Release workflow packaging now outputs Linux `.AppImage` and macOS `.dmg` artifacts with explicit file extensions, while Windows remains a raw `.exe` asset.
+- Release workflow packaging now outputs versioned asset filenames for all platforms (for example `librapix-0.2.1-windows.exe`, `librapix-0.2.1-macos-intel.dmg`, `librapix-0.2.1-linux.AppImage`).
 - App now auto-indexes and loads gallery/timeline on startup from persisted state.
 - App now auto-indexes and refreshes gallery after adding a library root.
 - Gallery now refreshes after removing a library root.

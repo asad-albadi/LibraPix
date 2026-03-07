@@ -516,6 +516,22 @@
 - Prevention guidance
   - For chip/button groups in modals, prefer wrapped responsive rows over horizontal overflow scrolling unless carousel behavior is explicitly intended.
 
+## Removed/deactivated libraries reappear after restart
+
+- Symptoms
+  - After removing a library and reopening the app, the same library is back.
+  - After deactivating a library and reopening the app, it returns as active.
+- Affected area
+  - Startup root restoration and config synchronization for library lifecycle actions.
+- Confirmed cause
+  - Startup always re-imported roots from config into storage, and config updates were append-only; removed roots were not removed from config, and re-import forced lifecycle back to active.
+- Resolution
+  - Library lifecycle mutations now synchronize config roots from current storage state.
+  - Startup config import now runs only when storage has no roots.
+- Prevention guidance
+  - Keep config as a faithful snapshot of storage roots after lifecycle mutations.
+  - Avoid startup import paths that overwrite lifecycle state for already-persisted roots.
+
 ## Video thumbnails not showing
 
 - Symptoms

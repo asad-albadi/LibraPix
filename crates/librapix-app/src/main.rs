@@ -676,6 +676,7 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
                 })
                 .is_ok()
             {
+                sync_roots_to_config(&app.runtime.database_file, &app.runtime.config_file);
                 refresh_roots(app);
                 app.root_status = app.i18n.text(TextKey::RootActionSuccess).to_owned();
                 if matches!(app.library_dialog_mode, LibraryDialogMode::Edit(_)) {
@@ -691,6 +692,7 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
                 })
                 .is_ok()
             {
+                sync_roots_to_config(&app.runtime.database_file, &app.runtime.config_file);
                 refresh_roots(app);
                 app.root_status = app.i18n.text(TextKey::RootActionSuccess).to_owned();
                 if matches!(app.library_dialog_mode, LibraryDialogMode::Edit(_)) {
@@ -703,6 +705,7 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
             if let Some(id) = app.state.selected_root_id
                 && with_storage(&app.runtime, |storage| storage.remove_source_root(id)).is_ok()
             {
+                sync_roots_to_config(&app.runtime.database_file, &app.runtime.config_file);
                 refresh_roots(app);
                 app.state.apply(AppMessage::ClearRootSelection);
                 app.state.clear_selection_and_input();
@@ -3571,8 +3574,11 @@ fn bootstrap_runtime() -> BootstrapRuntime {
         Err(_) => return runtime,
     };
 
-    for source in &loaded.config.library_source_roots {
-        let _ = storage.upsert_source_root(&source.path);
+    let existing_roots = storage.list_source_roots().unwrap_or_default();
+    if existing_roots.is_empty() {
+        for source in &loaded.config.library_source_roots {
+            let _ = storage.upsert_source_root(&source.path);
+        }
     }
     let _ = storage.ensure_default_ignore_rules();
     let _ = storage.reconcile_source_root_availability();
@@ -3583,21 +3589,22 @@ fn bootstrap_runtime() -> BootstrapRuntime {
     runtime
 }
 
-fn persist_root_to_config(config_file: &Path, path: &Path) {
+fn sync_roots_to_config(database_file: &Path, config_file: &Path) {
     let Ok(mut config) = load_from_path(config_file) else {
         return;
     };
-    let path_buf = path.to_path_buf();
-    if config
-        .library_source_roots
-        .iter()
-        .any(|r| r.path == path_buf)
-    {
+    let Ok(storage) = Storage::open(database_file) else {
         return;
-    }
-    config
-        .library_source_roots
-        .push(librapix_config::LibrarySourceRoot { path: path_buf });
+    };
+    let Ok(roots) = storage.list_source_roots() else {
+        return;
+    };
+    config.library_source_roots = roots
+        .into_iter()
+        .map(|root| librapix_config::LibrarySourceRoot {
+            path: root.normalized_path,
+        })
+        .collect();
     let _ = save_to_path(config_file, &config);
 }
 
@@ -3791,7 +3798,7 @@ fn save_library_dialog(app: &mut Librapix, keep_open_for_add: bool) -> Option<Ta
         }
     };
 
-    persist_root_to_config(&app.runtime.config_file, &path);
+    sync_roots_to_config(&app.runtime.database_file, &app.runtime.config_file);
     refresh_roots(app);
     app.state.apply(AppMessage::SetSelectedRoot);
     app.state.set_selected_root(Some(root_id));

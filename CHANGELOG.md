@@ -49,6 +49,8 @@ All notable changes to this project are documented in this file.
 - Windows open-file/open-folder media actions now use `opener::open` instead of `cmd /C start`, removing command-window flicker and reducing launch delay when opening media.
 - Details action label changed from `Show in Folder` to `Open Folder` for consistent button sizing in the details actions row.
 - Filters dialog chips now wrap to additional lines instead of horizontal overflow scrolling for Type, Extension, Library, and Tags sections.
+- Library add/edit/remove/deactivate/reactivate operations now synchronize source roots to config from storage, so removed roots stay removed and deactivated roots remain deactivated after restart.
+- Startup root import from config now runs only when storage has no roots, preventing stale config from reactivating previously deactivated roots.
 - Release workflow now embeds real app icons in macOS DMG bundles (`icon.icns`) and Linux AppImage artifacts (`icon-256.png`) instead of a placeholder icon.
 - Release packaging metadata now uses canonical product naming (`LibraPix`) for generated macOS/Linux app entries.
 - Windows builds now embed `LibraPix` icon/resource metadata into the EXE via crate build script.

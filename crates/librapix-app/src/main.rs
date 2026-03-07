@@ -4173,10 +4173,7 @@ fn open_with_system_default(path: &PathBuf) -> Result<(), std::io::Error> {
     }
     #[cfg(target_os = "windows")]
     {
-        Command::new("cmd")
-            .args(["/C", "start", "", &path.display().to_string()])
-            .status()?;
-        Ok(())
+        opener::open(path).map_err(|error| std::io::Error::other(error.to_string()))
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {

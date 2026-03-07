@@ -488,6 +488,21 @@
   - For Windows subprocesses used in background work, always set no-window creation flags when no interactive console is required.
   - Re-check subprocess behavior after changing crate subsystem attributes.
 
+## Opening media on Windows is slow and flashes terminal
+
+- Symptoms
+  - Double-clicking or using Open on image/video feels slow.
+  - A command/terminal window briefly opens and closes before media opens.
+- Affected area
+  - Open-file/open-folder action path on Windows.
+- Confirmed cause
+  - The open action used `cmd /C start ...`, which can spawn visible command windows and adds process startup overhead.
+- Resolution
+  - Replaced Windows open action with `opener::open(...)`, using native shell opening without command prompt flashing.
+- Prevention guidance
+  - Avoid `cmd /C start` for GUI open actions in Windows desktop builds.
+  - Prefer shell/native open APIs for user-facing launch actions.
+
 ## Video thumbnails not showing
 
 - Symptoms

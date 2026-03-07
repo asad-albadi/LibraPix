@@ -29,10 +29,12 @@ jobs:
             asset_suffix: windows.exe
             package: exe
 
-          - os: macos-latest
-            target: aarch64-apple-darwin
-            asset_suffix: macos-apple-silicon.dmg
-            package: dmg
+          # macOS release packaging is temporarily disabled until
+          # codesigning/notarization is available in CI.
+          # - os: macos-latest
+          #   target: aarch64-apple-darwin
+          #   asset_suffix: macos-apple-silicon.dmg
+          #   package: dmg
 
     runs-on: ${{ matrix.os }}
 
@@ -61,6 +63,7 @@ jobs:
           case "${{ matrix.package }}" in
             exe)
               cp "$BIN" "dist/$ASSET_NAME"
+              powershell -NoProfile -Command "Compress-Archive -Path 'assets' -DestinationPath 'dist/librapix-${VERSION}-windows-assets.zip' -Force"
               ;;
             dmg)
               APP_DIR="dist/LibraPix.app"
@@ -112,6 +115,7 @@ jobs:
               mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/applications"
               cp "$BIN" "$APPDIR/usr/bin/librapix-app"
               chmod +x "$APPDIR/usr/bin/librapix-app"
+              cp -R assets "$APPDIR/assets"
 
               printf '%s\n' \
                 '#!/bin/sh' \

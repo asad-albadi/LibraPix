@@ -36,6 +36,9 @@ All notable changes to this project are documented in this file.
 - Release workflow now embeds real app icons in macOS DMG bundles (`icon.icns`) and Linux AppImage artifacts (`icon-256.png`) instead of a placeholder icon.
 - Release packaging metadata now uses canonical product naming (`LibraPix`) for generated macOS/Linux app entries.
 - Windows builds now embed `LibraPix` icon/resource metadata into the EXE via crate build script.
+- Runtime asset resolution now checks executable-relative `assets/` paths first, so packaged builds can load in-app icons/logo outside the source workspace.
+- Linux AppImage packaging now includes the full `assets/` directory in AppDir so in-app icons/logo render in release artifacts.
+- Windows release uploads now include `librapix-<version>-windows-assets.zip` for side-by-side `assets/` deployment with the EXE.
 
 ### Added
 - Branding integration: blue logo in app header, GitHub link button, asset-based icons throughout UI.

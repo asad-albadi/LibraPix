@@ -56,9 +56,9 @@ cargo run -p librapix-app
 
 ### Platform Notes
 
-- **Windows**: Copy File uses native `CF_HDROP` clipboard (Explorer-paste compatible). EXE signing baseline: `packaging/windows/`.
+- **Windows**: Copy File uses native `CF_HDROP` clipboard (Explorer-paste compatible). Release uploads include `windows-assets.zip`; keep the extracted `assets/` folder beside `librapix-*.exe` for in-app icons/logo.
 - **macOS**: Apple Silicon DMG for releases.
-- **Linux**: AppImage for releases.
+- **Linux**: AppImage for releases (bundles `assets/` inside AppDir for in-app icons/logo).
 
 ## Workspace Layout
 

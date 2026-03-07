@@ -1,7 +1,7 @@
 //! Centralized asset path resolution for branding and icons.
 //!
-//! Uses workspace-relative paths for development. Assets live at `assets/`
-//! in the repository root.
+//! Resolves assets from executable-relative paths in packaged builds, and
+//! falls back to workspace-relative paths for development.
 
 use std::path::{Path, PathBuf};
 
@@ -9,8 +9,34 @@ use std::path::{Path, PathBuf};
 pub const REPO_URL: &str = "https://github.com/asad-albadi/librapix";
 
 /// Returns the assets directory (workspace root / assets).
-/// Resolves from CARGO_MANIFEST_DIR: crates/librapix-app -> workspace root.
+/// Resolution order:
+/// 1) `LIBRAPIX_ASSETS_DIR` env override.
+/// 2) Executable-relative candidates (for packaged artifacts).
+/// 3) Workspace-relative fallback for development.
 fn assets_dir() -> PathBuf {
+    if let Ok(override_dir) = std::env::var("LIBRAPIX_ASSETS_DIR") {
+        let path = PathBuf::from(override_dir);
+        if path.is_dir() {
+            return path;
+        }
+    }
+
+    if let Ok(exe_path) = std::env::current_exe()
+        && let Some(exe_dir) = exe_path.parent()
+    {
+        let packaged_candidates = [
+            exe_dir.join("assets"),
+            exe_dir.join("../assets"),
+            exe_dir.join("../../assets"),
+        ];
+
+        for candidate in packaged_candidates {
+            if candidate.is_dir() {
+                return candidate;
+            }
+        }
+    }
+
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
         .nth(2)

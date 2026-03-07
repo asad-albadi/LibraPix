@@ -64,8 +64,8 @@ This checklist tracks the chip-based redesign milestone for library tags, detail
 
 ## 9. Commit checkpoints
 
-- [ ] Commit reusable chip + deterministic color base
-- [ ] Commit library/details tag redesign
-- [ ] Commit settings ignore-rule redesign
-- [ ] Commit docs reconciliation
+- [x] Commit reusable chip + deterministic color base
+- [x] Commit library/details tag redesign
+- [x] Commit settings ignore-rule redesign
+- [x] Commit docs reconciliation
 - [ ] Confirm working tree clean

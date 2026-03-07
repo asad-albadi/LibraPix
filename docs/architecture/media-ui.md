@@ -73,6 +73,8 @@ This produces a Google-Photos-style justified layout where images maintain aspec
 - Scrub interactions maintain a continuous normalized value; nearest anchor selection is derived from anchor normalized positions.
 - Programmatic scrolling uses absolute scroll operations (`operation::scroll_to`) when viewport max offset is known, with relative fallback (`operation::snap_to`) during initialization.
 - While dragging, UI shows a floating date chip sourced from the active anchor label.
+- Date-chip vertical placement follows the live continuous scrub value so thumb and chip stay visually synchronized.
+- Scrubber reserves a stable chip lane width before/after drag start so pointer-down does not shift slider position laterally.
 - Year marker labels are placed on a position-aligned track using the same anchor normalized positions used for scroll targets.
 - Scrub interactions do not rebuild projections; they reuse cached timeline anchors.
 

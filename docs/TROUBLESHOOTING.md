@@ -55,6 +55,38 @@
   - Keep marker placement, scrub mapping, and scroll targeting sourced from the same anchor model.
   - Avoid rendering year markers as detached/evenly stacked labels independent of anchor positions.
 
+## Main media scrollbar overlaps cards/grid content
+
+- Symptoms
+  - Vertical scrollbar appears on top of gallery/timeline cards.
+  - Card thumbnails or metadata can be visually covered by the scrollbar gutter area.
+- Affected area
+  - Main media-pane scrollable layout (gallery + timeline browsing surfaces).
+- Confirmed cause
+  - Media-pane `scrollable` used default scrollbar behavior (`spacing: None`), which renders a floating scrollbar over content instead of reserving layout space.
+- Resolution
+  - Media pane now uses an embedded vertical scrollbar with explicit spacing (`scrollable::Scrollbar::spacing(...)`), which reserves a dedicated gutter beside content.
+- Prevention guidance
+  - For card/grid browsing surfaces, prefer embedded scrollbars when content must never be obscured.
+  - Avoid relying on ad-hoc content padding for scrollbar overlap issues.
+
+## Timeline scrubber snaps sideways on first click
+
+- Symptoms
+  - On initial scrubber click/press, the scrubber control appears to jump laterally before drag feels stable.
+  - Date chip appears misaligned with thumb position on first interaction.
+- Affected area
+  - Timeline scrubber interaction/layout in the media pane.
+- Confirmed cause
+  - The date-chip track was conditionally inserted only while scrubbing, changing row width on pointer-down and shifting the slider lane horizontally.
+  - Date-chip vertical placement used nearest-anchor position instead of the live continuous scrub value, causing first-click visual desync.
+- Resolution
+  - Scrubber now reserves a stable chip lane width at all times, so entering scrub mode does not change horizontal layout.
+  - Date-chip vertical placement now tracks continuous scrub value while label selection still uses nearest anchor.
+- Prevention guidance
+  - Keep scrubber interaction-state overlays layout-stable across pointer-down transitions.
+  - Keep displayed scrub visuals driven by continuous pointer state; use anchor mapping for labels/targets only.
+
 ## New file appears under \"yesterday\" in timeline after midnight
 
 - Symptoms

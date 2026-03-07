@@ -49,6 +49,7 @@ All visual presentation is centralized in `librapix-app/src/ui.rs`:
   - scrub maps to projection anchors by nearest normalized anchor position
   - year markers are positioned along the scrub track from anchor normalized positions
   - a date chip is shown while dragging
+  - entering scrub mode keeps scrubber lane geometry stable (no first-click lateral snap)
 - Search is triggered via Enter key in the header search bar.
 - Root selection uses styled nav buttons with status dot indicators.
 - Root management controls appear contextually when a root is selected.
@@ -76,6 +77,7 @@ All visual presentation is centralized in `librapix-app/src/ui.rs`:
 - Media pane toolbar (title, refresh, shown/images/videos stats, filter chips) is rendered outside the scrollable region.
 - Only the browse content and search results scroll; the toolbar remains fixed at the top.
 - This prevents the scrollbar from overlapping toolbar controls.
+- The media scrollable uses embedded vertical scrollbar spacing, reserving a dedicated gutter so scrollbar chrome does not overlay media cards.
 - Timeline mode keeps this layout and adds a side scrubber column inside the media pane body (without changing shell structure).
 
 ## Centralized media-view architecture

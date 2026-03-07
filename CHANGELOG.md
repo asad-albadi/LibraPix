@@ -122,6 +122,8 @@ All notable changes to this project are documented in this file.
 - i18n keys for auto-tag UI labels.
 
 ### Fixed
+- Media-pane vertical scrollbar no longer overlays gallery/timeline cards; it now uses embedded scrollbar spacing so content width reserves a dedicated scrollbar gutter.
+- Timeline scrubber no longer snaps sideways on first click; scrub mode now keeps slider lane width stable and positions the date chip from the continuous scrub value.
 - Windows `Copy File` now writes an actual Explorer-compatible file-drop clipboard payload (native `CF_HDROP` via Win32 `SetClipboardData`) instead of PowerShell-based clipboard indirection.
 - New-file announcement modal now renders as a centered, constrained dialog (max width/height with scrollable body) instead of stretching with window height.
 - Large projection/search refresh operations (`RunSearchQuery`, route refresh buttons, and filter changes) no longer run synchronously on the UI thread; they now execute in background task mode to prevent hangs on large libraries.
@@ -161,6 +163,8 @@ All notable changes to this project are documented in this file.
 - Browse items now carry `aspect_ratio` for justified row computation.
 
 ### Docs
+- Added checklist `docs/roadmap/scrollbar-scrubber-correctness-checklist.md` for the media-scrollbar and timeline-scrubber follow-up fixes.
+- Updated architecture docs (`ui.md`, `media-ui.md`, `message-flow.md`) and troubleshooting notes with the scrollbar-overlap and scrubber first-click root-cause fixes.
 - Added ADR `0014` for filtering, exclusion, and thumbnail quality decisions.
 - Added ADR `0015` for media-view architecture, justified layout, and video thumbnail decisions.
 - Added ADR `0018` for projection-driven timeline scrubber architecture.

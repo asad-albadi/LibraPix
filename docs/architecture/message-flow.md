@@ -47,8 +47,10 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
   - UI renders selectable timeline items grouped by route panel when `BackgroundWorkComplete` is applied.
 - Timeline scrubber interaction
   - Timeline pane owns a stable scrollable `Id` (`media-pane-scrollable`).
+  - Timeline/gallery media scrollable uses embedded vertical scrollbar spacing so scrollbar gutter is outside card content.
   - Drag/click on scrubber emits `TimelineScrubChanged` (continuous) and `TimelineScrubReleased`.
   - Scrub value is continuous (`0.0..=1.0`) and nearest-anchor selection is derived from ordered `TimelineAnchor.normalized_position` values.
+  - Scrubber date-chip vertical placement follows continuous scrub value while label selection uses nearest anchor; chip lane width is stable across pointer-down/drag state.
   - App issues Iced widget operations (`operation::scroll_to`, with relative `snap_to` fallback) so scrub dragging and programmatic jumps share one mapping model.
   - Scroll updates emit `MediaViewportChanged`; scrub value tracks viewport offset continuously while anchor selection tracks nearest projection anchor.
 - Run gallery projection baseline

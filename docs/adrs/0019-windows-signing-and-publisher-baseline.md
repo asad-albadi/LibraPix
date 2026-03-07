@@ -12,12 +12,8 @@ Changing UI labels or app title does not affect Windows publisher trust. Publish
 
 ## Decision
 
-- Establish a baseline Windows signing/distribution workflow under `packaging/windows/`.
 - Set current publisher identity baseline to `CN=Asad`.
-- Add scripts for operational signing workflow:
-  - `New-LibrapixDevCertificate.ps1` (dev certificate generation/export)
-  - `Sign-LibrapixBinary.ps1` (EXE signing + verification)
-- Document local-dev certificate behavior and production signing expectations in `packaging/windows/README.md`.
+- Document the Windows signing/distribution expectations in repository docs and release notes.
 
 ## Alternatives considered
 

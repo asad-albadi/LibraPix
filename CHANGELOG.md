@@ -20,6 +20,9 @@ All notable changes to this project are documented in this file.
 - Dedicated Library Statistics dialog per root/library with persisted summary/indexing metrics.
 - Sidebar `Stats` action per library row to open the Library Statistics dialog quickly.
 
+### Removed
+- Removed `packaging/windows/` scripts and packaging README from the repository.
+
 ### Changed
 - Edit Library tags now render as structured colored chips with inline add/edit/remove controls.
 - Details tag UX now renders inherited and manual tags as colored chips with clear separation and chip-level remove/edit affordances.

@@ -244,7 +244,6 @@
   - Sign the EXE using SignTool with the intended certificate subject (`CN=Asad` baseline for local/dev flow).
   - For local testing, generate/import a dev self-signed cert.
   - For public release, use a trusted OV/EV certificate and timestamp signatures.
-  - See `packaging/windows/README.md`.
 - Prevention guidance
   - Verify signatures before distribution (`signtool verify /pa /v`).
 

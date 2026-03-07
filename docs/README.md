@@ -56,11 +56,6 @@ This repository is documentation-driven. Architecture and operational decisions 
 - `docs/roadmap/library-statistics-checklist.md`
 - `docs/roadmap/tag-ignore-chip-interaction-checklist.md`
 
-## Packaging
-
-- `packaging/windows/README.md`: Windows publisher/signing/distribution baseline.
-- `packaging/windows/scripts/`: PowerShell scripts for dev cert creation and EXE signing.
-
 ## ADRs
 
 - `docs/adrs/0001-workspace-boundaries.md`

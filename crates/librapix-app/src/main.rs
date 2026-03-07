@@ -54,10 +54,7 @@ fn init() -> (Librapix, Task<Message>) {
 enum Message {
     OpenGallery,
     OpenTimeline,
-    RootInputChanged(String),
     SelectRoot(i64),
-    AddRoot,
-    UpdateRoot,
     DeactivateRoot,
     ReactivateRoot,
     RemoveRoot,
@@ -80,17 +77,12 @@ enum Message {
     EnableIgnoreRule,
     DisableIgnoreRule,
     StartupRestore,
-    BrowseFolder,
     FilesystemChanged,
     SetFilterMediaKind(Option<String>),
     SetFilterExtension(Option<String>),
     SetFilterTag(Option<String>),
     MinFileSizeInputChanged(String),
     ApplyMinFileSize,
-    RootTagInputChanged(String),
-    AddRootAppTag,
-    AddRootGameTag,
-    RemoveRootTag(String),
     TimelineScrubChanged(f32),
     TimelineScrubReleased,
     JumpToTimelineAnchor(usize),
@@ -105,10 +97,22 @@ enum Message {
     ToggleFilterDialog,
     OpenSettings,
     CloseSettings,
-    ToggleShowManualPath,
+    OpenAbout,
+    CloseAbout,
+    OpenAddLibraryDialog,
+    OpenEditLibraryDialog(i64),
+    CloseLibraryDialog,
+    LibraryDialogBrowseFolder,
+    LibraryDialogPathInputChanged(String),
+    LibraryDialogDisplayNameChanged(String),
+    ToggleLibraryDialogManualPath,
+    LibraryDialogTagInputChanged(String),
+    LibraryDialogAddAppTag,
+    LibraryDialogAddGameTag,
+    LibraryDialogRemoveTag(String),
+    SaveLibraryDialog,
+    SaveLibraryAndAddAnother,
     SetFilterLibrary(Option<i64>),
-    SetRootDisplayName(i64, String),
-    UpdateRootDisplayName(i64),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -143,7 +147,6 @@ struct BackgroundWorkResult {
     media_cache: std::collections::HashMap<i64, CachedDetails>,
     available_filter_tags: Vec<String>,
     ignore_rules_preview: Vec<String>,
-    root_tags_preview: Vec<(String, String)>,
     browse_status: String,
 }
 
@@ -177,8 +180,6 @@ struct Librapix {
     min_file_size_bytes: u64,
     min_file_size_input: String,
     media_cache: std::collections::HashMap<i64, CachedDetails>,
-    root_tag_input: String,
-    root_tags_preview: Vec<(String, String)>,
     diagnostics_lines: Vec<String>,
     diagnostics_events: Vec<String>,
     timeline_scrub_value: f32,
@@ -188,9 +189,21 @@ struct Librapix {
     new_media_announcement: Option<NewMediaAnnouncement>,
     filter_dialog_open: bool,
     settings_open: bool,
-    show_manual_path: bool,
+    about_open: bool,
+    library_dialog_open: bool,
+    library_dialog_mode: LibraryDialogMode,
+    library_dialog_path_input: String,
+    library_dialog_display_name_input: String,
+    library_dialog_manual_path_open: bool,
+    library_dialog_tag_input: String,
+    library_dialog_tags: Vec<(String, TagKind)>,
     filter_source_root_id: Option<i64>,
-    root_display_name_input: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LibraryDialogMode {
+    Add,
+    Edit(i64),
 }
 
 #[derive(Debug, Clone)]
@@ -203,8 +216,6 @@ struct BrowseItem {
     is_group_header: bool,
     line: String,
     aspect_ratio: f32,
-    /// For group headers: total count in the group.
-    group_total: Option<usize>,
     /// For group headers: image count in the group.
     group_image_count: Option<usize>,
     /// For group headers: video count in the group.
@@ -278,6 +289,7 @@ const MAX_DIAGNOSTICS_EVENTS: usize = 100;
 const MEDIA_SCROLLABLE_ID: &str = "media-pane-scrollable";
 const SCRUBBER_YEAR_MARKER_LIMIT: usize = 10;
 const MEDIA_SCROLLBAR_SPACING: f32 = SPACE_XS as f32;
+const PANEL_SCROLLBAR_SPACING: f32 = SPACE_XS as f32;
 const SCRUBBER_PANEL_WIDTH: f32 = 168.0;
 const SCRUBBER_CHIP_TRACK_WIDTH: f32 = 96.0;
 
@@ -328,8 +340,6 @@ impl Default for Librapix {
             min_file_size_bytes: 0,
             min_file_size_input: String::new(),
             media_cache: std::collections::HashMap::new(),
-            root_tag_input: String::new(),
-            root_tags_preview: Vec::new(),
             diagnostics_lines: Vec::new(),
             diagnostics_events: Vec::new(),
             timeline_scrub_value: 0.0,
@@ -339,9 +349,15 @@ impl Default for Librapix {
             new_media_announcement: None,
             filter_dialog_open: false,
             settings_open: false,
-            show_manual_path: false,
+            about_open: false,
+            library_dialog_open: false,
+            library_dialog_mode: LibraryDialogMode::Add,
+            library_dialog_path_input: String::new(),
+            library_dialog_display_name_input: String::new(),
+            library_dialog_manual_path_open: false,
+            library_dialog_tag_input: String::new(),
+            library_dialog_tags: Vec::new(),
             filter_source_root_id: None,
-            root_display_name_input: String::new(),
         };
         refresh_ignore_rules_preview(&mut app);
         app
@@ -438,10 +454,7 @@ fn message_event_label(msg: &Message) -> String {
     match msg {
         Message::OpenGallery => "OpenGallery".into(),
         Message::OpenTimeline => "OpenTimeline".into(),
-        Message::RootInputChanged(v) => format!("RootInputChanged({})", v.len()),
         Message::SelectRoot(id) => format!("SelectRoot({id})"),
-        Message::AddRoot => "AddRoot".into(),
-        Message::UpdateRoot => "UpdateRoot".into(),
         Message::DeactivateRoot => "DeactivateRoot".into(),
         Message::ReactivateRoot => "ReactivateRoot".into(),
         Message::RemoveRoot => "RemoveRoot".into(),
@@ -464,17 +477,12 @@ fn message_event_label(msg: &Message) -> String {
         Message::EnableIgnoreRule => "EnableIgnoreRule".into(),
         Message::DisableIgnoreRule => "DisableIgnoreRule".into(),
         Message::StartupRestore => "StartupRestore".into(),
-        Message::BrowseFolder => "BrowseFolder".into(),
         Message::FilesystemChanged => "FilesystemChanged".into(),
         Message::SetFilterMediaKind(k) => format!("SetFilterMediaKind({:?})", k.as_deref()),
         Message::SetFilterExtension(e) => format!("SetFilterExtension({:?})", e.as_deref()),
         Message::SetFilterTag(tag) => format!("SetFilterTag({:?})", tag.as_deref()),
         Message::MinFileSizeInputChanged(v) => format!("MinFileSizeInputChanged({})", v.len()),
         Message::ApplyMinFileSize => "ApplyMinFileSize".into(),
-        Message::RootTagInputChanged(v) => format!("RootTagInputChanged({})", v.len()),
-        Message::AddRootAppTag => "AddRootAppTag".into(),
-        Message::AddRootGameTag => "AddRootGameTag".into(),
-        Message::RemoveRootTag(n) => format!("RemoveRootTag({n})"),
         Message::TimelineScrubChanged(value) => format!("TimelineScrubChanged({value:.3})"),
         Message::TimelineScrubReleased => "TimelineScrubReleased".into(),
         Message::JumpToTimelineAnchor(index) => format!("JumpToTimelineAnchor({index})"),
@@ -491,10 +499,28 @@ fn message_event_label(msg: &Message) -> String {
         Message::ToggleFilterDialog => "ToggleFilterDialog".into(),
         Message::OpenSettings => "OpenSettings".into(),
         Message::CloseSettings => "CloseSettings".into(),
-        Message::ToggleShowManualPath => "ToggleShowManualPath".into(),
+        Message::OpenAbout => "OpenAbout".into(),
+        Message::CloseAbout => "CloseAbout".into(),
+        Message::OpenAddLibraryDialog => "OpenAddLibraryDialog".into(),
+        Message::OpenEditLibraryDialog(id) => format!("OpenEditLibraryDialog({id})"),
+        Message::CloseLibraryDialog => "CloseLibraryDialog".into(),
+        Message::LibraryDialogBrowseFolder => "LibraryDialogBrowseFolder".into(),
+        Message::LibraryDialogPathInputChanged(v) => {
+            format!("LibraryDialogPathInputChanged({})", v.len())
+        }
+        Message::LibraryDialogDisplayNameChanged(v) => {
+            format!("LibraryDialogDisplayNameChanged({})", v.len())
+        }
+        Message::ToggleLibraryDialogManualPath => "ToggleLibraryDialogManualPath".into(),
+        Message::LibraryDialogTagInputChanged(v) => {
+            format!("LibraryDialogTagInputChanged({})", v.len())
+        }
+        Message::LibraryDialogAddAppTag => "LibraryDialogAddAppTag".into(),
+        Message::LibraryDialogAddGameTag => "LibraryDialogAddGameTag".into(),
+        Message::LibraryDialogRemoveTag(name) => format!("LibraryDialogRemoveTag({name})"),
+        Message::SaveLibraryDialog => "SaveLibraryDialog".into(),
+        Message::SaveLibraryAndAddAnother => "SaveLibraryAndAddAnother".into(),
         Message::SetFilterLibrary(_) => "SetFilterLibrary".into(),
-        Message::SetRootDisplayName(..) => "SetRootDisplayName".into(),
-        Message::UpdateRootDisplayName(_) => "UpdateRootDisplayName".into(),
     }
 }
 
@@ -520,54 +546,9 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
             app.timeline_scrubbing = false;
             sync_timeline_scrub_selection(app, app.timeline_scrub_value);
         }
-        Message::RootInputChanged(value) => {
-            app.state.apply(AppMessage::SetRootInput);
-            app.state.set_root_input(value);
-        }
         Message::SelectRoot(id) => {
             app.state.apply(AppMessage::SetSelectedRoot);
             app.state.set_selected_root(Some(id));
-            app.root_display_name_input = app
-                .state
-                .library_roots
-                .iter()
-                .find(|r| r.id == id)
-                .and_then(|r| r.display_name.clone())
-                .unwrap_or_default();
-            refresh_root_tags_preview(app);
-        }
-        Message::AddRoot => {
-            if let Some(path) = normalized_input_path(&app.state.root_input)
-                && with_storage(&app.runtime, |storage| storage.upsert_source_root(&path)).is_ok()
-            {
-                persist_root_to_config(&app.runtime.config_file, &path);
-                refresh_roots(app);
-                app.state.clear_selection_and_input();
-                app.root_status = app.i18n.text(TextKey::RootActionSuccess).to_owned();
-                app.activity_status = app.i18n.text(TextKey::LoadingIndexingLabel).to_owned();
-                return spawn_background_work(
-                    app,
-                    BackgroundWorkReason::UserOrSystem,
-                    BackgroundWorkMode::IndexAndProject,
-                );
-            } else {
-                app.root_status = app.i18n.text(TextKey::ErrorInvalidRootPathLabel).to_owned();
-            }
-        }
-        Message::UpdateRoot => {
-            if let (Some(id), Some(path)) = (
-                app.state.selected_root_id,
-                normalized_input_path(&app.state.root_input),
-            ) && with_storage(&app.runtime, |storage| {
-                storage.update_source_root_path(id, &path)
-            })
-            .is_ok()
-            {
-                refresh_roots(app);
-                app.root_status = app.i18n.text(TextKey::RootActionSuccess).to_owned();
-            } else {
-                app.root_status = app.i18n.text(TextKey::ErrorInvalidRootPathLabel).to_owned();
-            }
         }
         Message::DeactivateRoot => {
             if let Some(id) = app.state.selected_root_id
@@ -578,6 +559,9 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
             {
                 refresh_roots(app);
                 app.root_status = app.i18n.text(TextKey::RootActionSuccess).to_owned();
+                if matches!(app.library_dialog_mode, LibraryDialogMode::Edit(_)) {
+                    app.library_dialog_open = false;
+                }
             }
         }
         Message::ReactivateRoot => {
@@ -589,6 +573,9 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
             {
                 refresh_roots(app);
                 app.root_status = app.i18n.text(TextKey::RootActionSuccess).to_owned();
+                if matches!(app.library_dialog_mode, LibraryDialogMode::Edit(_)) {
+                    app.library_dialog_open = false;
+                }
             }
         }
         Message::RemoveRoot => {
@@ -599,6 +586,7 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
                 app.state.apply(AppMessage::ClearRootSelection);
                 app.state.clear_selection_and_input();
                 app.root_status = app.i18n.text(TextKey::RootActionSuccess).to_owned();
+                app.library_dialog_open = false;
                 app.activity_status = app.i18n.text(TextKey::LoadingGalleryLabel).to_owned();
                 return spawn_background_work(
                     app,
@@ -714,12 +702,6 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
                 BackgroundWorkMode::IndexAndProject,
             );
         }
-        Message::BrowseFolder => {
-            if let Some(path) = rfd::FileDialog::new().pick_folder() {
-                app.state.apply(AppMessage::SetRootInput);
-                app.state.set_root_input(path.display().to_string());
-            }
-        }
         Message::FilesystemChanged => {
             app.activity_status = app.i18n.text(TextKey::LoadingIndexingLabel).to_owned();
             return spawn_background_work(
@@ -771,36 +753,6 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
                 BackgroundWorkReason::UserOrSystem,
                 BackgroundWorkMode::IndexAndProject,
             );
-        }
-        Message::RootTagInputChanged(value) => {
-            app.root_tag_input = value;
-        }
-        Message::AddRootAppTag => {
-            if add_root_tag(app, TagKind::App) {
-                return spawn_background_work(
-                    app,
-                    BackgroundWorkReason::UserOrSystem,
-                    BackgroundWorkMode::IndexAndProject,
-                );
-            }
-        }
-        Message::AddRootGameTag => {
-            if add_root_tag(app, TagKind::Game) {
-                return spawn_background_work(
-                    app,
-                    BackgroundWorkReason::UserOrSystem,
-                    BackgroundWorkMode::IndexAndProject,
-                );
-            }
-        }
-        Message::RemoveRootTag(tag_name) => {
-            if remove_root_tag(app, &tag_name) {
-                return spawn_background_work(
-                    app,
-                    BackgroundWorkReason::UserOrSystem,
-                    BackgroundWorkMode::IndexAndProject,
-                );
-            }
         }
         Message::TimelineScrubChanged(value) => {
             return apply_timeline_scrub(app, value, true);
@@ -854,8 +806,57 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
         Message::CloseSettings => {
             app.settings_open = false;
         }
-        Message::ToggleShowManualPath => {
-            app.show_manual_path = !app.show_manual_path;
+        Message::OpenAbout => {
+            app.about_open = true;
+        }
+        Message::CloseAbout => {
+            app.about_open = false;
+        }
+        Message::OpenAddLibraryDialog => {
+            open_add_library_dialog(app);
+        }
+        Message::OpenEditLibraryDialog(root_id) => {
+            open_edit_library_dialog(app, root_id);
+        }
+        Message::CloseLibraryDialog => {
+            app.library_dialog_open = false;
+        }
+        Message::LibraryDialogBrowseFolder => {
+            if let Some(path) = rfd::FileDialog::new().pick_folder() {
+                app.library_dialog_path_input = path.display().to_string();
+            }
+        }
+        Message::LibraryDialogPathInputChanged(value) => {
+            app.library_dialog_path_input = value;
+        }
+        Message::LibraryDialogDisplayNameChanged(value) => {
+            app.library_dialog_display_name_input = value;
+        }
+        Message::ToggleLibraryDialogManualPath => {
+            app.library_dialog_manual_path_open = !app.library_dialog_manual_path_open;
+        }
+        Message::LibraryDialogTagInputChanged(value) => {
+            app.library_dialog_tag_input = value;
+        }
+        Message::LibraryDialogAddAppTag => {
+            add_library_dialog_tag(app, TagKind::App);
+        }
+        Message::LibraryDialogAddGameTag => {
+            add_library_dialog_tag(app, TagKind::Game);
+        }
+        Message::LibraryDialogRemoveTag(tag_name) => {
+            app.library_dialog_tags
+                .retain(|(name, _)| !name.eq_ignore_ascii_case(&tag_name));
+        }
+        Message::SaveLibraryDialog => {
+            if let Some(task) = save_library_dialog(app, false) {
+                return task;
+            }
+        }
+        Message::SaveLibraryAndAddAnother => {
+            if let Some(task) = save_library_dialog(app, true) {
+                return task;
+            }
         }
         Message::SetFilterLibrary(root_id) => {
             app.filter_source_root_id = root_id;
@@ -865,19 +866,6 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
                 BackgroundWorkReason::UserOrSystem,
                 BackgroundWorkMode::ProjectOnly,
             );
-        }
-        Message::SetRootDisplayName(_root_id, value) => {
-            app.root_display_name_input = value;
-        }
-        Message::UpdateRootDisplayName(root_id) => {
-            if with_storage(&app.runtime, |storage| {
-                storage.update_source_root_display_name(root_id, app.root_display_name_input.trim())
-            })
-            .is_ok()
-            {
-                app.root_display_name_input.clear();
-                refresh_roots(app);
-            }
         }
     }
 
@@ -912,14 +900,22 @@ fn view(app: &Librapix) -> Element<'_, Message> {
             .width(Length::Fixed(40.0))
             .height(Length::Fixed(40.0))
             .content_fit(ContentFit::Contain),
-        text("Libra").size(FONT_DISPLAY).color(TEXT_PRIMARY),
-        text("Pix").size(FONT_DISPLAY).color(ACCENT),
+        row![
+            text("Libra").size(FONT_DISPLAY).color(TEXT_PRIMARY),
+            text("Pix").size(FONT_DISPLAY).color(ACCENT),
+        ]
+        .spacing(0)
+        .align_y(iced::Alignment::Center),
     ]
-    .spacing(0)
+    .spacing(SPACE_SM)
     .align_y(iced::Alignment::Center);
 
     let settings_btn = button(text(app.i18n.text(TextKey::SettingsButtonLabel)).size(FONT_BODY))
         .on_press(Message::OpenSettings)
+        .style(subtle_button_style)
+        .padding([SPACE_XS as u16, SPACE_MD as u16]);
+    let about_btn = button(text(app.i18n.text(TextKey::AboutButtonLabel)).size(FONT_BODY))
+        .on_press(Message::OpenAbout)
         .style(subtle_button_style)
         .padding([SPACE_XS as u16, SPACE_MD as u16]);
 
@@ -960,6 +956,7 @@ fn view(app: &Librapix) -> Element<'_, Message> {
                 .size(FONT_CAPTION)
                 .color(ACCENT),
             settings_btn,
+            about_btn,
             github_btn,
         ]
         .spacing(SPACE_SM)
@@ -1036,101 +1033,40 @@ fn view(app: &Librapix) -> Element<'_, Message> {
                     RootLifecycle::Deactivated => TEXT_DISABLED,
                 };
                 col.push(
-                    button(
-                        row![
-                            text("\u{25CF}").size(FONT_CAPTION).color(status_color),
-                            text(label).size(FONT_BODY).color(if is_selected {
-                                TEXT_PRIMARY
-                            } else {
-                                TEXT_SECONDARY
-                            }),
-                        ]
-                        .spacing(SPACE_SM)
-                        .align_y(iced::Alignment::Center),
-                    )
-                    .width(Length::Fill)
-                    .on_press(Message::SelectRoot(root.id))
-                    .style(nav_button_style(is_selected))
-                    .padding([SPACE_XS as u16, SPACE_SM as u16]),
+                    row![
+                        button(
+                            row![
+                                text("\u{25CF}").size(FONT_CAPTION).color(status_color),
+                                text(label).size(FONT_BODY).color(if is_selected {
+                                    TEXT_PRIMARY
+                                } else {
+                                    TEXT_SECONDARY
+                                }),
+                            ]
+                            .spacing(SPACE_SM)
+                            .align_y(iced::Alignment::Center),
+                        )
+                        .width(Length::Fill)
+                        .on_press(Message::SelectRoot(root.id))
+                        .style(nav_button_style(is_selected))
+                        .padding([SPACE_XS as u16, SPACE_SM as u16]),
+                        button(text(app.i18n.text(TextKey::RootEditButton)).size(FONT_CAPTION))
+                            .on_press(Message::OpenEditLibraryDialog(root.id))
+                            .style(subtle_button_style)
+                            .padding([SPACE_2XS as u16, SPACE_SM as u16]),
+                    ]
+                    .spacing(SPACE_XS)
+                    .align_y(iced::Alignment::Center),
                 )
             })
             .into()
-    };
-
-    let selected_root_actions: Element<'_, Message> =
-        if let Some(root_id) = app.state.selected_root_id {
-            column![
-                row![
-                    text_input(
-                        app.i18n.text(TextKey::DisplayNamePlaceholder),
-                        &app.root_display_name_input,
-                    )
-                    .on_input(move |v| Message::SetRootDisplayName(root_id, v))
-                    .style(field_input_style)
-                    .width(Length::Fill),
-                    button(text(app.i18n.text(TextKey::ApplyLabel)).size(FONT_CAPTION))
-                        .on_press(Message::UpdateRootDisplayName(root_id))
-                        .style(subtle_button_style)
-                        .padding([SPACE_2XS as u16, SPACE_SM as u16]),
-                ]
-                .spacing(SPACE_XS),
-                row![
-                    button(text(app.i18n.text(TextKey::RootUpdateButton)).size(FONT_CAPTION))
-                        .on_press(Message::UpdateRoot)
-                        .style(subtle_button_style)
-                        .padding([SPACE_2XS as u16, SPACE_SM as u16]),
-                    button(text(app.i18n.text(TextKey::RootDeactivateButton)).size(FONT_CAPTION))
-                        .on_press(Message::DeactivateRoot)
-                        .style(subtle_button_style)
-                        .padding([SPACE_2XS as u16, SPACE_SM as u16]),
-                ]
-                .spacing(SPACE_XS),
-                row![
-                    button(text(app.i18n.text(TextKey::RootReactivateButton)).size(FONT_CAPTION))
-                        .on_press(Message::ReactivateRoot)
-                        .style(subtle_button_style)
-                        .padding([SPACE_2XS as u16, SPACE_SM as u16]),
-                    button(text(app.i18n.text(TextKey::RootRemoveButton)).size(FONT_CAPTION))
-                        .on_press(Message::RemoveRoot)
-                        .style(subtle_button_style)
-                        .padding([SPACE_2XS as u16, SPACE_SM as u16]),
-                ]
-                .spacing(SPACE_XS),
-            ]
-            .spacing(SPACE_XS)
-            .into()
-        } else {
-            column![].into()
-        };
-
-    let path_toggle_label = if app.show_manual_path {
-        app.i18n.text(TextKey::HidePathFieldLabel)
-    } else {
-        app.i18n.text(TextKey::ShowPathFieldLabel)
-    };
-    let path_field: Element<'_, Message> = if app.show_manual_path {
-        column![
-            text_input(
-                app.i18n.text(TextKey::FolderPathPlaceholder),
-                &app.state.root_input
-            )
-            .on_input(Message::RootInputChanged)
-            .style(field_input_style),
-        ]
-        .into()
-    } else {
-        column![].into()
     };
     let library_section = column![
         section_heading(app.i18n.text(TextKey::LibrarySectionLabel)),
         roots_list,
         row![
-            button(text(app.i18n.text(TextKey::BrowseFolderButton)).size(FONT_BODY))
-                .on_press(Message::BrowseFolder)
-                .style(primary_button_style)
-                .padding([SPACE_XS as u16, SPACE_MD as u16]),
-            button(text(app.i18n.text(TextKey::RootAddButton)).size(FONT_BODY))
-                .on_press(Message::AddRoot)
+            button(text(app.i18n.text(TextKey::LibraryAddButtonLabel)).size(FONT_BODY))
+                .on_press(Message::OpenAddLibraryDialog)
                 .style(action_button_style)
                 .padding([SPACE_XS as u16, SPACE_MD as u16]),
             button(text(app.i18n.text(TextKey::RootRefreshButton)).size(FONT_BODY))
@@ -1139,81 +1075,17 @@ fn view(app: &Librapix) -> Element<'_, Message> {
                 .padding([SPACE_XS as u16, SPACE_MD as u16]),
         ]
         .spacing(SPACE_XS),
-        button(text(path_toggle_label).size(FONT_CAPTION))
-            .on_press(Message::ToggleShowManualPath)
-            .style(subtle_button_style)
-            .padding([SPACE_2XS as u16, SPACE_XS as u16]),
-        path_field,
-        selected_root_actions,
         text(app.root_status.clone())
             .size(FONT_CAPTION)
             .color(TEXT_TERTIARY),
     ]
     .spacing(SPACE_SM);
 
-    // ── Sidebar: Root auto-tags ──
-    let auto_tag_section: Element<'_, Message> = if app.state.selected_root_id.is_some() {
-        let tag_list =
-            app.root_tags_preview
-                .iter()
-                .fold(column![].spacing(SPACE_2XS), |col, (name, kind)| {
-                    col.push(
-                        row![
-                            text(format!("{name} ({kind})"))
-                                .size(FONT_CAPTION)
-                                .color(TEXT_SECONDARY),
-                            Space::new().width(Length::Fill),
-                            button(
-                                text(app.i18n.text(TextKey::RootTagRemoveButton))
-                                    .size(FONT_CAPTION)
-                            )
-                            .on_press(Message::RemoveRootTag(name.clone()))
-                            .style(subtle_button_style)
-                            .padding([SPACE_2XS as u16, SPACE_XS as u16]),
-                        ]
-                        .spacing(SPACE_XS)
-                        .align_y(iced::Alignment::Center),
-                    )
-                });
-
-        column![
-            section_heading(app.i18n.text(TextKey::RootTagsSectionLabel)),
-            text_input(
-                app.i18n.text(TextKey::RootTagInputPlaceholder),
-                &app.root_tag_input,
-            )
-            .on_input(Message::RootTagInputChanged)
-            .style(field_input_style),
-            row![
-                button(text(app.i18n.text(TextKey::RootTagAddButton)).size(FONT_CAPTION))
-                    .on_press(Message::AddRootAppTag)
-                    .style(subtle_button_style)
-                    .padding([SPACE_2XS as u16, SPACE_SM as u16]),
-                button(text(app.i18n.text(TextKey::RootTagGameButton)).size(FONT_CAPTION))
-                    .on_press(Message::AddRootGameTag)
-                    .style(subtle_button_style)
-                    .padding([SPACE_2XS as u16, SPACE_SM as u16]),
-            ]
-            .spacing(SPACE_XS),
-            tag_list,
-        ]
-        .spacing(SPACE_SM)
-        .into()
-    } else {
-        column![].into()
-    };
-
     let sidebar = container(
         scrollable(
-            column![
-                nav_section,
-                h_divider(),
-                library_section,
-                h_divider(),
-                auto_tag_section,
-            ]
-            .spacing(SPACE_LG)
-            .padding(SPACE_LG as u16),
+            column![nav_section, h_divider(), library_section,]
+                .spacing(SPACE_LG)
+                .padding(SPACE_LG as u16),
         )
         .height(Length::Fill),
     )
@@ -1265,10 +1137,16 @@ fn view(app: &Librapix) -> Element<'_, Message> {
         container(column![media_header, media_body,].spacing(SPACE_SM),)
             .padding(SPACE_LG as u16)
             .width(Length::Fill),
-        container(scrollable(details_content).height(Length::Fill))
-            .width(Length::Fixed(DETAILS_WIDTH))
-            .padding(SPACE_LG as u16)
-            .style(details_pane_style),
+        container(
+            scrollable(details_content)
+                .direction(scrollable::Direction::Vertical(
+                    scrollable::Scrollbar::default().spacing(PANEL_SCROLLBAR_SPACING),
+                ))
+                .height(Length::Fill),
+        )
+        .width(Length::Fixed(DETAILS_WIDTH))
+        .padding(SPACE_LG as u16)
+        .style(details_pane_style),
     ]
     .height(Length::Fill);
 
@@ -1293,6 +1171,18 @@ fn view(app: &Librapix) -> Element<'_, Message> {
     }
     if app.settings_open {
         overlay = stack([overlay, render_settings_dialog(app)])
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into();
+    }
+    if app.about_open {
+        overlay = stack([overlay, render_about_dialog(app)])
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into();
+    }
+    if app.library_dialog_open {
+        overlay = stack([overlay, render_library_dialog(app)])
             .width(Length::Fill)
             .height(Length::Fill)
             .into();
@@ -1561,15 +1451,10 @@ fn render_timeline_view<'a>(
             let header_item = &items[i];
             i += 1;
 
-            let count_chips: Element<'_, Message> = if let (Some(total), Some(img), Some(vid)) = (
-                header_item.group_total,
-                header_item.group_image_count,
-                header_item.group_video_count,
-            ) {
+            let count_chips: Element<'_, Message> = if let (Some(img), Some(vid)) =
+                (header_item.group_image_count, header_item.group_video_count)
+            {
                 row![
-                    text(format!("{total}"))
-                        .size(FONT_CAPTION)
-                        .color(TEXT_SECONDARY),
                     image(image::Handle::from_path(assets::icon_type_image()))
                         .width(Length::Fixed(14.0))
                         .height(Length::Fixed(14.0))
@@ -2070,12 +1955,267 @@ fn render_settings_dialog(app: &Librapix) -> Element<'_, Message> {
 
     let dialog = container(
         scrollable(dialog_content)
+            .direction(scrollable::Direction::Vertical(
+                scrollable::Scrollbar::default().spacing(PANEL_SCROLLBAR_SPACING),
+            ))
             .height(Length::Fill)
             .width(Length::Fill),
     )
     .width(Length::Fill)
     .max_width(480.0)
     .max_height(560.0)
+    .padding(SPACE_LG as u16)
+    .style(modal_dialog_style);
+
+    container(
+        container(dialog)
+            .center_x(Length::Fill)
+            .center_y(Length::Fill),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .padding([SPACE_2XL as u16, SPACE_XL as u16])
+    .style(modal_backdrop_style)
+    .into()
+}
+
+fn render_about_dialog(app: &Librapix) -> Element<'_, Message> {
+    let dialog_content = column![
+        row![
+            text(app.i18n.text(TextKey::AboutDialogTitle))
+                .size(FONT_TITLE)
+                .color(TEXT_PRIMARY),
+            Space::new().width(Length::Fill),
+            button(text(app.i18n.text(TextKey::DismissButton)).size(FONT_BODY))
+                .on_press(Message::CloseAbout)
+                .style(subtle_button_style)
+                .padding([SPACE_XS as u16, SPACE_MD as u16]),
+        ]
+        .align_y(iced::Alignment::Center),
+        h_divider(),
+        row![
+            svg(svg::Handle::from_path(assets::logo_svg()))
+                .width(Length::Fixed(44.0))
+                .height(Length::Fixed(44.0))
+                .content_fit(ContentFit::Contain),
+            row![
+                text("Libra").size(FONT_SUBTITLE).color(TEXT_PRIMARY),
+                text("Pix").size(FONT_SUBTITLE).color(ACCENT),
+            ]
+            .spacing(0)
+            .align_y(iced::Alignment::Center),
+        ]
+        .spacing(SPACE_SM)
+        .align_y(iced::Alignment::Center),
+        text(app.i18n.text(TextKey::AboutCreatorLabel))
+            .size(FONT_BODY)
+            .color(TEXT_SECONDARY),
+        text(app.i18n.text(TextKey::AboutWeekendProjectNote))
+            .size(FONT_BODY)
+            .color(TEXT_SECONDARY),
+        text(app.i18n.text(TextKey::AboutVibeCodeNote))
+            .size(FONT_BODY)
+            .color(TEXT_SECONDARY),
+    ]
+    .spacing(SPACE_LG);
+
+    let dialog = container(dialog_content)
+        .width(Length::Fill)
+        .max_width(460.0)
+        .padding(SPACE_LG as u16)
+        .style(modal_dialog_style);
+
+    container(
+        container(dialog)
+            .center_x(Length::Fill)
+            .center_y(Length::Fill),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .padding([SPACE_2XL as u16, SPACE_XL as u16])
+    .style(modal_backdrop_style)
+    .into()
+}
+
+fn render_library_dialog(app: &Librapix) -> Element<'_, Message> {
+    let (title, is_add_mode, edit_root_id) = match app.library_dialog_mode {
+        LibraryDialogMode::Add => (app.i18n.text(TextKey::LibraryDialogAddTitle), true, None),
+        LibraryDialogMode::Edit(root_id) => (
+            app.i18n.text(TextKey::LibraryDialogEditTitle),
+            false,
+            Some(root_id),
+        ),
+    };
+
+    let path_toggle_label = if app.library_dialog_manual_path_open {
+        app.i18n.text(TextKey::HidePathFieldLabel)
+    } else {
+        app.i18n.text(TextKey::ShowPathFieldLabel)
+    };
+
+    let path_field: Element<'_, Message> = if app.library_dialog_manual_path_open {
+        text_input(
+            app.i18n.text(TextKey::FolderPathPlaceholder),
+            &app.library_dialog_path_input,
+        )
+        .on_input(Message::LibraryDialogPathInputChanged)
+        .style(field_input_style)
+        .into()
+    } else {
+        column![].into()
+    };
+
+    let tags_list = if app.library_dialog_tags.is_empty() {
+        column![
+            text(app.i18n.text(TextKey::FilterNoTagsLabel))
+                .size(FONT_CAPTION)
+                .color(TEXT_TERTIARY)
+        ]
+    } else {
+        app.library_dialog_tags
+            .iter()
+            .fold(column![].spacing(SPACE_2XS), |col, (name, kind)| {
+                col.push(
+                    row![
+                        text(format!("{name} ({})", kind.as_str()))
+                            .size(FONT_CAPTION)
+                            .color(TEXT_SECONDARY),
+                        Space::new().width(Length::Fill),
+                        button(
+                            text(app.i18n.text(TextKey::RootTagRemoveButton)).size(FONT_CAPTION)
+                        )
+                        .on_press(Message::LibraryDialogRemoveTag(name.clone()))
+                        .style(subtle_button_style)
+                        .padding([SPACE_2XS as u16, SPACE_XS as u16]),
+                    ]
+                    .spacing(SPACE_XS)
+                    .align_y(iced::Alignment::Center),
+                )
+            })
+    };
+
+    let lifecycle_actions: Element<'_, Message> = if edit_root_id.is_some() {
+        column![
+            h_divider(),
+            row![
+                button(text(app.i18n.text(TextKey::RootDeactivateButton)).size(FONT_CAPTION))
+                    .on_press(Message::DeactivateRoot)
+                    .style(subtle_button_style)
+                    .padding([SPACE_2XS as u16, SPACE_SM as u16]),
+                button(text(app.i18n.text(TextKey::RootReactivateButton)).size(FONT_CAPTION))
+                    .on_press(Message::ReactivateRoot)
+                    .style(subtle_button_style)
+                    .padding([SPACE_2XS as u16, SPACE_SM as u16]),
+                button(text(app.i18n.text(TextKey::RootRemoveButton)).size(FONT_CAPTION))
+                    .on_press(Message::RemoveRoot)
+                    .style(subtle_button_style)
+                    .padding([SPACE_2XS as u16, SPACE_SM as u16]),
+            ]
+            .spacing(SPACE_XS),
+        ]
+        .into()
+    } else {
+        column![].into()
+    };
+
+    let add_another_button: Element<'_, Message> = if is_add_mode {
+        button(text(app.i18n.text(TextKey::LibrarySaveAndAddAnotherButton)).size(FONT_BODY))
+            .on_press(Message::SaveLibraryAndAddAnother)
+            .style(action_button_style)
+            .padding([SPACE_SM as u16, SPACE_MD as u16])
+            .into()
+    } else {
+        column![].into()
+    };
+
+    let dialog_content = column![
+        row![
+            text(title).size(FONT_TITLE).color(TEXT_PRIMARY),
+            Space::new().width(Length::Fill),
+            button(text(app.i18n.text(TextKey::DismissButton)).size(FONT_BODY))
+                .on_press(Message::CloseLibraryDialog)
+                .style(subtle_button_style)
+                .padding([SPACE_XS as u16, SPACE_MD as u16]),
+        ]
+        .align_y(iced::Alignment::Center),
+        h_divider(),
+        column![
+            section_heading(app.i18n.text(TextKey::LibraryPathLabel)),
+            row![
+                button(text(app.i18n.text(TextKey::BrowseFolderButton)).size(FONT_BODY))
+                    .on_press(Message::LibraryDialogBrowseFolder)
+                    .style(primary_button_style)
+                    .padding([SPACE_XS as u16, SPACE_MD as u16]),
+                button(text(path_toggle_label).size(FONT_CAPTION))
+                    .on_press(Message::ToggleLibraryDialogManualPath)
+                    .style(subtle_button_style)
+                    .padding([SPACE_2XS as u16, SPACE_SM as u16]),
+            ]
+            .spacing(SPACE_XS),
+            path_field,
+            text(app.library_dialog_path_input.as_str())
+                .size(FONT_CAPTION)
+                .color(TEXT_TERTIARY),
+        ]
+        .spacing(SPACE_SM),
+        h_divider(),
+        column![
+            section_heading(app.i18n.text(TextKey::LibraryDisplayNameLabel)),
+            text_input(
+                app.i18n.text(TextKey::DisplayNamePlaceholder),
+                &app.library_dialog_display_name_input,
+            )
+            .on_input(Message::LibraryDialogDisplayNameChanged)
+            .style(field_input_style),
+        ]
+        .spacing(SPACE_SM),
+        h_divider(),
+        column![
+            section_heading(app.i18n.text(TextKey::LibraryTagsLabel)),
+            text_input(
+                app.i18n.text(TextKey::RootTagInputPlaceholder),
+                &app.library_dialog_tag_input,
+            )
+            .on_input(Message::LibraryDialogTagInputChanged)
+            .style(field_input_style),
+            row![
+                button(text(app.i18n.text(TextKey::RootTagAddButton)).size(FONT_CAPTION))
+                    .on_press(Message::LibraryDialogAddAppTag)
+                    .style(subtle_button_style)
+                    .padding([SPACE_2XS as u16, SPACE_SM as u16]),
+                button(text(app.i18n.text(TextKey::RootTagGameButton)).size(FONT_CAPTION))
+                    .on_press(Message::LibraryDialogAddGameTag)
+                    .style(subtle_button_style)
+                    .padding([SPACE_2XS as u16, SPACE_SM as u16]),
+            ]
+            .spacing(SPACE_XS),
+            tags_list,
+        ]
+        .spacing(SPACE_SM),
+        lifecycle_actions,
+        h_divider(),
+        row![
+            button(text(app.i18n.text(TextKey::LibrarySaveButton)).size(FONT_BODY))
+                .on_press(Message::SaveLibraryDialog)
+                .style(primary_button_style)
+                .padding([SPACE_SM as u16, SPACE_MD as u16]),
+            add_another_button,
+        ]
+        .spacing(SPACE_XS),
+    ]
+    .spacing(SPACE_LG);
+
+    let dialog = container(
+        scrollable(dialog_content)
+            .direction(scrollable::Direction::Vertical(
+                scrollable::Scrollbar::default().spacing(PANEL_SCROLLBAR_SPACING),
+            ))
+            .height(Length::Fill)
+            .width(Length::Fill),
+    )
+    .width(Length::Fill)
+    .max_width(560.0)
+    .max_height(640.0)
     .padding(SPACE_LG as u16)
     .style(modal_dialog_style);
 
@@ -2752,6 +2892,148 @@ fn normalized_input_path(value: &str) -> Option<PathBuf> {
     Some(lexical_normalize_path(&PathBuf::from(trimmed), &cwd))
 }
 
+fn open_add_library_dialog(app: &mut Librapix) {
+    app.library_dialog_mode = LibraryDialogMode::Add;
+    app.library_dialog_open = true;
+    app.library_dialog_manual_path_open = false;
+    app.library_dialog_path_input.clear();
+    app.library_dialog_display_name_input.clear();
+    app.library_dialog_tag_input.clear();
+    app.library_dialog_tags.clear();
+}
+
+fn open_edit_library_dialog(app: &mut Librapix, root_id: i64) {
+    app.state.apply(AppMessage::SetSelectedRoot);
+    app.state.set_selected_root(Some(root_id));
+    app.library_dialog_mode = LibraryDialogMode::Edit(root_id);
+    app.library_dialog_open = true;
+    app.library_dialog_manual_path_open = false;
+
+    if let Some(root) = app.state.library_roots.iter().find(|r| r.id == root_id) {
+        app.library_dialog_path_input = root.normalized_path.display().to_string();
+        app.library_dialog_display_name_input = root.display_name.clone().unwrap_or_default();
+    }
+
+    app.library_dialog_tags = with_storage(&app.runtime, |storage| {
+        storage.list_source_root_tags(root_id).map(|rows| {
+            rows.into_iter()
+                .map(|row| (row.tag_name, row.tag_kind))
+                .collect::<Vec<_>>()
+        })
+    })
+    .unwrap_or_default();
+    app.library_dialog_tag_input.clear();
+}
+
+fn add_library_dialog_tag(app: &mut Librapix, kind: TagKind) {
+    let tag = app.library_dialog_tag_input.trim().to_owned();
+    if tag.is_empty() {
+        return;
+    }
+    if app
+        .library_dialog_tags
+        .iter()
+        .any(|(name, _)| name.eq_ignore_ascii_case(&tag))
+    {
+        app.library_dialog_tag_input.clear();
+        return;
+    }
+    app.library_dialog_tags.push((tag, kind));
+    app.library_dialog_tag_input.clear();
+}
+
+fn sync_root_tags(
+    storage: &mut Storage,
+    root_id: i64,
+    desired_tags: &[(String, TagKind)],
+) -> Result<(), librapix_storage::StorageError> {
+    let existing = storage.list_source_root_tags(root_id)?;
+
+    for row in existing {
+        let still_present = desired_tags
+            .iter()
+            .any(|(name, kind)| name.eq_ignore_ascii_case(&row.tag_name) && *kind == row.tag_kind);
+        if !still_present {
+            storage.remove_source_root_tag(root_id, &row.tag_name)?;
+        }
+    }
+
+    for (tag_name, kind) in desired_tags {
+        storage.upsert_source_root_tag(root_id, tag_name, *kind)?;
+    }
+
+    Ok(())
+}
+
+fn save_library_dialog(app: &mut Librapix, keep_open_for_add: bool) -> Option<Task<Message>> {
+    let Some(path) = normalized_input_path(&app.library_dialog_path_input) else {
+        app.root_status = app.i18n.text(TextKey::ErrorInvalidRootPathLabel).to_owned();
+        return None;
+    };
+    let display_name = app.library_dialog_display_name_input.trim().to_owned();
+    let desired_tags = app.library_dialog_tags.clone();
+    let mode = app.library_dialog_mode;
+
+    let root_id_result = with_storage(&app.runtime, |storage| {
+        let root_id = match mode {
+            LibraryDialogMode::Add => {
+                storage.upsert_source_root(&path)?;
+                let roots = storage.list_source_roots()?;
+                let Some(root_id) = roots
+                    .iter()
+                    .find(|root| root.normalized_path == path)
+                    .map(|root| root.id)
+                else {
+                    return Err(librapix_storage::StorageError::InvalidSourcePath(
+                        path.clone(),
+                    ));
+                };
+                root_id
+            }
+            LibraryDialogMode::Edit(root_id) => {
+                storage.update_source_root_path(root_id, &path)?;
+                root_id
+            }
+        };
+
+        storage.update_source_root_display_name(root_id, &display_name)?;
+        sync_root_tags(storage, root_id, &desired_tags)?;
+        Ok(root_id)
+    });
+
+    let root_id = match root_id_result {
+        Ok(id) => id,
+        Err(_) => {
+            app.root_status = app.i18n.text(TextKey::ErrorInvalidRootPathLabel).to_owned();
+            return None;
+        }
+    };
+
+    persist_root_to_config(&app.runtime.config_file, &path);
+    refresh_roots(app);
+    app.state.apply(AppMessage::SetSelectedRoot);
+    app.state.set_selected_root(Some(root_id));
+
+    app.root_status = app.i18n.text(TextKey::RootActionSuccess).to_owned();
+    app.activity_status = app.i18n.text(TextKey::LoadingIndexingLabel).to_owned();
+
+    if matches!(mode, LibraryDialogMode::Add) && keep_open_for_add {
+        app.library_dialog_mode = LibraryDialogMode::Add;
+        app.library_dialog_path_input.clear();
+        app.library_dialog_display_name_input.clear();
+        app.library_dialog_tag_input.clear();
+        app.library_dialog_tags.clear();
+    } else {
+        app.library_dialog_open = false;
+    }
+
+    Some(spawn_background_work(
+        app,
+        BackgroundWorkReason::UserOrSystem,
+        BackgroundWorkMode::IndexAndProject,
+    ))
+}
+
 fn refresh_roots(app: &mut Librapix) {
     let roots = with_storage(&app.runtime, |storage| {
         storage.reconcile_source_root_availability()?;
@@ -2762,50 +3044,6 @@ fn refresh_roots(app: &mut Librapix) {
     app.state.apply(AppMessage::ReplaceLibraryRoots);
     app.state.replace_library_roots(roots);
     refresh_ignore_rules_preview(app);
-}
-
-fn add_root_tag(app: &mut Librapix, kind: TagKind) -> bool {
-    let Some(root_id) = app.state.selected_root_id else {
-        return false;
-    };
-    let tag = app.root_tag_input.trim().to_owned();
-    if tag.is_empty() {
-        return false;
-    }
-    let _ = with_storage(&app.runtime, |storage| {
-        storage.upsert_source_root_tag(root_id, &tag, kind)
-    });
-    app.root_tag_input.clear();
-    refresh_root_tags_preview(app);
-    true
-}
-
-fn remove_root_tag(app: &mut Librapix, tag_name: &str) -> bool {
-    let Some(root_id) = app.state.selected_root_id else {
-        return false;
-    };
-    let _ = with_storage(&app.runtime, |storage| {
-        storage.remove_source_root_tag(root_id, tag_name)
-    });
-    refresh_root_tags_preview(app);
-    true
-}
-
-fn refresh_root_tags_preview(app: &mut Librapix) {
-    let Some(root_id) = app.state.selected_root_id else {
-        app.root_tags_preview.clear();
-        return;
-    };
-    let tags = with_storage(&app.runtime, |storage| {
-        storage.list_source_root_tags(root_id)
-    })
-    .map(|rows| {
-        rows.into_iter()
-            .map(|r| (r.tag_name, r.tag_kind.as_str().to_owned()))
-            .collect::<Vec<_>>()
-    })
-    .unwrap_or_default();
-    app.root_tags_preview = tags;
 }
 
 fn refresh_ignore_rules_preview(app: &mut Librapix) {
@@ -3460,7 +3698,6 @@ fn browse_item_from_row(
         is_group_header: false,
         line: format!("{} [{}]", row.absolute_path.display(), row.media_kind),
         aspect_ratio: aspect_ratio_from(row.width_px, row.height_px),
-        group_total: None,
         group_image_count: None,
         group_video_count: None,
     }
@@ -3705,16 +3942,7 @@ fn do_background_work(input: BackgroundWorkInput) -> BackgroundWorkResult {
         })
         .unwrap_or_default();
 
-    if let Some(root_id) = selected_root_id {
-        out.root_tags_preview = storage
-            .list_source_root_tags(root_id)
-            .map(|rows| {
-                rows.into_iter()
-                    .map(|r| (r.tag_name, r.tag_kind.as_str().to_owned()))
-                    .collect()
-            })
-            .unwrap_or_default();
-    }
+    let _ = selected_root_id;
 
     let eligible_roots = storage.list_eligible_source_roots().unwrap_or_default();
     let roots_for_scan: Vec<ScanRoot> = eligible_roots
@@ -3904,7 +4132,6 @@ fn do_background_work(input: BackgroundWorkInput) -> BackgroundWorkResult {
                     is_group_header: false,
                     line: format!("{} [{}]", original.display(), item.media_kind),
                     aspect_ratio: 1.5,
-                    group_total: None,
                     group_image_count: None,
                     group_video_count: None,
                 }
@@ -3957,7 +4184,6 @@ fn do_background_work(input: BackgroundWorkInput) -> BackgroundWorkResult {
             is_group_header: true,
             line: bucket.label.clone(),
             aspect_ratio: 1.5,
-            group_total: Some(bucket.item_count),
             group_image_count: Some(image_count),
             group_video_count: Some(video_count),
         });
@@ -3986,7 +4212,6 @@ fn do_background_work(input: BackgroundWorkInput) -> BackgroundWorkResult {
                     is_group_header: false,
                     line: format!("{} [{}]", tl_item.absolute_path, tl_item.media_kind),
                     aspect_ratio: 1.5,
-                    group_total: None,
                     group_image_count: None,
                     group_video_count: None,
                 });
@@ -4203,7 +4428,6 @@ fn apply_background_result(app: &mut Librapix, result: BackgroundWorkResult) {
     }
     app.browse_status = result.browse_status;
     app.ignore_rules_preview = result.ignore_rules_preview;
-    app.root_tags_preview = result.root_tags_preview;
     if matches!(result.mode, BackgroundWorkMode::IndexAndProject)
         && app.state.search_query.trim().is_empty()
     {

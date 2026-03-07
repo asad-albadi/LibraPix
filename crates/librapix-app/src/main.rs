@@ -360,6 +360,8 @@ const MEDIA_SCROLLBAR_SPACING: f32 = SPACE_XS as f32;
 const PANEL_SCROLLBAR_SPACING: f32 = SPACE_XS as f32;
 const SCRUBBER_PANEL_WIDTH: f32 = 168.0;
 const SCRUBBER_CHIP_TRACK_WIDTH: f32 = 96.0;
+const FILTER_DIALOG_MAX_WIDTH: f32 = 480.0;
+const FILTER_DIALOG_CHIP_ROW_MAX_WIDTH: f32 = FILTER_DIALOG_MAX_WIDTH - (SPACE_LG as f32 * 2.0);
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 const GITHUB_LATEST_RELEASE_API_URL: &str =
     "https://api.github.com/repos/asad-albadi/LibraPix/releases/latest";
@@ -1981,60 +1983,117 @@ fn render_timeline_scrubber(app: &Librapix) -> Element<'_, Message> {
         .into()
 }
 
+#[derive(Debug, Clone)]
+struct FilterChipSpec {
+    label: String,
+    on_press: Message,
+    active: bool,
+}
+
+fn estimate_filter_chip_width(label: &str) -> f32 {
+    // Approximate text + horizontal button chrome for wrapping decisions.
+    // Keep this estimate slightly conservative, but not so high that rows
+    // break too early and leave obvious right-side whitespace.
+    let glyph_width = 6.4;
+    let text_width = label.chars().count() as f32 * glyph_width;
+    let horizontal_padding = (SPACE_MD * 2) as f32;
+    let estimated = text_width + horizontal_padding + 8.0;
+    estimated.max(56.0)
+}
+
+fn render_wrapped_filter_chips(chips: Vec<FilterChipSpec>) -> Element<'static, Message> {
+    let mut rows: Vec<Vec<FilterChipSpec>> = Vec::new();
+    let mut current_row: Vec<FilterChipSpec> = Vec::new();
+    let mut current_row_width = 0.0_f32;
+
+    for chip in chips {
+        let chip_width = estimate_filter_chip_width(&chip.label);
+        let spacing = if current_row.is_empty() {
+            0.0
+        } else {
+            SPACE_SM as f32
+        };
+        let would_overflow =
+            !current_row.is_empty() && (current_row_width + spacing + chip_width) > FILTER_DIALOG_CHIP_ROW_MAX_WIDTH;
+
+        if would_overflow {
+            rows.push(current_row);
+            current_row = Vec::new();
+            current_row_width = 0.0;
+        }
+
+        if !current_row.is_empty() {
+            current_row_width += SPACE_SM as f32;
+        }
+        current_row_width += chip_width;
+        current_row.push(chip);
+    }
+
+    if !current_row.is_empty() {
+        rows.push(current_row);
+    }
+
+    let mut wrapped_rows = column![].spacing(SPACE_SM);
+    for row_chips in rows {
+        let mut chip_row = row![].spacing(SPACE_SM).align_y(iced::Alignment::Center);
+        for chip in row_chips {
+            chip_row = chip_row.push(
+                button(text(chip.label).size(FONT_BODY))
+                    .on_press(chip.on_press)
+                    .style(filter_chip_style(chip.active))
+                    .padding([SPACE_XS as u16, SPACE_MD as u16]),
+            );
+        }
+        wrapped_rows = wrapped_rows.push(chip_row);
+    }
+
+    wrapped_rows.into()
+}
+
 fn render_filter_dialog(app: &Librapix) -> Element<'_, Message> {
-    let type_chips = row![
-        button(text(app.i18n.text(TextKey::FilterAllLabel)).size(FONT_BODY))
-            .on_press(Message::SetFilterMediaKind(None))
-            .style(filter_chip_style(app.filter_media_kind.is_none()))
-            .padding([SPACE_XS as u16, SPACE_MD as u16]),
-        button(text(app.i18n.text(TextKey::FilterImagesLabel)).size(FONT_BODY))
-            .on_press(Message::SetFilterMediaKind(Some("image".to_owned())))
-            .style(filter_chip_style(
-                app.filter_media_kind.as_deref() == Some("image"),
-            ))
-            .padding([SPACE_XS as u16, SPACE_MD as u16]),
-        button(text(app.i18n.text(TextKey::FilterVideosLabel)).size(FONT_BODY))
-            .on_press(Message::SetFilterMediaKind(Some("video".to_owned())))
-            .style(filter_chip_style(
-                app.filter_media_kind.as_deref() == Some("video"),
-            ))
-            .padding([SPACE_XS as u16, SPACE_MD as u16]),
-    ]
-    .spacing(SPACE_SM);
+    let type_chips = render_wrapped_filter_chips(vec![
+        FilterChipSpec {
+            label: app.i18n.text(TextKey::FilterAllLabel).to_owned(),
+            on_press: Message::SetFilterMediaKind(None),
+            active: app.filter_media_kind.is_none(),
+        },
+        FilterChipSpec {
+            label: app.i18n.text(TextKey::FilterImagesLabel).to_owned(),
+            on_press: Message::SetFilterMediaKind(Some("image".to_owned())),
+            active: app.filter_media_kind.as_deref() == Some("image"),
+        },
+        FilterChipSpec {
+            label: app.i18n.text(TextKey::FilterVideosLabel).to_owned(),
+            on_press: Message::SetFilterMediaKind(Some("video".to_owned())),
+            active: app.filter_media_kind.as_deref() == Some("video"),
+        },
+    ]);
 
     let ext_list: &[&str] = match app.filter_media_kind.as_deref() {
         Some("image") => &["png", "jpg", "gif", "webp"],
         Some("video") => &["mp4", "mov", "mkv", "webm", "avi"],
         _ => &["png", "jpg", "gif", "webp", "mp4", "mov", "mkv", "webm"],
     };
-    let mut ext_chips = row![
-        button(text(app.i18n.text(TextKey::FilterAllLabel)).size(FONT_BODY))
-            .on_press(Message::SetFilterExtension(None))
-            .style(filter_chip_style(app.filter_extension.is_none()))
-            .padding([SPACE_XS as u16, SPACE_MD as u16]),
-    ]
-    .spacing(SPACE_SM);
+    let mut ext_chips = vec![FilterChipSpec {
+        label: app.i18n.text(TextKey::FilterAllLabel).to_owned(),
+        on_press: Message::SetFilterExtension(None),
+        active: app.filter_extension.is_none(),
+    }];
     for ext in ext_list {
         let is_active = app.filter_extension.as_deref() == Some(ext);
-        ext_chips = ext_chips.push(
-            button(text(ext.to_uppercase()).size(FONT_BODY))
-                .on_press(Message::SetFilterExtension(Some((*ext).to_owned())))
-                .style(filter_chip_style(is_active))
-                .padding([SPACE_XS as u16, SPACE_MD as u16]),
-        );
+        ext_chips.push(FilterChipSpec {
+            label: ext.to_uppercase(),
+            on_press: Message::SetFilterExtension(Some((*ext).to_owned())),
+            active: is_active,
+        });
     }
+    let ext_chips = render_wrapped_filter_chips(ext_chips);
 
-    let mut library_chip_row = row![
-        text(app.i18n.text(TextKey::FilterLibraryLabel))
-            .size(FONT_BODY)
-            .color(TEXT_SECONDARY),
-        button(text(app.i18n.text(TextKey::FilterAllLabel)).size(FONT_BODY))
-            .on_press(Message::SetFilterLibrary(None))
-            .style(filter_chip_style(app.filter_source_root_id.is_none()))
-            .padding([SPACE_XS as u16, SPACE_MD as u16]),
-    ]
-    .spacing(SPACE_SM)
-    .align_y(iced::Alignment::Center);
+    let mut library_chip_specs = vec![FilterChipSpec {
+        label: app.i18n.text(TextKey::FilterAllLabel).to_owned(),
+        on_press: Message::SetFilterLibrary(None),
+        active: app.filter_source_root_id.is_none(),
+    }];
 
     for root in &app.state.library_roots {
         let label = root
@@ -2048,69 +2107,44 @@ fn render_filter_dialog(app: &Librapix) -> Element<'_, Message> {
                     .unwrap_or_else(|| root.normalized_path.display().to_string())
             });
         let is_active = app.filter_source_root_id == Some(root.id);
-        library_chip_row = library_chip_row.push(
-            button(text(label).size(FONT_BODY))
-                .on_press(Message::SetFilterLibrary(Some(root.id)))
-                .style(filter_chip_style(is_active))
-                .padding([SPACE_XS as u16, SPACE_MD as u16]),
-        );
+        library_chip_specs.push(FilterChipSpec {
+            label,
+            on_press: Message::SetFilterLibrary(Some(root.id)),
+            active: is_active,
+        });
     }
 
-    let mut tag_chip_row = row![
-        text(app.i18n.text(TextKey::FilterTagsLabel))
-            .size(FONT_BODY)
-            .color(TEXT_SECONDARY),
-        button(text(app.i18n.text(TextKey::FilterAllLabel)).size(FONT_BODY))
-            .on_press(Message::SetFilterTag(None))
-            .style(filter_chip_style(app.filter_tag.is_none()))
-            .padding([SPACE_XS as u16, SPACE_MD as u16]),
-    ]
-    .spacing(SPACE_SM)
-    .align_y(iced::Alignment::Center);
+    let mut tag_chip_specs = vec![FilterChipSpec {
+        label: app.i18n.text(TextKey::FilterAllLabel).to_owned(),
+        on_press: Message::SetFilterTag(None),
+        active: app.filter_tag.is_none(),
+    }];
 
     for tag in &app.available_filter_tags {
         let active = app
             .filter_tag
             .as_ref()
             .is_some_and(|selected| selected == tag);
-        tag_chip_row = tag_chip_row.push(
-            button(text(tag.as_str()).size(FONT_BODY))
-                .on_press(Message::SetFilterTag(Some(tag.clone())))
-                .style(filter_chip_style(active))
-                .padding([SPACE_XS as u16, SPACE_MD as u16]),
-        );
+        tag_chip_specs.push(FilterChipSpec {
+            label: tag.clone(),
+            on_press: Message::SetFilterTag(Some(tag.clone())),
+            active,
+        });
     }
 
     let tag_section: Element<'_, Message> = if app.available_filter_tags.is_empty() {
-        row![
-            text(app.i18n.text(TextKey::FilterTagsLabel))
-                .size(FONT_BODY)
-                .color(TEXT_SECONDARY),
-            text(app.i18n.text(TextKey::FilterNoTagsLabel))
-                .size(FONT_BODY)
-                .color(TEXT_TERTIARY),
-        ]
-        .spacing(SPACE_SM)
-        .into()
-    } else {
-        scrollable(tag_chip_row)
-            .direction(scrollable::Direction::Horizontal(
-                scrollable::Scrollbar::default(),
-            ))
-            .width(Length::Fill)
-            .height(Length::Shrink)
+        text(app.i18n.text(TextKey::FilterNoTagsLabel))
+            .size(FONT_BODY)
+            .color(TEXT_TERTIARY)
             .into()
+    } else {
+        render_wrapped_filter_chips(tag_chip_specs)
     };
 
     let library_section: Element<'_, Message> = if app.state.library_roots.len() > 1 {
         column![
             section_heading(app.i18n.text(TextKey::FilterLibraryLabel)),
-            scrollable(library_chip_row)
-                .direction(scrollable::Direction::Horizontal(
-                    scrollable::Scrollbar::default(),
-                ))
-                .width(Length::Fill)
-                .height(Length::Shrink),
+            render_wrapped_filter_chips(library_chip_specs),
         ]
         .spacing(SPACE_SM)
         .into()
@@ -2148,7 +2182,7 @@ fn render_filter_dialog(app: &Librapix) -> Element<'_, Message> {
 
     let dialog = container(dialog_content)
         .width(Length::Fill)
-        .max_width(480.0)
+        .max_width(FILTER_DIALOG_MAX_WIDTH)
         .padding(SPACE_LG as u16)
         .style(modal_dialog_style);
 

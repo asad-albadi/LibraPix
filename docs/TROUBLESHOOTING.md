@@ -503,6 +503,19 @@
   - Avoid `cmd /C start` for GUI open actions in Windows desktop builds.
   - Prefer shell/native open APIs for user-facing launch actions.
 
+## Filter chips overflow horizontally in Filters dialog
+
+- Symptoms
+  - Filter chips continue in a single horizontal line and can trigger a horizontal scrollbar in the dialog.
+- Affected area
+  - Filter dialog chip groups (`Type`, `Extension`, `Library`, `Tags`).
+- Confirmed cause
+  - Chip rows were rendered in fixed horizontal containers with overflow handled by horizontal `scrollable` widgets instead of adaptive wrapping.
+- Resolution
+  - Chip groups now use width-aware wrapped rows so chips continue on the next line when space is constrained.
+- Prevention guidance
+  - For chip/button groups in modals, prefer wrapped responsive rows over horizontal overflow scrolling unless carousel behavior is explicitly intended.
+
 ## Video thumbnails not showing
 
 - Symptoms

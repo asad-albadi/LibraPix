@@ -47,6 +47,8 @@ All notable changes to this project are documented in this file.
 - Windows GUI builds for `librapix-app` now use the `windows` subsystem in the binary entrypoint, preventing an extra console window from opening at startup.
 - Windows video thumbnail extraction now launches `ffmpeg.exe` with `CREATE_NO_WINDOW`, preventing terminal window flicker during startup indexing and filesystem-triggered refreshes.
 - Windows open-file/open-folder media actions now use `opener::open` instead of `cmd /C start`, removing command-window flicker and reducing launch delay when opening media.
+- Details action label changed from `Show in Folder` to `Open Folder` for consistent button sizing in the details actions row.
+- Filters dialog chips now wrap to additional lines instead of horizontal overflow scrolling for Type, Extension, Library, and Tags sections.
 - Release workflow now embeds real app icons in macOS DMG bundles (`icon.icns`) and Linux AppImage artifacts (`icon-256.png`) instead of a placeholder icon.
 - Release packaging metadata now uses canonical product naming (`LibraPix`) for generated macOS/Linux app entries.
 - Windows builds now embed `LibraPix` icon/resource metadata into the EXE via crate build script.

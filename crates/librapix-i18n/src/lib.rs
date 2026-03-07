@@ -275,7 +275,7 @@ fn en_us(key: TextKey) -> &'static str {
         TextKey::DetailsAttachGameTagButton => "Game Tag",
         TextKey::DetailsDetachTagButton => "Remove",
         TextKey::DetailsOpenFileButton => "Open",
-        TextKey::DetailsOpenFolderButton => "Show in Folder",
+        TextKey::DetailsOpenFolderButton => "Open Folder",
         TextKey::DetailsCopyFileButton => "Copy File",
         TextKey::DetailsCopyPathButton => "Copy Path",
         TextKey::DetailsCopyShortcutHint => "Shortcut: Cmd/Ctrl+C (file), Cmd/Ctrl+Shift+C (path)",

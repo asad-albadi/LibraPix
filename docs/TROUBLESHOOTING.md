@@ -532,6 +532,22 @@
   - Keep config as a faithful snapshot of storage roots after lifecycle mutations.
   - Avoid startup import paths that overwrite lifecycle state for already-persisted roots.
 
+## Dialog backdrop clicks do not close dialog / clicks pass through
+
+- Symptoms
+  - Clicking outside a dialog does not close it.
+  - Clicking within dialog whitespace can interact with underlying UI unexpectedly.
+- Affected area
+  - Modal overlay interaction handling for filter/settings/about/library/statistics/new-file dialogs.
+- Confirmed cause
+  - Modal overlays lacked explicit pointer handling for backdrop close and in-dialog event consumption.
+- Resolution
+  - Backdrop now emits a unified close-all-dialogs action.
+  - Centered dialog surface now explicitly consumes clicks so pointer events do not pass through to app content behind the modal.
+- Prevention guidance
+  - Route all modal overlays through a shared backdrop/content click-capture helper.
+  - Avoid ad-hoc per-dialog overlay containers that skip pointer capture semantics.
+
 ## Video thumbnails not showing
 
 - Symptoms

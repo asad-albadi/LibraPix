@@ -9,8 +9,8 @@ use iced::keyboard;
 use iced::keyboard::key;
 use iced::widget::image::FilterMethod;
 use iced::widget::{
-    Id, Space, button, column, container, image, operation, responsive, row, scrollable, stack,
-    svg, text, text_input, vertical_slider,
+    Id, Space, button, column, container, image, mouse_area, operation, responsive, row,
+    scrollable, stack, svg, text, text_input, vertical_slider,
 };
 use iced::{ContentFit, Element, Length, Size, Subscription, Task, Theme};
 use librapix_config::{
@@ -119,6 +119,8 @@ enum Message {
     OpenLibraryStatisticsDialog(i64),
     CloseLibraryDialog,
     CloseLibraryStatisticsDialog,
+    CloseAllDialogs,
+    ModalContentClicked,
     LibraryDialogBrowseFolder,
     LibraryDialogPathInputChanged(String),
     LibraryDialogDisplayNameChanged(String),
@@ -620,6 +622,8 @@ fn message_event_label(msg: &Message) -> String {
         Message::OpenLibraryStatisticsDialog(id) => format!("OpenLibraryStatisticsDialog({id})"),
         Message::CloseLibraryDialog => "CloseLibraryDialog".into(),
         Message::CloseLibraryStatisticsDialog => "CloseLibraryStatisticsDialog".into(),
+        Message::CloseAllDialogs => "CloseAllDialogs".into(),
+        Message::ModalContentClicked => "ModalContentClicked".into(),
         Message::LibraryDialogBrowseFolder => "LibraryDialogBrowseFolder".into(),
         Message::LibraryDialogPathInputChanged(v) => {
             format!("LibraryDialogPathInputChanged({})", v.len())
@@ -650,6 +654,15 @@ fn log_diagnostic_event(app: &mut Librapix, label: &str) {
         app.diagnostics_events
             .drain(0..(app.diagnostics_events.len() - MAX_DIAGNOSTICS_EVENTS));
     }
+}
+
+fn close_all_dialogs(app: &mut Librapix) {
+    app.filter_dialog_open = false;
+    app.settings_open = false;
+    app.about_open = false;
+    app.library_dialog_open = false;
+    app.library_stats_dialog_open = false;
+    app.new_media_announcement = None;
 }
 
 fn update(app: &mut Librapix, message: Message) -> Task<Message> {
@@ -1015,6 +1028,10 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
         Message::CloseLibraryStatisticsDialog => {
             app.library_stats_dialog_open = false;
         }
+        Message::CloseAllDialogs => {
+            close_all_dialogs(app);
+        }
+        Message::ModalContentClicked => {}
         Message::LibraryDialogBrowseFolder => {
             if let Some(path) = rfd::FileDialog::new().pick_folder() {
                 app.library_dialog_path_input = path.display().to_string();
@@ -2189,15 +2206,23 @@ fn render_filter_dialog(app: &Librapix) -> Element<'_, Message> {
         .padding(SPACE_LG as u16)
         .style(modal_dialog_style);
 
-    container(
-        container(dialog)
-            .center_x(Length::Fill)
-            .center_y(Length::Fill),
+    render_modal_overlay(dialog.into())
+}
+
+fn render_modal_overlay(dialog: Element<'_, Message>) -> Element<'_, Message> {
+    let dialog_surface = mouse_area(dialog).on_press(Message::ModalContentClicked);
+    let centered_dialog = container(dialog_surface)
+        .center_x(Length::Fill)
+        .center_y(Length::Fill);
+
+    mouse_area(
+        container(centered_dialog)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .padding([SPACE_2XL as u16, SPACE_XL as u16])
+            .style(modal_backdrop_style),
     )
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .padding([SPACE_2XL as u16, SPACE_XL as u16])
-    .style(modal_backdrop_style)
+    .on_press(Message::CloseAllDialogs)
     .into()
 }
 
@@ -2480,16 +2505,7 @@ fn render_settings_dialog(app: &Librapix) -> Element<'_, Message> {
     .padding(SPACE_LG as u16)
     .style(modal_dialog_style);
 
-    container(
-        container(dialog)
-            .center_x(Length::Fill)
-            .center_y(Length::Fill),
-    )
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .padding([SPACE_2XL as u16, SPACE_XL as u16])
-    .style(modal_backdrop_style)
-    .into()
+    render_modal_overlay(dialog.into())
 }
 
 fn render_about_dialog(app: &Librapix) -> Element<'_, Message> {
@@ -2545,16 +2561,7 @@ fn render_about_dialog(app: &Librapix) -> Element<'_, Message> {
         .padding(SPACE_LG as u16)
         .style(modal_dialog_style);
 
-    container(
-        container(dialog)
-            .center_x(Length::Fill)
-            .center_y(Length::Fill),
-    )
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .padding([SPACE_2XL as u16, SPACE_XL as u16])
-    .style(modal_backdrop_style)
-    .into()
+    render_modal_overlay(dialog.into())
 }
 
 fn render_library_dialog(app: &Librapix) -> Element<'_, Message> {
@@ -2757,16 +2764,7 @@ fn render_library_dialog(app: &Librapix) -> Element<'_, Message> {
     .padding(SPACE_LG as u16)
     .style(modal_dialog_style);
 
-    container(
-        container(dialog)
-            .center_x(Length::Fill)
-            .center_y(Length::Fill),
-    )
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .padding([SPACE_2XL as u16, SPACE_XL as u16])
-    .style(modal_backdrop_style)
-    .into()
+    render_modal_overlay(dialog.into())
 }
 
 fn render_library_statistics_dialog(app: &Librapix) -> Element<'_, Message> {
@@ -2871,16 +2869,7 @@ fn render_library_statistics_dialog(app: &Librapix) -> Element<'_, Message> {
         .padding(SPACE_LG as u16)
         .style(modal_dialog_style);
 
-    container(
-        container(dialog)
-            .center_x(Length::Fill)
-            .center_y(Length::Fill),
-    )
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .padding([SPACE_2XL as u16, SPACE_XL as u16])
-    .style(modal_backdrop_style)
-    .into()
+    render_modal_overlay(dialog.into())
 }
 
 fn render_stats_row<'a>(label: &'a str, value: String) -> Element<'a, Message> {
@@ -3054,16 +3043,7 @@ fn render_new_media_dialog(app: &Librapix) -> Element<'_, Message> {
         .padding(SPACE_LG as u16)
         .style(modal_dialog_style);
 
-    container(
-        container(dialog)
-            .center_x(Length::Fill)
-            .center_y(Length::Fill),
-    )
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .padding([SPACE_2XL as u16, SPACE_XL as u16])
-    .style(modal_backdrop_style)
-    .into()
+    render_modal_overlay(dialog.into())
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -156,8 +156,10 @@ Gallery, timeline, and search views share a unified media-view architecture:
 
 ## Header branding
 
+- Blue logo icon (from `assets/logo/blue/`) displays at 32×32.
 - "Libra" displays in primary text color, "Pix" in accent color, creating a split-color product identity.
 - A subtle "· Media Library" subtitle follows in tertiary text.
+- GitHub link button (white icon) opens the project repository.
 - The header maintains the Fluent-inspired dark theme aesthetic.
 
 ## Selection performance

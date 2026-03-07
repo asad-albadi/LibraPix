@@ -2231,7 +2231,7 @@ fn render_library_dialog(app: &Librapix) -> Element<'_, Message> {
             .direction(scrollable::Direction::Vertical(
                 scrollable::Scrollbar::default().spacing(PANEL_SCROLLBAR_SPACING),
             ))
-            .height(Length::Fill)
+            .height(Length::Shrink)
             .width(Length::Fill),
     )
     .width(Length::Fill)

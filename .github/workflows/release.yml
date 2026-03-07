@@ -63,7 +63,6 @@ jobs:
           case "${{ matrix.package }}" in
             exe)
               cp "$BIN" "dist/$ASSET_NAME"
-              powershell -NoProfile -Command "Compress-Archive -Path 'assets' -DestinationPath 'dist/librapix-${VERSION}-windows-assets.zip' -Force"
               ;;
             dmg)
               APP_DIR="dist/LibraPix.app"
@@ -115,7 +114,6 @@ jobs:
               mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/applications"
               cp "$BIN" "$APPDIR/usr/bin/librapix-app"
               chmod +x "$APPDIR/usr/bin/librapix-app"
-              cp -R assets "$APPDIR/assets"
 
               printf '%s\n' \
                 '#!/bin/sh' \

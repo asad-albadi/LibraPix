@@ -994,7 +994,7 @@ fn view(app: &Librapix) -> Element<'_, Message> {
 
     // ── Header ──
     let brand = row![
-        svg(svg::Handle::from_path(assets::logo_svg()))
+        svg(assets::logo_svg())
             .width(Length::Fixed(40.0))
             .height(Length::Fixed(40.0))
             .content_fit(ContentFit::Contain),
@@ -1018,7 +1018,7 @@ fn view(app: &Librapix) -> Element<'_, Message> {
         .padding([SPACE_XS as u16, SPACE_MD as u16]);
 
     let github_btn = button(
-        image(image::Handle::from_path(assets::icon_github()))
+        image(assets::icon_github())
             .width(Length::Fixed(20.0))
             .height(Length::Fixed(20.0))
             .content_fit(ContentFit::Contain)
@@ -1033,7 +1033,7 @@ fn view(app: &Librapix) -> Element<'_, Message> {
             brand,
             Space::new().width(Length::Fill),
             row![
-                image(image::Handle::from_path(assets::icon_search()))
+                image(assets::icon_search())
                     .width(Length::Fixed(18.0))
                     .height(Length::Fixed(18.0))
                     .content_fit(ContentFit::Contain)
@@ -1070,7 +1070,7 @@ fn view(app: &Librapix) -> Element<'_, Message> {
         section_heading(app.i18n.text(TextKey::BrowseSectionLabel)),
         button(
             row![
-                image(image::Handle::from_path(assets::icon_gallery()))
+                image(assets::icon_gallery())
                     .width(Length::Fixed(18.0))
                     .height(Length::Fixed(18.0))
                     .content_fit(ContentFit::Contain)
@@ -1086,7 +1086,7 @@ fn view(app: &Librapix) -> Element<'_, Message> {
         .padding([SPACE_SM as u16, SPACE_MD as u16]),
         button(
             row![
-                image(image::Handle::from_path(assets::icon_timeline()))
+                image(assets::icon_timeline())
                     .width(Length::Fixed(18.0))
                     .height(Length::Fixed(18.0))
                     .content_fit(ContentFit::Contain)
@@ -1313,7 +1313,7 @@ fn render_media_panel(app: &Librapix) -> (Element<'_, Message>, Element<'_, Mess
         text(route_title).size(FONT_TITLE).color(TEXT_PRIMARY),
         Space::new().width(Length::Fill),
         button(
-            image(image::Handle::from_path(assets::icon_refresh()))
+            image(assets::icon_refresh())
                 .width(Length::Fixed(18.0))
                 .height(Length::Fixed(18.0))
                 .content_fit(ContentFit::Contain)
@@ -1323,7 +1323,7 @@ fn render_media_panel(app: &Librapix) -> (Element<'_, Message>, Element<'_, Mess
         .style(subtle_button_style)
         .padding([SPACE_XS as u16, SPACE_XS as u16]),
         button(
-            image(image::Handle::from_path(assets::icon_filter()))
+            image(assets::icon_filter())
                 .width(Length::Fixed(18.0))
                 .height(Length::Fixed(18.0))
                 .content_fit(ContentFit::Contain)
@@ -1479,12 +1479,12 @@ fn render_media_card(item: &BrowseItem, selected: bool, height: f32) -> Element<
         .into()
     };
 
-    let kind_icon_path = if item.media_kind.eq_ignore_ascii_case("video") {
+    let kind_icon_handle = if item.media_kind.eq_ignore_ascii_case("video") {
         assets::icon_type_video()
     } else {
         assets::icon_type_image()
     };
-    let kind_badge = image(image::Handle::from_path(kind_icon_path))
+    let kind_badge = image(kind_icon_handle)
         .width(Length::Fixed(16.0))
         .height(Length::Fixed(16.0))
         .content_fit(ContentFit::Contain)
@@ -1554,7 +1554,7 @@ fn render_timeline_view<'a>(
                 (header_item.group_image_count, header_item.group_video_count)
             {
                 row![
-                    image(image::Handle::from_path(assets::icon_type_image()))
+                    image(assets::icon_type_image())
                         .width(Length::Fixed(14.0))
                         .height(Length::Fixed(14.0))
                         .content_fit(ContentFit::Contain)
@@ -1562,7 +1562,7 @@ fn render_timeline_view<'a>(
                     text(format!("{img}"))
                         .size(FONT_CAPTION)
                         .color(TEXT_SECONDARY),
-                    image(image::Handle::from_path(assets::icon_type_video()))
+                    image(assets::icon_type_video())
                         .width(Length::Fixed(14.0))
                         .height(Length::Fixed(14.0))
                         .content_fit(ContentFit::Contain)
@@ -1959,7 +1959,7 @@ fn render_settings_dialog(app: &Librapix) -> Element<'_, Message> {
         section_heading(app.i18n.text(TextKey::IndexingSectionLabel)),
         button(
             row![
-                image(image::Handle::from_path(assets::icon_index()))
+                image(assets::icon_index())
                     .width(Length::Fixed(18.0))
                     .height(Length::Fixed(18.0))
                     .content_fit(ContentFit::Contain)
@@ -2202,7 +2202,7 @@ fn render_about_dialog(app: &Librapix) -> Element<'_, Message> {
         .align_y(iced::Alignment::Center),
         h_divider(),
         row![
-            svg(svg::Handle::from_path(assets::logo_svg()))
+            svg(assets::logo_svg())
                 .width(Length::Fixed(44.0))
                 .height(Length::Fixed(44.0))
                 .content_fit(ContentFit::Contain),
@@ -2665,7 +2665,7 @@ fn render_new_media_dialog(app: &Librapix) -> Element<'_, Message> {
 
         let view = button(
             row![
-                image(image::Handle::from_path(assets::icon_gallery()))
+                image(assets::icon_gallery())
                     .width(Length::Fixed(16.0))
                     .height(Length::Fixed(16.0))
                     .content_fit(ContentFit::Contain)
@@ -2681,7 +2681,7 @@ fn render_new_media_dialog(app: &Librapix) -> Element<'_, Message> {
         .padding(subtle_padding);
         let open = button(
             row![
-                image(image::Handle::from_path(assets::icon_open()))
+                image(assets::icon_open())
                     .width(Length::Fixed(16.0))
                     .height(Length::Fixed(16.0))
                     .content_fit(ContentFit::Contain)
@@ -2697,7 +2697,7 @@ fn render_new_media_dialog(app: &Librapix) -> Element<'_, Message> {
         .padding(primary_padding);
         let copy_file = button(
             row![
-                image(image::Handle::from_path(assets::icon_copy_file()))
+                image(assets::icon_copy_file())
                     .width(Length::Fixed(16.0))
                     .height(Length::Fixed(16.0))
                     .content_fit(ContentFit::Contain)
@@ -3150,7 +3150,7 @@ fn render_details_actions(app: &Librapix) -> Element<'_, Message> {
     responsive(move |size: Size| {
         let open = button(
             row![
-                image(image::Handle::from_path(assets::icon_open()))
+                image(assets::icon_open())
                     .width(Length::Fixed(16.0))
                     .height(Length::Fixed(16.0))
                     .content_fit(ContentFit::Contain)
@@ -3166,7 +3166,7 @@ fn render_details_actions(app: &Librapix) -> Element<'_, Message> {
         .padding([SPACE_XS as u16, SPACE_MD as u16]);
         let open_folder = button(
             row![
-                image(image::Handle::from_path(assets::icon_show_in_folder()))
+                image(assets::icon_show_in_folder())
                     .width(Length::Fixed(16.0))
                     .height(Length::Fixed(16.0))
                     .content_fit(ContentFit::Contain)
@@ -3182,7 +3182,7 @@ fn render_details_actions(app: &Librapix) -> Element<'_, Message> {
         .padding([SPACE_XS as u16, SPACE_MD as u16]);
         let copy_file = button(
             row![
-                image(image::Handle::from_path(assets::icon_copy_file()))
+                image(assets::icon_copy_file())
                     .width(Length::Fixed(16.0))
                     .height(Length::Fixed(16.0))
                     .content_fit(ContentFit::Contain)
@@ -3198,7 +3198,7 @@ fn render_details_actions(app: &Librapix) -> Element<'_, Message> {
         .padding([SPACE_XS as u16, SPACE_MD as u16]);
         let copy_path = button(
             row![
-                image(image::Handle::from_path(assets::icon_copy_path()))
+                image(assets::icon_copy_path())
                     .width(Length::Fixed(16.0))
                     .height(Length::Fixed(16.0))
                     .content_fit(ContentFit::Contain)

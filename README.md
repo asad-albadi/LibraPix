@@ -56,9 +56,9 @@ cargo run -p librapix-app
 
 ### Platform Notes
 
-- **Windows**: Copy File uses native `CF_HDROP` clipboard (Explorer-paste compatible). Release uploads include `windows-assets.zip`; keep the extracted `assets/` folder beside `librapix-*.exe` for in-app icons/logo.
+- **Windows**: Copy File uses native `CF_HDROP` clipboard (Explorer-paste compatible). UI icons/logo are embedded in the executable binary for release builds.
 - **macOS**: Apple Silicon DMG for releases.
-- **Linux**: AppImage for releases (bundles `assets/` inside AppDir for in-app icons/logo).
+- **Linux**: AppImage for releases with embedded UI icons/logo.
 
 ## Workspace Layout
 

@@ -154,16 +154,28 @@ pub fn build_timeline_anchors(buckets: &[TimelineBucket]) -> Vec<TimelineAnchor>
         return Vec::new();
     }
 
-    let last_index = buckets.len().saturating_sub(1) as f32;
+    let has_multiple = buckets.len() > 1;
+    let weights = buckets
+        .iter()
+        .map(|bucket| bucket.item_count.max(1) as f32 + 1.0)
+        .collect::<Vec<_>>();
+    let max_prefix_weight = weights
+        .iter()
+        .take(weights.len().saturating_sub(1))
+        .sum::<f32>();
+
+    let mut prefix_weight = 0.0f32;
     buckets
         .iter()
         .enumerate()
         .map(|(group_index, bucket)| {
-            let normalized_position = if last_index > 0.0 {
-                (group_index as f32 / last_index).clamp(0.0, 1.0)
+            let normalized_position = if has_multiple && max_prefix_weight > 0.0 {
+                (prefix_weight / max_prefix_weight).clamp(0.0, 1.0)
             } else {
                 0.0
             };
+
+            prefix_weight += weights[group_index];
 
             TimelineAnchor {
                 group_index,
@@ -269,6 +281,48 @@ mod tests {
         assert_eq!(unknown.year, None);
         assert_eq!(unknown.month, None);
         assert_eq!(unknown.day, None);
+    }
+
+    #[test]
+    fn anchor_positions_reflect_bucket_sizes() {
+        let buckets = vec![
+            TimelineBucket {
+                label: "2026-03-01".to_owned(),
+                date: TimelineDateParts {
+                    year: Some(2026),
+                    month: Some(3),
+                    day: Some(1),
+                },
+                item_count: 1,
+                items: Vec::new(),
+            },
+            TimelineBucket {
+                label: "2026-02-01".to_owned(),
+                date: TimelineDateParts {
+                    year: Some(2026),
+                    month: Some(2),
+                    day: Some(1),
+                },
+                item_count: 120,
+                items: Vec::new(),
+            },
+            TimelineBucket {
+                label: "2025-12-01".to_owned(),
+                date: TimelineDateParts {
+                    year: Some(2025),
+                    month: Some(12),
+                    day: Some(1),
+                },
+                item_count: 1,
+                items: Vec::new(),
+            },
+        ];
+
+        let anchors = build_timeline_anchors(&buckets);
+        assert_eq!(anchors.len(), 3);
+        assert_eq!(anchors[0].normalized_position, 0.0);
+        assert_eq!(anchors[2].normalized_position, 1.0);
+        assert!(anchors[1].normalized_position < 0.1);
     }
 
     #[test]

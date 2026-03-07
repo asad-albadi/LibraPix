@@ -2275,7 +2275,7 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
 name = "librapix-app"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "chrono",
  "iced",
@@ -2300,7 +2300,7 @@ dependencies = [
 
 [[package]]
 name = "librapix-config"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "directories",
  "serde",
@@ -2309,15 +2309,15 @@ dependencies = [
 
 [[package]]
 name = "librapix-core"
-version = "0.3.0"
+version = "0.3.1"
 
 [[package]]
 name = "librapix-i18n"
-version = "0.3.0"
+version = "0.3.1"
 
 [[package]]
 name = "librapix-indexer"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "globset",
  "imagesize 0.14.0",
@@ -2326,28 +2326,28 @@ dependencies = [
 
 [[package]]
 name = "librapix-projections"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "chrono",
 ]
 
 [[package]]
 name = "librapix-search"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "strsim",
 ]
 
 [[package]]
 name = "librapix-storage"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "rusqlite",
 ]
 
 [[package]]
 name = "librapix-thumbnails"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "image",
  "sha2",

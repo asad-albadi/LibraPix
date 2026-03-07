@@ -32,6 +32,7 @@ All notable changes to this project are documented in this file.
 - Settings dialog and Details pane now reserve scrollbar gutter spacing to prevent overlap with controls/content.
 - Header logo now uses SVG (`assets/logo/blue/logo-blue.svg`) instead of PNG for crisp scaling at any size.
 - UI icons resized from 512×512 to 32×32 (Lanczos) to eliminate antialiasing artifacts when displayed at 16–20px.
+- Windows GUI builds for `librapix-app` now use the `windows` subsystem in the binary entrypoint, preventing an extra console window from opening at startup.
 
 ### Added
 - Branding integration: blue logo in app header, GitHub link button, asset-based icons throughout UI.

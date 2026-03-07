@@ -5,6 +5,10 @@ All notable changes to this project are documented in this file.
 ## [Unreleased]
 
 ### Added
+- Reusable managed-chip UI system for tags and ignore rules with centralized styling in `ui.rs`.
+- Deterministic string-to-palette chip coloring for stable, tasteful dark-theme tag/rule visualization.
+- Edit flows for chip-managed tags and ignore rules (Library dialog, Details pane, Settings).
+- Storage APIs for chip workflows: media-tag listing and ignore-rule deletion by id.
 - Settings dialog: indexing, ignore rules, min file size, and diagnostics moved from sidebar into a structured Settings panel (opened via header Settings button).
 - Library display names: user-defined display name per library/root, shown in sidebar and filter chips; fallback to directory name when unset.
 - Library filter: filter media by library/root in the filter dialog; uses display names when available.
@@ -17,6 +21,9 @@ All notable changes to this project are documented in this file.
 - Sidebar `Stats` action per library row to open the Library Statistics dialog quickly.
 
 ### Changed
+- Edit Library tags now render as structured colored chips with inline add/edit/remove controls.
+- Details tag UX now renders inherited and manual tags as colored chips with clear separation and chip-level remove/edit affordances.
+- Settings ignore rules now render as structured colored chips with explicit add/edit/remove and enable/disable actions.
 - Sidebar simplified: browse nav, library roots, and auto-tags only; operational controls moved to Settings.
 - Media-pane stat label changed from "Shown" to "Total".
 - Header branding refined: removed "- Media Library" subtitle; "Libra" and "Pix" spacing tightened for unified product word.

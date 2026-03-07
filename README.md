@@ -22,11 +22,13 @@ Project phase: **MVP complete** (technical + visual shell baseline).
 ## Features
 
 - Multiple local library directories
-- Unified Add/Edit Library dialog (browse-first), including display name and root-level tag management
+- Unified Add/Edit Library dialog (browse-first), including display name and chip-based root-level tag management
 - Separate Library Statistics dialog with maintained per-library totals (size, media/image/video counts, size split, indexed/missing/date stats)
 - Gallery and timeline views with justified layout
 - Fuzzy search over filenames, tags, and metadata
 - App-side and game tags
+- Chip-based tag management in Library and Details surfaces (add/edit/remove with deterministic colors)
+- Chip-based ignore-rule management in Settings (add/edit/remove/enable-disable with deterministic colors)
 - Media type filters (images/videos) and extension chips
 - Library filter chips (All libraries or selected library)
 - Open file, show in folder, copy file, copy path actions

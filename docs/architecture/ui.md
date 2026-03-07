@@ -28,6 +28,7 @@ All visual presentation is centralized in `librapix-app/src/ui.rs`:
 
 ### Component styles
 - Button styles: primary (accent), subtle (transparent), action (card bg), nav (active/inactive), card (selection border), filter chip (pill radius, accent when active).
+- Managed chips: deterministic color-mapped chip surfaces for tags/rules with inline edit/remove/toggle actions.
 - Text input styles: search and field now share the same rounded-corner language for consistency.
 - Container styles: header, sidebar, details pane, cards, empty states, thumbnail placeholders, dividers, timeline scrubber surfaces, media-kind badges, modal backdrop, and modal dialog surfaces.
 - Settings dialog scrollable uses embedded scrollbar spacing so form controls are not obscured by scrollbar chrome.
@@ -57,7 +58,7 @@ All visual presentation is centralized in `librapix-app/src/ui.rs`:
   - browse-first folder selection
   - optional manual path field toggle
   - display-name editing
-  - root-level tag add/remove
+  - root-level tag chip add/edit/remove
   - save + save-and-add-another flow for batch library registration
 - Each library row has explicit `Edit` and `Stats` actions.
 - Library statistics use a dedicated dialog (separate from Edit Library) with maintained persisted values per root.
@@ -128,7 +129,8 @@ Gallery, timeline, and search views share a unified media-view architecture:
 - Sections are separated by horizontal dividers.
 - File info shows human-readable metadata: type, size (KB/MB/GB), modified date, dimensions, path.
 - Formatting is centralized in `format.rs` with `format_file_size`, `format_timestamp`, `format_dimensions`.
-- Tags section supports add/remove for app tags and game tags.
+- Tags section uses chip-based add/edit/remove for app/game tags with deterministic colors.
+- Tag chips distinguish inherited library tags from manual media tags, while keeping both visible in a compact layout.
 - Actions section provides open, show-in-folder, copy-file, and copy-path commands.
 - Details actions are responsive (single-column, 2x2 grid, or one-row depending available width) to prevent clipped buttons.
 - Details pane scrollable uses embedded scrollbar spacing so scrollbar gutter does not overlap controls/text.
@@ -156,7 +158,7 @@ Gallery, timeline, and search views share a unified media-view architecture:
 
 ## Size-based exclusion
 
-- Min-size exclusion is configured in the Settings dialog alongside ignore rules.
+- Min-size exclusion is configured in the Settings dialog alongside chip-based ignore-rule management.
 - Users configure a minimum file size in KB with an Apply button in that section.
 - When applied, the next indexing run skips files below the threshold.
 - Files previously indexed that fall below the threshold are marked missing on re-index.

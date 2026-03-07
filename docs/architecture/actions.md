@@ -14,9 +14,15 @@ Librapix exposes simple file-oriented actions without mutating source media.
 
 ## Library actions
 
-- Edit library opens the unified add/edit library dialog (path/display-name/root-level tags).
+- Edit library opens the unified add/edit library dialog (path/display-name/root-level tag chips).
 - Stats opens a separate Library Statistics dialog for the selected library/root.
 - Library statistics are read from maintained persisted storage values; opening the dialog is read-only and does not trigger indexing work.
+
+## Tag and rule interactions
+
+- Library and Details tag management use chip-based add/edit/remove interactions.
+- Settings ignore-rule management uses chip-based add/edit/remove plus explicit enable/disable toggle.
+- Chip actions emit explicit app messages; storage side effects stay in orchestration handlers.
 
 ## Double-click open
 

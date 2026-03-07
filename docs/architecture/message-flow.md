@@ -30,9 +30,9 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
 - Refresh roots
   - Reconciliation runs and the root list is reloaded into app state.
 - Ignore-rule management
-  - UI captures ignore pattern text.
-  - App enables/disables rule rows in storage.
-  - App refreshes current ignore-rule list preview.
+  - UI captures ignore pattern text and chip edit state.
+  - App adds/toggles/removes/edits ignore-rule rows in storage.
+  - App refreshes ignore-rule chip rows with enabled/disabled semantics preserved.
 - Run indexing baseline
   - App loads eligible roots and enabled ignore patterns from storage.
   - `librapix-indexer` scans and emits media candidates.
@@ -69,9 +69,10 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
   - App resolves media details from storage read-model lookup.
   - UI renders metadata lines and action status.
 - Tag actions
-  - UI provides selected media id + tag text.
+  - UI provides selected media id + tag text or chip action (edit/remove).
   - App attaches/detaches app or game tags through storage APIs.
-  - Updated tags are reflected by reloading selected media details.
+  - Tag edit flow is explicit (`detach old` + `attach new` with preserved kind).
+  - Updated tags are reflected by reloading selected media details and chip state.
 - Open/copy actions
   - App resolves selected media path from storage.
   - App invokes platform-specific open/clipboard commands.

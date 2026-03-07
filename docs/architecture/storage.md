@@ -100,6 +100,7 @@ This schema is intentionally minimal to avoid overbuilding before indexing and s
 
 - Tags can be listed from storage (`tags` table).
 - Tags can be attached/detached to media via `media_tags`.
+- Media tag rows can be listed with kind metadata (`list_media_tags`) for UI chip rendering and edit flows.
 - Tag kind supports `app` and `game`.
 - Tag mutations affect only Librapix-managed storage.
 
@@ -111,6 +112,12 @@ This schema is intentionally minimal to avoid overbuilding before indexing and s
 - Auto-tags are applied via `INSERT OR IGNORE`, so they do not duplicate existing manual tags with the same name.
 - Root tags are managed through the unified library add/edit dialog.
 - This design is non-destructive: removing a root tag removes the rule but does not strip existing tags from media.
+
+## Ignore-rule management baseline
+
+- Ignore rules remain scope+pattern rows with `is_enabled` semantics.
+- UI chip flows use `upsert_ignore_rule` for add/toggle and `delete_ignore_rule_by_id` for explicit removal.
+- Editing a rule pattern is implemented as explicit app-orchestrated upsert/remove operations, preserving enabled state where possible.
 
 ## Missing-file policy baseline
 

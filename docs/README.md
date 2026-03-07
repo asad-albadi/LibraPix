@@ -54,6 +54,7 @@ This repository is documentation-driven. Architecture and operational decisions 
 - `docs/roadmap/scrollbar-scrubber-correctness-checklist.md`
 - `docs/roadmap/about-library-management-checklist.md`
 - `docs/roadmap/library-statistics-checklist.md`
+- `docs/roadmap/tag-ignore-chip-interaction-checklist.md`
 
 ## Packaging
 
@@ -82,3 +83,4 @@ This repository is documentation-driven. Architecture and operational decisions 
 - `docs/adrs/0017-async-startup-and-background-work.md`
 - `docs/adrs/0018-timeline-scrubber-anchor-navigation.md`
 - `docs/adrs/0019-windows-signing-and-publisher-baseline.md`
+- `docs/adrs/0020-chip-based-tag-ignore-interactions.md`

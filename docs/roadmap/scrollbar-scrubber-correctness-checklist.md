@@ -55,5 +55,5 @@ Milestone date: 2026-03-07
 
 - [x] Commit `fix: move media scrollbar outside card content area`
 - [x] Commit `fix: remove initial snap from timeline scrubber interaction`
-- [ ] Commit `docs: record scrollbar and scrubber interaction fixes`
-- [ ] Final working tree clean check
+- [x] Commit `docs: record scrollbar and scrubber interaction fixes`
+- [x] Final working tree clean check

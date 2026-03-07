@@ -66,18 +66,18 @@ Milestone date: 2026-03-07
 ## 9. Smoke runs
 
 - [x] Run `cargo run -p librapix-app` after each meaningful milestone step
-- [ ] Verify timeline scrubber marker placement and drag behavior as far as environment allows
-- [ ] Verify Windows copy logic path as far as environment allows
+- [x] Verify timeline scrubber marker placement and drag behavior as far as environment allows
+- [x] Verify Windows copy logic path as far as environment allows
 
 ## 10. Commit checkpoints
 
-- [ ] Commit: `fix: restore Windows file copy with verified file-drop clipboard payload`
-- [ ] Commit: `fix: align timeline scrubber markers and smooth scroll mapping`
-- [ ] Commit: `docs: record Windows clipboard and timeline scrubber root-cause fixes`
+- [x] Commit: `fix: restore Windows file copy with verified file-drop clipboard payload`
+- [x] Commit: `fix: align timeline scrubber markers and smooth scroll mapping`
+- [x] Commit: `docs: record Windows clipboard and timeline scrubber root-cause fixes`
 
 ## 11. Final reconciliation
 
-- [ ] Run final full verification loop
-- [ ] Confirm smoke run status
-- [ ] Confirm all checklist items complete
-- [ ] Confirm working tree clean
+- [x] Run final full verification loop
+- [x] Confirm smoke run status
+- [x] Confirm all checklist items complete
+- [x] Confirm working tree clean

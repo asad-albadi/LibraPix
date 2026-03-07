@@ -53,7 +53,7 @@ Project phase: MVP complete (technical + visual shell baseline).
 - Indexing/galleries now generate and reuse deterministic image thumbnails in app-owned cache.
 - Large browse/search refresh work runs in background tasks (`Task::perform`) so projection/search operations do not block UI interaction.
 - UI uses a desktop shell layout (header/sidebar/main/details) with media-first gallery/timeline browsing.
-- Timeline mode includes a projection-driven fast date scrubber with stable anchor-index mapping for smooth large-library navigation.
+- Timeline mode includes a projection-driven fast date scrubber with structure-weighted anchors, position-aligned year markers, and continuous scroll mapping for smooth large-library navigation.
 - Timeline day grouping uses local timezone day boundaries from `modified_unix_seconds`.
 - Browse filters include media type, extension, and tag chips (applied consistently across gallery/timeline/search).
 - Search results are no longer silently capped at 20.

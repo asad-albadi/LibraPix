@@ -19,6 +19,7 @@ MVP needs actionable media workflows beyond indexing/search: inspect metadata, m
 - Implement app-orchestrated actions:
   - open selected file
   - open containing folder
+  - copy selected file as a file-object clipboard payload
   - copy selected path via platform commands
 
 ## Alternatives considered
@@ -30,5 +31,5 @@ MVP needs actionable media workflows beyond indexing/search: inspect metadata, m
 ## Consequences
 
 - MVP gains usable details/tags/action workflows without violating source-file safety.
-- Platform clipboard/open behavior relies on host command availability.
+- Windows file-object copy uses native CF_HDROP clipboard payload semantics; other platforms use host-native command integrations.
 - Future UX can replace selected-media-id input flow with richer selection state while keeping storage/action boundaries.

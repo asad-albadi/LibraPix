@@ -29,7 +29,7 @@ Timeline and gallery views are read projections built from indexed media read mo
 - `label`: date label used by timeline headers (`YYYY-MM-DD`, `YYYY-MM`, `YYYY`, or `unknown`).
 - `year` / `month` / `day`: parsed date parts when available, `None` for unknown groups.
 - `item_count`: number of media items in the group.
-- `normalized_position`: stable index-based `0.0..=1.0` anchor position used for scrub mapping and programmatic scrolling.
+- `normalized_position`: structure-weighted `0.0..=1.0` anchor position derived from ordered bucket sizes, used as the shared source for scrub mapping, marker placement, and scroll targeting.
 
 Anchor construction is projection-driven (`build_timeline_anchors`) and does not inspect rendered widgets.
 

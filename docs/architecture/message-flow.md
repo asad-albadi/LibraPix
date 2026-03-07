@@ -48,9 +48,9 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
 - Timeline scrubber interaction
   - Timeline pane owns a stable scrollable `Id` (`media-pane-scrollable`).
   - Drag/click on scrubber emits `TimelineScrubChanged` (continuous) and `TimelineScrubReleased`.
-  - Scrub value maps to anchor index over ordered timeline anchors (index-stable mapping, no widget inspection).
-  - App issues Iced widget operations (`operation::snap_to`) to jump timeline scroll position by relative anchor position.
-  - Scroll updates emit `MediaViewportChanged` and keep scrubber state synchronized with manual scrolling.
+  - Scrub value is continuous (`0.0..=1.0`) and nearest-anchor selection is derived from ordered `TimelineAnchor.normalized_position` values.
+  - App issues Iced widget operations (`operation::scroll_to`, with relative `snap_to` fallback) so scrub dragging and programmatic jumps share one mapping model.
+  - Scroll updates emit `MediaViewportChanged`; scrub value tracks viewport offset continuously while anchor selection tracks nearest projection anchor.
 - Run gallery projection baseline
   - App schedules projection-only background work.
   - Worker loads read-model rows, delegates filtering/sorting to `librapix-projections`, and applies `GalleryQuery`.
@@ -69,6 +69,7 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
 - Open/copy actions
   - App resolves selected media path from storage.
   - App invokes platform-specific open/clipboard commands.
+  - Windows copy-file uses native `CF_HDROP` clipboard payload writes (`SetClipboardData`) instead of shelling out to PowerShell.
   - Copy flow supports both path clipboard and file-object clipboard actions.
 - Keyboard shortcuts
   - App subscribes to ignored keyboard events via `keyboard::listen`.

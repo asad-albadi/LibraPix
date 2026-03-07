@@ -67,7 +67,7 @@ All notable changes to this project are documented in this file.
 - Added new i18n keys for folder picker, activity status, and metadata labels.
 - Timeline pane scroll is now wired with a stable scrollable `Id` and programmatic jumps via Iced widget operations (`scroll_to` + `snap_to` fallback).
 - Timeline scrubber state now stays synchronized with viewport scroll events and nearest anchor mapping.
-- Timeline scrubber mapping now uses stable anchor-index normalization and relative snapping to prevent sticky/jumpy behavior on uneven timelines.
+- Timeline scrubber mapping now uses structure-weighted anchor positions plus continuous viewport-aligned scroll targeting (`scroll_to` with `snap_to` fallback).
 - Details-pane action buttons now use responsive layout so the final action is never clipped in narrow widths.
 - Media-pane header now shows consistent `Shown`, `Images`, and `Videos` counts derived from the active browse/search result source.
 - Search input border radius now matches the standard control radius used by the rest of the design system.
@@ -121,12 +121,12 @@ All notable changes to this project are documented in this file.
 - i18n keys for auto-tag UI labels.
 
 ### Fixed
-- Windows `Copy File` now writes an actual Explorer-compatible file-drop clipboard payload (`powershell -STA` + `System.Windows.Forms.Clipboard.SetFileDropList`) instead of using text/content clipboard semantics.
+- Windows `Copy File` now writes an actual Explorer-compatible file-drop clipboard payload (native `CF_HDROP` via Win32 `SetClipboardData`) instead of PowerShell-based clipboard indirection.
 - New-file announcement modal now renders as a centered, constrained dialog (max width/height with scrollable body) instead of stretching with window height.
 - Large projection/search refresh operations (`RunSearchQuery`, route refresh buttons, and filter changes) no longer run synchronously on the UI thread; they now execute in background task mode to prevent hangs on large libraries.
 - "All" filter now truly includes both images and videos by removing hidden browse truncation layers; no implicit image-only behavior remains in `All`.
 - Timeline grouping now respects local timezone day boundaries, fixing newly added files appearing under the previous day around UTC/local midnight offsets.
-- Timeline fast-scrubber no longer gets stuck on certain dates/years due to weighted anchor mapping and redundant same-anchor scroll operations.
+- Timeline scrubber year labels now render at anchor-aligned positions, and scrub/viewport sync uses a single continuous mapping model to remove sticky/jumpy behavior.
 - New-file announcement UX moved from inline card injection to a modal dialog to avoid layout interference with timeline/gallery content.
 - Top Refresh-adjacent stats are now consistent with active filter/search state instead of route-only item counts.
 - Removed hidden app-side search truncation (`limit: 20`); search results now return the complete matching set for the current read-model snapshot.
@@ -163,12 +163,13 @@ All notable changes to this project are documented in this file.
 - Added ADR `0014` for filtering, exclusion, and thumbnail quality decisions.
 - Added ADR `0015` for media-view architecture, justified layout, and video thumbnail decisions.
 - Added ADR `0018` for projection-driven timeline scrubber architecture.
-- Updated ADR `0018` with anchor-index normalization and local-day grouping follow-up decisions.
+- Updated ADR `0018` with structure-weighted anchor positioning, aligned year-marker placement, continuous scrub mapping, and local-day grouping follow-up decisions.
 - Added ADR `0019` for Windows signing/publisher baseline.
 - Added Windows signing/distribution guide and script usage documentation.
 - Updated architecture docs for UI/media-view/projections/search/actions/message-flow with tag filtering, card metadata/icon design, file-copy action, and live new-file announcement behavior.
 - Updated architecture and troubleshooting docs for Windows file-drop clipboard behavior, centered announcement dialog constraints, and projection/search background task execution.
 - Added checklist `docs/roadmap/windows-copy-dialog-background-checklist.md` for this platform/correctness milestone.
+- Added checklist `docs/roadmap/windows-copy-timeline-scrubber-correctness-checklist.md` for this follow-up bugfix milestone.
 - Added product-updates milestone checklist for tag filter, card metadata polish, copy-file action, announcement flow, search cap fix, and Windows signing setup.
 - Added timeline follow-up correctness checklist for scrubber stability, modal announcement UX, copy shortcuts, responsive details actions, stats consistency, and regrouping correctness.
 - Added quality milestone checklist.

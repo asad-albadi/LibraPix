@@ -12,9 +12,12 @@ This file tracks major direct dependencies that shape architecture and maintenan
 - Official docs consulted:
   - [https://docs.rs/crate/iced/latest](https://docs.rs/crate/iced/latest)
   - [https://docs.iced.rs/iced/](https://docs.iced.rs/iced/)
+  - [https://docs.rs/iced/latest/iced/widget/operation/scrollable/fn.scroll_to.html](https://docs.rs/iced/latest/iced/widget/operation/scrollable/fn.scroll_to.html)
+  - [https://docs.rs/iced/latest/iced/widget/scrollable/fn.scroll_to.html](https://docs.rs/iced/latest/iced/widget/scrollable/fn.scroll_to.html)
   - [https://github.com/iced-rs/iced/releases](https://github.com/iced-rs/iced/releases)
 - Notes:
   - Latest stable verified at baseline: `0.14.0`.
+  - Timeline scrubber uses `operation::scroll_to` for absolute offset targeting with `operation::snap_to` fallback during early viewport initialization.
   - Keep presentation logic in `librapix-app` and prevent leakage into domain/storage.
 - Risks/tradeoffs:
   - API evolution can require incremental refactors.
@@ -239,18 +242,23 @@ This file tracks major direct dependencies that shape architecture and maintenan
   - Requires `ffmpeg` installed on the user's system and accessible in PATH.
   - Process invocation has startup overhead per video, acceptable for batch indexing.
 
-## Windows clipboard file-copy integration (platform dependency)
+## `windows-sys` (0.61.2, Windows target only)
 
-- Purpose: Provide Explorer-compatible file-object copy (`Copy File`) on Windows.
-- Why chosen: Native Windows clipboard file transfer expects file-drop payloads (CF_HDROP), which are exposed through .NET `Clipboard.SetFileDropList`.
+- Purpose: Access native Win32 clipboard APIs for reliable Explorer-compatible file copy (`CF_HDROP`).
+- Why chosen: Direct Win32 API access removes PowerShell host/runtime variability and enables explicit ownership/error handling around clipboard and global memory operations.
 - Alternatives considered:
-  - `Set-Clipboard -LiteralPath`: rejected because it copies file contents/text semantics, not file-drop list payloads for paste-as-file workflows.
-  - adding a new Rust clipboard crate for file payloads: deferred; current native PowerShell/.NET path is sufficient and keeps dependency surface stable.
+  - `powershell -STA` + .NET clipboard API: rejected for runtime indirection and weaker guarantee around actual clipboard payload success.
+  - external clipboard crates: deferred to keep dependency surface minimal and behavior explicit.
 - Official docs consulted:
+  - [https://learn.microsoft.com/en-us/windows/win32/shell/clipboard](https://learn.microsoft.com/en-us/windows/win32/shell/clipboard)
+  - [https://learn.microsoft.com/en-us/windows/win32/dataxchg/clipboard-formats](https://learn.microsoft.com/en-us/windows/win32/dataxchg/clipboard-formats)
+  - [https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setclipboarddata](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setclipboarddata)
+  - [https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_powershell_exe](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_powershell_exe)
   - [https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.management/set-clipboard](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.management/set-clipboard)
-  - [https://learn.microsoft.com/en-us/dotnet/api/system.windows.forms.clipboard.setfiledroplist](https://learn.microsoft.com/en-us/dotnet/api/system.windows.forms.clipboard.setfiledroplist)
+  - [https://docs.rs/windows-sys/latest/windows_sys/Win32/System/DataExchange/fn.SetClipboardData.html](https://docs.rs/windows-sys/latest/windows_sys/Win32/System/DataExchange/fn.SetClipboardData.html)
 - Notes:
-  - Implementation uses `powershell -STA` with `System.Windows.Forms.Clipboard.SetFileDropList`.
+  - `Copy File` on Windows now writes a real `CF_HDROP` payload with Win32 `SetClipboardData`.
+  - Payload is built as a UTF-16 multi-string file list with `DROPFILES` header.
   - `Copy Path` remains text clipboard via `clip`.
 - Risks/tradeoffs:
-  - Requires Windows PowerShell/.NET desktop clipboard support in the user environment.
+  - Includes `unsafe` Win32 interop in a narrow, platform-gated path that must remain well-tested and documented.

@@ -36,7 +36,7 @@ Librapix exposes simple file-oriented actions without mutating source media.
   - copy path: `pbcopy`
 - Windows:
   - open: `cmd /C start`
-  - copy file: `powershell -STA` + `System.Windows.Forms.Clipboard.SetFileDropList` (CF_HDROP file payload)
+  - copy file: native Win32 clipboard write (`CF_HDROP` via `SetClipboardData`) with explicit failure handling
   - copy path: `clip`
 - Linux/other Unix:
   - open: `xdg-open`

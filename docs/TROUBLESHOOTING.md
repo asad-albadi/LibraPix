@@ -22,20 +22,22 @@
 
 - Symptoms
   - Dragging the scrubber can appear to stall on a date/year.
-  - Scrubber movement feels jumpy or non-linear with large uneven date groups.
+  - Year labels appear detached from their actual timeline positions.
+  - Scrubber movement feels jumpy or visually inconsistent with timeline scroll position.
 - Affected area
-  - Timeline scrubber anchor mapping + programmatic scroll behavior.
+  - Timeline scrubber marker layout + anchor mapping + programmatic scroll behavior.
 - Confirmed cause
-  - Anchor positions were weighted by `item_count`, so very large groups consumed disproportionate scrub range.
-  - Scrub updates repeatedly re-issued scroll operations even when anchor target did not change.
-  - Absolute scroll targeting depended on stale max-scroll snapshots in some transitions.
+  - Year labels were rendered as a detached stacked list, not at their anchor-aligned Y positions.
+  - Scrub state was quantized to nearest anchor/index during sync, so movement looked sticky between anchors.
+  - Marker placement and scroll targeting were not both derived from the same normalized anchor-position model.
 - Resolution
-  - Anchor normalization changed to stable index-based mapping (`0.0..=1.0` across ordered groups).
-  - Scrub input now maps directly to anchor index and only scrolls when target anchor changes.
-  - Programmatic jumps now use relative snapping (`operation::snap_to`) keyed to anchor position.
+  - Timeline anchors now use structure-weighted normalized positions derived from timeline bucket sizes.
+  - Year markers are rendered on a position-aligned track using those same anchor normalized positions.
+  - Scrub value now stays continuous and viewport sync no longer forces hard snapping to anchor positions.
+  - Programmatic scroll uses absolute offset operations (`operation::scroll_to`) with relative fallback during early initialization.
 - Prevention guidance
-  - Keep scrub mapping index-stable and projection-driven.
-  - Avoid reissuing expensive scroll commands when scrub target anchor is unchanged.
+  - Keep marker placement, scrub mapping, and scroll targeting sourced from the same anchor model.
+  - Avoid rendering year markers as detached/evenly stacked labels independent of anchor positions.
 
 ## New file appears under \"yesterday\" in timeline after midnight
 
@@ -121,14 +123,19 @@
 - Confirmed cause
   - Platform command/runtime support missing:
     - Linux: `xclip` unavailable.
-    - Windows: clipboard command used text/content semantics instead of file-drop payload.
+    - Windows (previous implementation): PowerShell-based clipboard indirection was brittle and did not provide a robust native clipboard-ownership path for CF_HDROP writes.
     - macOS: AppleScript clipboard call failed.
+  - Platform difference:
+    - macOS path works when `osascript` successfully sets a file reference directly on the system pasteboard.
+    - Windows file paste expects a shell file-drop payload (CF_HDROP); text clipboard semantics are insufficient.
 - Resolution
   - Install required host tools (`xclip` on Linux).
-  - On Windows, use file-drop clipboard payload (`powershell -STA` + `System.Windows.Forms.Clipboard.SetFileDropList`) instead of `Set-Clipboard -LiteralPath`.
+  - On Windows, write CF_HDROP payload directly with native Win32 clipboard APIs (`SetClipboardData` + DROPFILES payload).
+  - Keep `Copy Path` as text clipboard (`clip`) and `Copy File` as shell file-object payload behavior.
   - Retry with accessible file path and verify filesystem permissions.
   - Use `Copy Path` as fallback when platform file-clipboard integration is unavailable.
 - Prevention guidance
+  - Prefer native clipboard APIs for Windows file-object copy over shelling out to external script hosts.
   - Keep platform clipboard requirements documented and validated in release notes/testing.
 
 ## Windows shows "Unknown publisher"

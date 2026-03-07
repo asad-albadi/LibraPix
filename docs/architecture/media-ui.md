@@ -69,9 +69,11 @@ This produces a Google-Photos-style justified layout where images maintain aspec
 
 - Scrubber anchors are precomputed from timeline projection buckets (`TimelineAnchor`).
 - Anchor model includes date label + date parts + stable group index + normalized position.
-- Anchor normalized positions are index-based (`0.0..=1.0` across ordered groups), which avoids heavy-group stickiness.
-- Scrub interactions map slider values directly to anchor indexes and trigger programmatic relative snapping (`operation::snap_to`).
+- Anchor normalized positions are structure-weighted from projection bucket sizes, so marker/scroll mapping reflects actual timeline distribution.
+- Scrub interactions maintain a continuous normalized value; nearest anchor selection is derived from anchor normalized positions.
+- Programmatic scrolling uses absolute scroll operations (`operation::scroll_to`) when viewport max offset is known, with relative fallback (`operation::snap_to`) during initialization.
 - While dragging, UI shows a floating date chip sourced from the active anchor label.
+- Year marker labels are placed on a position-aligned track using the same anchor normalized positions used for scroll targets.
 - Scrub interactions do not rebuild projections; they reuse cached timeline anchors.
 
 ## New-file announcement UX

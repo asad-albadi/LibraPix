@@ -46,7 +46,8 @@ All visual presentation is centralized in `librapix-app/src/ui.rs`:
   - Dialog is centered within a full-screen backdrop and constrained with max width/height for product-like modal sizing.
 - Timeline mode includes a fast right-side scrubber:
   - drag/click updates scrub value
-  - scrub maps to projection anchors by stable anchor index
+  - scrub maps to projection anchors by nearest normalized anchor position
+  - year markers are positioned along the scrub track from anchor normalized positions
   - a date chip is shown while dragging
 - Search is triggered via Enter key in the header search bar.
 - Root selection uses styled nav buttons with status dot indicators.
@@ -110,7 +111,7 @@ Gallery, timeline, and search views share a unified media-view architecture:
 - Items are selectable with the same card style as gallery cards.
 - Timeline rendering does not apply a hidden hard item cap.
 - Timeline scrubber uses precomputed anchor metadata; it does not inspect rendered rows.
-- Programmatic scrolling uses Iced relative snapping (`operation::snap_to`) keyed to anchor positions.
+- Programmatic scrolling uses Iced absolute scrolling (`operation::scroll_to`) with relative fallback (`operation::snap_to`) from the same anchor-position model.
 
 ## Details pane
 

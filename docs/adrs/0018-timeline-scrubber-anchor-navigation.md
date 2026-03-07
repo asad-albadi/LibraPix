@@ -17,7 +17,8 @@ We need a fast date navigator that:
 The existing timeline projection already groups by date buckets. That grouping is the correct source of truth for scrub navigation.
 
 Follow-up validation uncovered two correctness issues:
-- weighted anchor normalization (`item_count`-proportional) made scrub movement feel sticky on uneven datasets
+- detached/evenly-stacked year labels did not reflect real anchor positions in the scrubber track
+- index-only snap mapping made scrub movement feel sticky/non-continuous during drag + viewport sync
 - UTC date bucketing caused local-midnight files to appear under the previous day
 
 ## Decision
@@ -29,7 +30,7 @@ Add a projection-level timeline anchor model (`TimelineAnchor`) derived from tim
 - `label`
 - date parts (`year`, `month`, `day`)
 - `item_count`
-- index-based `normalized_position` in `0.0..=1.0` (uniform by ordered group index)
+- structure-weighted `normalized_position` in `0.0..=1.0`, derived from ordered bucket sizes
 
 Anchors are produced by `build_timeline_anchors` in `librapix-projections`, not by inspecting rendered widgets.
 
@@ -39,14 +40,15 @@ Timeline date buckets are derived from `modified_unix_seconds` using local timez
 
 Add a right-side scrubber control in Timeline mode only:
 - drag/click updates scrub value
-- scrub value maps to nearest projection anchor
+- scrub value remains continuous (`0.0..=1.0`) while nearest anchor is derived from normalized positions
 - a floating date chip displays the active anchor label while dragging
-- subtle year markers provide quick jumps
+- year markers are positioned on the scrub track from anchor normalized positions and provide quick jumps
 
 ### Programmatic scrolling with Iced operations
 
 Use Iced widget operations for jumps:
-- primary: `iced::widget::operation::snap_to` (relative anchor positions)
+- primary: `iced::widget::operation::scroll_to` (absolute viewport offset from normalized scrub value)
+- fallback: `iced::widget::operation::snap_to` when viewport max-offset is not yet known
 
 The media-pane scrollable uses a stable `Id` (`media-pane-scrollable`), and viewport events keep scrub state synchronized with manual scrolling.
 
@@ -62,6 +64,6 @@ The media-pane scrollable uses a stable `Id` (`media-pane-scrollable`), and view
 ## Consequences
 
 - Timeline navigation is now projection-driven and scalable for large libraries.
-- Scrub interactions avoid projection rebuilds, reuse precomputed anchors, and skip redundant same-anchor scroll commands.
+- Scrub interactions avoid projection rebuilds, reuse precomputed anchors, and keep marker/scroll mapping sourced from the same anchor model.
 - Architecture remains extensible: gallery can later reuse anchor-based navigation patterns without changing projection boundaries.
 - UI shell structure remains unchanged (header/sidebar/media/details).

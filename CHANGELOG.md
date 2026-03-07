@@ -5,6 +5,11 @@ All notable changes to this project are documented in this file.
 ## [Unreleased]
 
 ### Added
+- Branding integration: blue logo in app header, GitHub link button, asset-based icons throughout UI.
+- `assets` module for centralized asset path resolution.
+- `docs/branding.md` documenting canonical brand, logo variants, and icon usage.
+- MIT `LICENSE` file.
+- `opener` crate for opening GitHub URL from header.
 - Diagnostics panel in sidebar showing roots count, indexed media count, gallery/timeline item counts, filter state, and browse status for debugging.
 - Event log in diagnostics panel: all processed messages (user actions, system events) are logged with timestamps for visibility into app behavior.
 - Introduced a workspace layout with `librapix-app`, `librapix-core`, and `librapix-i18n`.
@@ -46,7 +51,12 @@ All notable changes to this project are documented in this file.
   - scripts for dev cert creation, EXE signing, and MSIX pack+sign
 
 ### Changed
-- Release workflow no longer builds/uploads Intel macOS DMG assets; future macOS release artifact is Apple Silicon DMG only.
+- Header now displays blue logo icon, GitHub link button, and product name with accent styling.
+- Media card badges now use asset icons (type-image, type-video) instead of Unicode symbols.
+- Sidebar nav (Gallery, Timeline), Index Library, Refresh, and details actions now use asset icons.
+- Filter row now includes filter icon. New-file dialog actions use icons.
+- README rewritten with logo, screenshot, features, build instructions, and license section.
+- docs/architecture/ui.md updated with header branding details.
 - Added live filesystem watch subscription over active roots using `notify`.
 - Auto-refresh now reacts to create/modify/remove file events without manual index/refresh.
 - Replaced blocking watcher channel receive with async channel delivery in Iced subscription worker.

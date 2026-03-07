@@ -4,7 +4,18 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Settings dialog: indexing, ignore rules, min file size, and diagnostics moved from sidebar into a structured Settings panel (opened via header Settings button).
+- Library display names: user-defined display name per library/root, shown in sidebar and filter chips; fallback to directory name when unset.
+- Library filter: filter media by library/root in the filter dialog; uses display names when available.
+- Timeline date header count chips: total, image, and video counts beside each date/group header in Timeline view.
+- Toggle for manual folder path field: path input hidden by default; "Show path field" / "Hide path field" toggles visibility.
+
 ### Changed
+- Sidebar simplified: browse nav, library roots, and auto-tags only; operational controls moved to Settings.
+- Media-pane stat label changed from "Shown" to "Total".
+- Header branding refined: removed "- Media Library" subtitle; "Libra" and "Pix" spacing tightened for unified product word.
+- Migration `0007_source_root_display_name.sql` adds optional `display_name` column to `source_roots`.
 - Header logo now uses SVG (`assets/logo/blue/logo-blue.svg`) instead of PNG for crisp scaling at any size.
 - UI icons resized from 512×512 to 32×32 (Lanczos) to eliminate antialiasing artifacts when displayed at 16–20px.
 

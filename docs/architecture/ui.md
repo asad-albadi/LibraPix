@@ -4,8 +4,8 @@ Librapix UI uses a Fluent-inspired design system with an app-shell layout.
 
 ## App shell baseline
 
-- Top header with product identity and integrated search bar.
-- Left sidebar with sectioned navigation (browse, library, indexing, ignore rules).
+- Top header with product identity, integrated search bar, Settings button, and GitHub link.
+- Left sidebar with sectioned navigation (browse, library roots, auto-tags); operational controls (indexing, ignore rules, diagnostics) moved to Settings dialog.
 - Main media pane for gallery grid, timeline groups, and search result cards.
 - Right details pane for preview, file info, tags, and actions.
 - Details pane shows an intentional empty state when no media is selected.
@@ -51,30 +51,31 @@ All visual presentation is centralized in `librapix-app/src/ui.rs`:
   - a date chip is shown while dragging
   - entering scrub mode keeps scrubber lane geometry stable (no first-click lateral snap)
 - Search is triggered via Enter key in the header search bar.
-- Root selection uses styled nav buttons with status dot indicators.
+- Root selection uses styled nav buttons with status dot indicators; display names shown when set.
 - Root management controls appear contextually when a root is selected.
 - Library root addition supports native folder picker dialog via Browse button.
-- Manual path input is available as a secondary flow.
+- Manual path input is hidden by default; toggle "Show path field" to reveal it.
 - Copy shortcuts are supported through ignored keyboard events (no text-input conflicts):
   - `Cmd/Ctrl+C`: copy selected file
   - `Cmd/Ctrl+Shift+C`: copy selected path
 
 ## Filtering
 
-- Media pane toolbar includes three filter axes:
+- Media pane toolbar includes four filter axes:
+  - library (All / per-root chips when multiple roots exist)
   - type (All / Images / Videos)
   - extension (PNG, JPG, GIF, WEBP, MP4, MOV, etc.)
   - tag (available indexed tags)
 - Extension chip set adjusts based on active type filter: image extensions when type is Images, video extensions when type is Videos, both when All.
 - Changing type resets the extension filter.
 - Filters apply to gallery, timeline, and search projections simultaneously.
-- Filter state lives in app state (`filter_media_kind`, `filter_extension`, `filter_tag`); presentation is in the media pane toolbar.
+- Filter state lives in app state (`filter_media_kind`, `filter_extension`, `filter_tag`, `filter_source_root_id`); presentation is in the filter dialog.
 - Filter logic is applied at the app orchestration layer, not inside widgets.
 - `All` means no media-kind filter; it includes both images and videos.
 
 ## Media pane layout
 
-- Media pane toolbar (title, refresh, shown/images/videos stats, filter chips) is rendered outside the scrollable region.
+- Media pane toolbar (title, refresh, total/images/videos stats, filter chips) is rendered outside the scrollable region.
 - Only the browse content and search results scroll; the toolbar remains fixed at the top.
 - This prevents the scrollbar from overlapping toolbar controls.
 - The media scrollable uses embedded vertical scrollbar spacing, reserving a dedicated gutter so scrollbar chrome does not overlay media cards.
@@ -84,7 +85,7 @@ All visual presentation is centralized in `librapix-app/src/ui.rs`:
 
 Gallery, timeline, and search views share a unified media-view architecture:
 
-- **BrowseItem**: common data model with `media_id`, `title`, `media_kind`, `metadata_line`, `thumbnail_path`, `aspect_ratio`, `is_group_header`.
+- **BrowseItem**: common data model with `media_id`, `title`, `media_kind`, `metadata_line`, `thumbnail_path`, `aspect_ratio`, `is_group_header`, and optional `group_total`, `group_image_count`, `group_video_count` for timeline headers.
 - **render_media_card()**: shared card rendering primitive used by all views.
 - **resolve_thumbnail()**: unified thumbnail resolution for images (Lanczos3) and videos (ffmpeg).
 - **populate_media_cache()**: caches read-model data alongside browse items to avoid per-click storage queries.
@@ -107,7 +108,7 @@ Gallery, timeline, and search views share a unified media-view architecture:
 
 ## Timeline rendering
 
-- Timeline renders as date-grouped sections, each with a group header and a justified mini-grid.
+- Timeline renders as date-grouped sections, each with a group header (date label plus total/image/video count chips) and a justified mini-grid.
 - The mini-grid within each group uses the same justified row algorithm as the gallery.
 - Both gallery and timeline use `render_media_card()` for card rendering.
 - Items are selectable with the same card style as gallery cards.
@@ -157,8 +158,7 @@ Gallery, timeline, and search views share a unified media-view architecture:
 ## Header branding
 
 - Blue logo icon (from `assets/logo/blue/`) displays at 32×32.
-- "Libra" displays in primary text color, "Pix" in accent color, creating a split-color product identity.
-- A subtle "· Media Library" subtitle follows in tertiary text.
+- "Libra" displays in primary text color, "Pix" in accent color, creating a split-color product identity with minimal spacing.
 - GitHub link button (white icon) opens the project repository.
 - The header maintains the Fluent-inspired dark theme aesthetic.
 

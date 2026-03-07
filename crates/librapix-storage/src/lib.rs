@@ -37,6 +37,7 @@ pub struct SourceRootRecord {
     pub id: i64,
     pub normalized_path: PathBuf,
     pub lifecycle: SourceRootLifecycle,
+    pub display_name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -257,6 +258,23 @@ impl Storage {
         Ok(())
     }
 
+    pub fn update_source_root_display_name(
+        &self,
+        root_id: i64,
+        display_name: &str,
+    ) -> Result<(), StorageError> {
+        let value = if display_name.trim().is_empty() {
+            None::<&str>
+        } else {
+            Some(display_name.trim())
+        };
+        self.connection.execute(
+            "UPDATE source_roots SET display_name = ?1 WHERE id = ?2",
+            params![value, root_id],
+        )?;
+        Ok(())
+    }
+
     pub fn update_source_root_path(
         &self,
         root_id: i64,
@@ -305,7 +323,7 @@ impl Storage {
 
     pub fn list_source_roots(&self) -> Result<Vec<SourceRootRecord>, StorageError> {
         let mut statement = self.connection.prepare(
-            "SELECT id, normalized_path, lifecycle_state
+            "SELECT id, normalized_path, lifecycle_state, display_name
              FROM source_roots
              ORDER BY id ASC",
         )?;
@@ -313,6 +331,7 @@ impl Storage {
         let rows = statement.query_map([], |row| {
             let path_str: String = row.get(1)?;
             let lifecycle_str: String = row.get(2)?;
+            let display_name: Option<String> = row.get(3)?;
 
             let lifecycle = SourceRootLifecycle::from_str(&lifecycle_str)
                 .ok_or_else(|| rusqlite::Error::InvalidParameterName(lifecycle_str.clone()))?;
@@ -321,6 +340,7 @@ impl Storage {
                 id: row.get(0)?,
                 normalized_path: PathBuf::from(path_str),
                 lifecycle,
+                display_name,
             })
         })?;
 
@@ -330,7 +350,7 @@ impl Storage {
 
     pub fn list_eligible_source_roots(&self) -> Result<Vec<SourceRootRecord>, StorageError> {
         let mut statement = self.connection.prepare(
-            "SELECT id, normalized_path, lifecycle_state
+            "SELECT id, normalized_path, lifecycle_state, display_name
              FROM source_roots
              WHERE lifecycle_state = 'active'
              ORDER BY id ASC",
@@ -338,6 +358,7 @@ impl Storage {
 
         let rows = statement.query_map([], |row| {
             let lifecycle_str: String = row.get(2)?;
+            let display_name: Option<String> = row.get(3)?;
             let lifecycle = SourceRootLifecycle::from_str(&lifecycle_str)
                 .ok_or_else(|| rusqlite::Error::InvalidParameterName(lifecycle_str.clone()))?;
 
@@ -345,6 +366,7 @@ impl Storage {
                 id: row.get(0)?,
                 normalized_path: PathBuf::from(row.get::<usize, String>(1)?),
                 lifecycle,
+                display_name,
             })
         })?;
 
@@ -699,7 +721,14 @@ impl Storage {
     }
 
     pub fn list_all_media_read_models(&self) -> Result<Vec<MediaReadModel>, StorageError> {
-        self.query_media_read_models_unbounded(None)
+        self.query_media_read_models_unbounded(None, None)
+    }
+
+    pub fn list_all_media_read_models_filtered(
+        &self,
+        source_root_id: Option<i64>,
+    ) -> Result<Vec<MediaReadModel>, StorageError> {
+        self.query_media_read_models_unbounded(None, source_root_id)
     }
 
     pub fn search_media_read_models(
@@ -734,43 +763,44 @@ impl Storage {
     fn query_media_read_models_unbounded(
         &self,
         query: Option<&str>,
+        source_root_id: Option<i64>,
     ) -> Result<Vec<MediaReadModel>, StorageError> {
-        let sql_with_filter = "
-            SELECT m.id, m.source_root_id, m.absolute_path, m.media_kind,
-                   m.file_size_bytes, m.modified_unix_seconds, m.width_px, m.height_px,
-                   m.metadata_status, COALESCE(GROUP_CONCAT(t.name, ','), '')
-            FROM indexed_media m
-            LEFT JOIN media_tags mt ON mt.media_id = m.id
-            LEFT JOIN tags t ON t.id = mt.tag_id
-            WHERE m.metadata_status != 'missing'
-              AND (m.absolute_path LIKE '%' || ?1 || '%' OR t.name LIKE '%' || ?1 || '%')
-            GROUP BY m.id
-            ORDER BY m.modified_unix_seconds DESC, m.absolute_path ASC";
+        let base_where = "m.metadata_status != 'missing'";
+        let path_filter = query
+            .map(|_| " AND (m.absolute_path LIKE '%' || ?1 || '%' OR t.name LIKE '%' || ?1 || '%')")
+            .unwrap_or("");
+        let root_filter = source_root_id
+            .map(|_| {
+                if query.is_some() {
+                    " AND m.source_root_id = ?2"
+                } else {
+                    " AND m.source_root_id = ?1"
+                }
+            })
+            .unwrap_or("");
 
-        let sql_without_filter = "
-            SELECT m.id, m.source_root_id, m.absolute_path, m.media_kind,
-                   m.file_size_bytes, m.modified_unix_seconds, m.width_px, m.height_px,
-                   m.metadata_status, COALESCE(GROUP_CONCAT(t.name, ','), '')
-            FROM indexed_media m
-            LEFT JOIN media_tags mt ON mt.media_id = m.id
-            LEFT JOIN tags t ON t.id = mt.tag_id
-            WHERE m.metadata_status != 'missing'
-            GROUP BY m.id
-            ORDER BY m.modified_unix_seconds DESC, m.absolute_path ASC";
+        let sql = format!(
+            "SELECT m.id, m.source_root_id, m.absolute_path, m.media_kind,
+                    m.file_size_bytes, m.modified_unix_seconds, m.width_px, m.height_px,
+                    m.metadata_status, COALESCE(GROUP_CONCAT(t.name, ','), '')
+             FROM indexed_media m
+             LEFT JOIN media_tags mt ON mt.media_id = m.id
+             LEFT JOIN tags t ON t.id = mt.tag_id
+             WHERE {base_where}{path_filter}{root_filter}
+             GROUP BY m.id
+             ORDER BY m.modified_unix_seconds DESC, m.absolute_path ASC"
+        );
 
-        let mut statement = self.connection.prepare(if query.is_some() {
-            sql_with_filter
-        } else {
-            sql_without_filter
-        })?;
+        let mut statement = self.connection.prepare(&sql)?;
         let mapper = |row: &rusqlite::Row<'_>| -> Result<MediaReadModel, rusqlite::Error> {
             map_media_read_model_row(row)
         };
 
-        let rows = if let Some(text) = query {
-            statement.query_map(params![text], mapper)?
-        } else {
-            statement.query_map([], mapper)?
+        let rows = match (query, source_root_id) {
+            (Some(text), Some(root_id)) => statement.query_map(params![text, root_id], mapper)?,
+            (Some(text), None) => statement.query_map(params![text], mapper)?,
+            (None, Some(root_id)) => statement.query_map(params![root_id], mapper)?,
+            (None, None) => statement.query_map([], mapper)?,
         };
         let collected: Result<Vec<_>, rusqlite::Error> = rows.collect();
         Ok(collected?)
@@ -952,7 +982,7 @@ mod tests {
         let version = storage
             .migration_version()
             .expect("migration version should be queryable");
-        assert_eq!(version, 6);
+        assert_eq!(version, 7);
 
         let _ = std::fs::remove_file(db);
     }

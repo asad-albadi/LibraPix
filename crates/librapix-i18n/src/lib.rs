@@ -135,6 +135,13 @@ pub enum TextKey {
     NewFileAnnouncementTitle,
     NewFileAnnouncementMoreLabel,
     DismissButton,
+    SettingsButtonLabel,
+    SettingsDialogTitle,
+    ShowPathFieldLabel,
+    HidePathFieldLabel,
+    FilterLibraryLabel,
+    StatsTotalLabel,
+    DisplayNamePlaceholder,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -296,5 +303,12 @@ fn en_us(key: TextKey) -> &'static str {
         TextKey::NewFileAnnouncementTitle => "New file detected",
         TextKey::NewFileAnnouncementMoreLabel => "more new files",
         TextKey::DismissButton => "Dismiss",
+        TextKey::SettingsButtonLabel => "Settings",
+        TextKey::SettingsDialogTitle => "Settings",
+        TextKey::ShowPathFieldLabel => "Show path field",
+        TextKey::HidePathFieldLabel => "Hide path field",
+        TextKey::FilterLibraryLabel => "Library",
+        TextKey::StatsTotalLabel => "Total",
+        TextKey::DisplayNamePlaceholder => "Display name\u{2026}",
     }
 }

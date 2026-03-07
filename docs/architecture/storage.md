@@ -38,6 +38,7 @@ SQLite is the primary persistent store for Librapix-owned metadata.
   - normalized absolute source paths
   - lifecycle state (`active`, `unavailable`, `deactivated`)
   - availability check timestamp
+  - optional `display_name` for user-defined library labels (migration 0007)
 - `app_settings`
   - key/value settings that fit DB-backed storage
 - `ignore_rules`

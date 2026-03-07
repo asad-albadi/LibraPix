@@ -18,6 +18,7 @@ pub struct LibraryRootView {
     pub id: i64,
     pub normalized_path: PathBuf,
     pub lifecycle: RootLifecycle,
+    pub display_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

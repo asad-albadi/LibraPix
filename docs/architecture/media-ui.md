@@ -43,7 +43,7 @@ This produces a Google-Photos-style justified layout where images maintain aspec
 
 ### Timeline
 - Renders date-grouped sections.
-- Each section has a group header (date label) followed by a justified mini-grid.
+- Each section has a group header (date label plus total/image/video count chips) followed by a justified mini-grid.
 - Uses full projected item set (no hidden UI cap).
 - Timeline mode includes a right-side fast scrubber driven by projection anchors.
 
@@ -51,7 +51,7 @@ This produces a Google-Photos-style justified layout where images maintain aspec
 - Renders search results as a justified grid using the same layout as gallery.
 - Shown above the main browse content when a search query is active.
 - Search no longer truncates results to an implicit 20-hit cap; full matching set is returned for the current read-model snapshot.
-- Top media-pane stats switch to the active search result set while a query is present (`Shown`, `Images`, `Videos`).
+- Top media-pane stats switch to the active search result set while a query is present (`Total`, `Images`, `Videos`).
 - Search refresh runs through projection background work (`Task::perform`) instead of synchronous UI-thread query execution.
 
 ## Selection model

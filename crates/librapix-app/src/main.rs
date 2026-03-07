@@ -103,6 +103,12 @@ enum Message {
     RefreshDiagnostics,
     OpenGitHub,
     ToggleFilterDialog,
+    OpenSettings,
+    CloseSettings,
+    ToggleShowManualPath,
+    SetFilterLibrary(Option<i64>),
+    SetRootDisplayName(i64, String),
+    UpdateRootDisplayName(i64),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -175,13 +181,16 @@ struct Librapix {
     root_tags_preview: Vec<(String, String)>,
     diagnostics_lines: Vec<String>,
     diagnostics_events: Vec<String>,
-    show_diagnostics: bool,
     timeline_scrub_value: f32,
     timeline_scrubbing: bool,
     timeline_scrub_anchor_index: Option<usize>,
     timeline_scroll_max_y: f32,
     new_media_announcement: Option<NewMediaAnnouncement>,
     filter_dialog_open: bool,
+    settings_open: bool,
+    show_manual_path: bool,
+    filter_source_root_id: Option<i64>,
+    root_display_name_input: String,
 }
 
 #[derive(Debug, Clone)]
@@ -194,6 +203,12 @@ struct BrowseItem {
     is_group_header: bool,
     line: String,
     aspect_ratio: f32,
+    /// For group headers: total count in the group.
+    group_total: Option<usize>,
+    /// For group headers: image count in the group.
+    group_image_count: Option<usize>,
+    /// For group headers: video count in the group.
+    group_video_count: Option<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -244,6 +259,7 @@ struct BackgroundWorkInput {
     filter_media_kind: Option<String>,
     filter_extension: Option<String>,
     filter_tag: Option<String>,
+    filter_source_root_id: Option<i64>,
     search_query: String,
     active_route: Route,
     i18n: Translator,
@@ -316,13 +332,16 @@ impl Default for Librapix {
             root_tags_preview: Vec::new(),
             diagnostics_lines: Vec::new(),
             diagnostics_events: Vec::new(),
-            show_diagnostics: true,
             timeline_scrub_value: 0.0,
             timeline_scrubbing: false,
             timeline_scrub_anchor_index: None,
             timeline_scroll_max_y: 0.0,
             new_media_announcement: None,
             filter_dialog_open: false,
+            settings_open: false,
+            show_manual_path: false,
+            filter_source_root_id: None,
+            root_display_name_input: String::new(),
         };
         refresh_ignore_rules_preview(&mut app);
         app
@@ -470,6 +489,12 @@ fn message_event_label(msg: &Message) -> String {
         Message::RefreshDiagnostics => "RefreshDiagnostics".into(),
         Message::OpenGitHub => "OpenGitHub".into(),
         Message::ToggleFilterDialog => "ToggleFilterDialog".into(),
+        Message::OpenSettings => "OpenSettings".into(),
+        Message::CloseSettings => "CloseSettings".into(),
+        Message::ToggleShowManualPath => "ToggleShowManualPath".into(),
+        Message::SetFilterLibrary(_) => "SetFilterLibrary".into(),
+        Message::SetRootDisplayName(..) => "SetRootDisplayName".into(),
+        Message::UpdateRootDisplayName(_) => "UpdateRootDisplayName".into(),
     }
 }
 
@@ -502,6 +527,13 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
         Message::SelectRoot(id) => {
             app.state.apply(AppMessage::SetSelectedRoot);
             app.state.set_selected_root(Some(id));
+            app.root_display_name_input = app
+                .state
+                .library_roots
+                .iter()
+                .find(|r| r.id == id)
+                .and_then(|r| r.display_name.clone())
+                .unwrap_or_default();
             refresh_root_tags_preview(app);
         }
         Message::AddRoot => {
@@ -816,6 +848,37 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
         Message::ToggleFilterDialog => {
             app.filter_dialog_open = !app.filter_dialog_open;
         }
+        Message::OpenSettings => {
+            app.settings_open = true;
+        }
+        Message::CloseSettings => {
+            app.settings_open = false;
+        }
+        Message::ToggleShowManualPath => {
+            app.show_manual_path = !app.show_manual_path;
+        }
+        Message::SetFilterLibrary(root_id) => {
+            app.filter_source_root_id = root_id;
+            app.activity_status = app.i18n.text(TextKey::LoadingGalleryLabel).to_owned();
+            return spawn_background_work(
+                app,
+                BackgroundWorkReason::UserOrSystem,
+                BackgroundWorkMode::ProjectOnly,
+            );
+        }
+        Message::SetRootDisplayName(_root_id, value) => {
+            app.root_display_name_input = value;
+        }
+        Message::UpdateRootDisplayName(root_id) => {
+            if with_storage(&app.runtime, |storage| {
+                storage.update_source_root_display_name(root_id, app.root_display_name_input.trim())
+            })
+            .is_ok()
+            {
+                app.root_display_name_input.clear();
+                refresh_roots(app);
+            }
+        }
     }
 
     Task::none()
@@ -852,8 +915,13 @@ fn view(app: &Librapix) -> Element<'_, Message> {
         text("Libra").size(FONT_DISPLAY).color(TEXT_PRIMARY),
         text("Pix").size(FONT_DISPLAY).color(ACCENT),
     ]
-    .spacing(SPACE_SM)
+    .spacing(0)
     .align_y(iced::Alignment::Center);
+
+    let settings_btn = button(text(app.i18n.text(TextKey::SettingsButtonLabel)).size(FONT_BODY))
+        .on_press(Message::OpenSettings)
+        .style(subtle_button_style)
+        .padding([SPACE_XS as u16, SPACE_MD as u16]);
 
     let github_btn = button(
         image(image::Handle::from_path(assets::icon_github()))
@@ -869,9 +937,6 @@ fn view(app: &Librapix) -> Element<'_, Message> {
     let header = container(
         row![
             brand,
-            text("\u{00B7} Media Library")
-                .size(FONT_CAPTION)
-                .color(TEXT_TERTIARY),
             Space::new().width(Length::Fill),
             row![
                 image(image::Handle::from_path(assets::icon_search()))
@@ -894,6 +959,7 @@ fn view(app: &Librapix) -> Element<'_, Message> {
             text(app.activity_status.clone())
                 .size(FONT_CAPTION)
                 .color(ACCENT),
+            settings_btn,
             github_btn,
         ]
         .spacing(SPACE_SM)
@@ -954,11 +1020,16 @@ fn view(app: &Librapix) -> Element<'_, Message> {
             .iter()
             .fold(column![].spacing(SPACE_2XS), |col, root| {
                 let is_selected = app.state.selected_root_id == Some(root.id);
-                let path_name = root
-                    .normalized_path
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| root.normalized_path.display().to_string());
+                let label = root
+                    .display_name
+                    .clone()
+                    .filter(|s| !s.trim().is_empty())
+                    .unwrap_or_else(|| {
+                        root.normalized_path
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_else(|| root.normalized_path.display().to_string())
+                    });
                 let status_color = match root.lifecycle {
                     RootLifecycle::Active => SUCCESS_COLOR,
                     RootLifecycle::Unavailable => WARNING_COLOR,
@@ -968,7 +1039,7 @@ fn view(app: &Librapix) -> Element<'_, Message> {
                     button(
                         row![
                             text("\u{25CF}").size(FONT_CAPTION).color(status_color),
-                            text(path_name).size(FONT_BODY).color(if is_selected {
+                            text(label).size(FONT_BODY).color(if is_selected {
                                 TEXT_PRIMARY
                             } else {
                                 TEXT_SECONDARY
@@ -986,37 +1057,70 @@ fn view(app: &Librapix) -> Element<'_, Message> {
             .into()
     };
 
-    let selected_root_actions: Element<'_, Message> = if app.state.selected_root_id.is_some() {
+    let selected_root_actions: Element<'_, Message> =
+        if let Some(root_id) = app.state.selected_root_id {
+            column![
+                row![
+                    text_input(
+                        app.i18n.text(TextKey::DisplayNamePlaceholder),
+                        &app.root_display_name_input,
+                    )
+                    .on_input(move |v| Message::SetRootDisplayName(root_id, v))
+                    .style(field_input_style)
+                    .width(Length::Fill),
+                    button(text(app.i18n.text(TextKey::ApplyLabel)).size(FONT_CAPTION))
+                        .on_press(Message::UpdateRootDisplayName(root_id))
+                        .style(subtle_button_style)
+                        .padding([SPACE_2XS as u16, SPACE_SM as u16]),
+                ]
+                .spacing(SPACE_XS),
+                row![
+                    button(text(app.i18n.text(TextKey::RootUpdateButton)).size(FONT_CAPTION))
+                        .on_press(Message::UpdateRoot)
+                        .style(subtle_button_style)
+                        .padding([SPACE_2XS as u16, SPACE_SM as u16]),
+                    button(text(app.i18n.text(TextKey::RootDeactivateButton)).size(FONT_CAPTION))
+                        .on_press(Message::DeactivateRoot)
+                        .style(subtle_button_style)
+                        .padding([SPACE_2XS as u16, SPACE_SM as u16]),
+                ]
+                .spacing(SPACE_XS),
+                row![
+                    button(text(app.i18n.text(TextKey::RootReactivateButton)).size(FONT_CAPTION))
+                        .on_press(Message::ReactivateRoot)
+                        .style(subtle_button_style)
+                        .padding([SPACE_2XS as u16, SPACE_SM as u16]),
+                    button(text(app.i18n.text(TextKey::RootRemoveButton)).size(FONT_CAPTION))
+                        .on_press(Message::RemoveRoot)
+                        .style(subtle_button_style)
+                        .padding([SPACE_2XS as u16, SPACE_SM as u16]),
+                ]
+                .spacing(SPACE_XS),
+            ]
+            .spacing(SPACE_XS)
+            .into()
+        } else {
+            column![].into()
+        };
+
+    let path_toggle_label = if app.show_manual_path {
+        app.i18n.text(TextKey::HidePathFieldLabel)
+    } else {
+        app.i18n.text(TextKey::ShowPathFieldLabel)
+    };
+    let path_field: Element<'_, Message> = if app.show_manual_path {
         column![
-            row![
-                button(text(app.i18n.text(TextKey::RootUpdateButton)).size(FONT_CAPTION))
-                    .on_press(Message::UpdateRoot)
-                    .style(subtle_button_style)
-                    .padding([SPACE_2XS as u16, SPACE_SM as u16]),
-                button(text(app.i18n.text(TextKey::RootDeactivateButton)).size(FONT_CAPTION))
-                    .on_press(Message::DeactivateRoot)
-                    .style(subtle_button_style)
-                    .padding([SPACE_2XS as u16, SPACE_SM as u16]),
-            ]
-            .spacing(SPACE_XS),
-            row![
-                button(text(app.i18n.text(TextKey::RootReactivateButton)).size(FONT_CAPTION))
-                    .on_press(Message::ReactivateRoot)
-                    .style(subtle_button_style)
-                    .padding([SPACE_2XS as u16, SPACE_SM as u16]),
-                button(text(app.i18n.text(TextKey::RootRemoveButton)).size(FONT_CAPTION))
-                    .on_press(Message::RemoveRoot)
-                    .style(subtle_button_style)
-                    .padding([SPACE_2XS as u16, SPACE_SM as u16]),
-            ]
-            .spacing(SPACE_XS),
+            text_input(
+                app.i18n.text(TextKey::FolderPathPlaceholder),
+                &app.state.root_input
+            )
+            .on_input(Message::RootInputChanged)
+            .style(field_input_style),
         ]
-        .spacing(SPACE_XS)
         .into()
     } else {
         column![].into()
     };
-
     let library_section = column![
         section_heading(app.i18n.text(TextKey::LibrarySectionLabel)),
         roots_list,
@@ -1035,93 +1139,15 @@ fn view(app: &Librapix) -> Element<'_, Message> {
                 .padding([SPACE_XS as u16, SPACE_MD as u16]),
         ]
         .spacing(SPACE_XS),
-        text_input(
-            app.i18n.text(TextKey::FolderPathPlaceholder),
-            &app.state.root_input
-        )
-        .on_input(Message::RootInputChanged)
-        .style(field_input_style),
+        button(text(path_toggle_label).size(FONT_CAPTION))
+            .on_press(Message::ToggleShowManualPath)
+            .style(subtle_button_style)
+            .padding([SPACE_2XS as u16, SPACE_XS as u16]),
+        path_field,
         selected_root_actions,
         text(app.root_status.clone())
             .size(FONT_CAPTION)
             .color(TEXT_TERTIARY),
-    ]
-    .spacing(SPACE_SM);
-
-    // ── Sidebar: Indexing ──
-    let indexing_section = column![
-        section_heading(app.i18n.text(TextKey::IndexingSectionLabel)),
-        button(
-            row![
-                image(image::Handle::from_path(assets::icon_index()))
-                    .width(Length::Fixed(18.0))
-                    .height(Length::Fixed(18.0))
-                    .content_fit(ContentFit::Contain)
-                    .filter_method(FilterMethod::Linear),
-                text(app.i18n.text(TextKey::IndexRunButton)).size(FONT_BODY),
-            ]
-            .spacing(SPACE_SM)
-            .align_y(iced::Alignment::Center),
-        )
-        .on_press(Message::RunIndexing)
-        .style(primary_button_style)
-        .width(Length::Fill)
-        .padding([SPACE_SM as u16, SPACE_MD as u16]),
-        text(app.indexing_status.clone())
-            .size(FONT_CAPTION)
-            .color(TEXT_TERTIARY),
-        text(app.thumbnail_status.clone())
-            .size(FONT_CAPTION)
-            .color(TEXT_TERTIARY),
-    ]
-    .spacing(SPACE_SM);
-
-    // ── Sidebar: Exclusion rules ──
-    let ignore_section = column![
-        section_heading(app.i18n.text(TextKey::IgnoreRuleInputLabel)),
-        text_input("*.tmp, **/cache/**", &app.ignore_rule_input)
-            .on_input(Message::IgnoreRuleInputChanged)
-            .style(field_input_style),
-        row![
-            button(text(app.i18n.text(TextKey::IgnoreRuleAddButton)).size(FONT_CAPTION))
-                .on_press(Message::EnableIgnoreRule)
-                .style(subtle_button_style)
-                .padding([SPACE_2XS as u16, SPACE_SM as u16]),
-            button(text(app.i18n.text(TextKey::IgnoreRuleDisableButton)).size(FONT_CAPTION))
-                .on_press(Message::DisableIgnoreRule)
-                .style(subtle_button_style)
-                .padding([SPACE_2XS as u16, SPACE_SM as u16]),
-        ]
-        .spacing(SPACE_XS),
-        app.ignore_rules_preview
-            .iter()
-            .take(6)
-            .fold(column![].spacing(SPACE_2XS), |col, rule| {
-                col.push(text(rule.clone()).size(FONT_CAPTION).color(TEXT_TERTIARY))
-            }),
-        h_divider(),
-        row![
-            text(app.i18n.text(TextKey::MinFileSizeLabel))
-                .size(FONT_CAPTION)
-                .color(TEXT_SECONDARY),
-            text_input(
-                app.i18n.text(TextKey::MinFileSizeKbSuffix),
-                &app.min_file_size_input
-            )
-            .on_input(Message::MinFileSizeInputChanged)
-            .on_submit(Message::ApplyMinFileSize)
-            .width(Length::Fixed(60.0))
-            .style(field_input_style),
-            text(app.i18n.text(TextKey::MinFileSizeKbSuffix))
-                .size(FONT_CAPTION)
-                .color(TEXT_TERTIARY),
-            button(text(app.i18n.text(TextKey::ApplyLabel)).size(FONT_CAPTION))
-                .on_press(Message::ApplyMinFileSize)
-                .style(subtle_button_style)
-                .padding([SPACE_2XS as u16, SPACE_SM as u16]),
-        ]
-        .spacing(SPACE_XS)
-        .align_y(iced::Alignment::Center),
     ]
     .spacing(SPACE_SM);
 
@@ -1177,67 +1203,6 @@ fn view(app: &Librapix) -> Element<'_, Message> {
         column![].into()
     };
 
-    let diagnostics_section: Element<'_, Message> = if app.show_diagnostics {
-        let state_lines = if app.diagnostics_lines.is_empty() {
-            column![
-                text("Click Refresh to load state.")
-                    .size(FONT_CAPTION)
-                    .color(TEXT_TERTIARY)
-            ]
-        } else {
-            app.diagnostics_lines
-                .iter()
-                .fold(column![].spacing(SPACE_2XS), |col, line| {
-                    col.push(
-                        text(line.as_str())
-                            .size(FONT_CAPTION)
-                            .color(TEXT_TERTIARY)
-                            .font(iced::Font::MONOSPACE),
-                    )
-                })
-        };
-        let event_lines = if app.diagnostics_events.is_empty() {
-            column![
-                text("(no events yet)")
-                    .size(FONT_CAPTION)
-                    .color(TEXT_TERTIARY)
-            ]
-        } else {
-            app.diagnostics_events
-                .iter()
-                .rev()
-                .fold(column![].spacing(SPACE_2XS), |col, line| {
-                    col.push(
-                        text(line.as_str())
-                            .size(FONT_CAPTION)
-                            .color(TEXT_TERTIARY)
-                            .font(iced::Font::MONOSPACE),
-                    )
-                })
-        };
-        column![
-            row![
-                section_heading(app.i18n.text(TextKey::DiagnosticsSectionLabel)),
-                Space::new().width(Length::Fill),
-                button(text(app.i18n.text(TextKey::RefreshButton)).size(FONT_CAPTION))
-                    .on_press(Message::RefreshDiagnostics)
-                    .style(subtle_button_style)
-                    .padding([SPACE_2XS as u16, SPACE_XS as u16]),
-            ]
-            .align_y(iced::Alignment::Center),
-            text("Events (newest first)")
-                .size(FONT_CAPTION)
-                .color(TEXT_SECONDARY),
-            scrollable(event_lines).height(Length::Fixed(120.0)),
-            text("State").size(FONT_CAPTION).color(TEXT_SECONDARY),
-            state_lines,
-        ]
-        .spacing(SPACE_SM)
-        .into()
-    } else {
-        column![].into()
-    };
-
     let sidebar = container(
         scrollable(
             column![
@@ -1245,13 +1210,7 @@ fn view(app: &Librapix) -> Element<'_, Message> {
                 h_divider(),
                 library_section,
                 h_divider(),
-                indexing_section,
-                h_divider(),
-                ignore_section,
-                h_divider(),
                 auto_tag_section,
-                h_divider(),
-                diagnostics_section,
             ]
             .spacing(SPACE_LG)
             .padding(SPACE_LG as u16),
@@ -1319,26 +1278,25 @@ fn view(app: &Librapix) -> Element<'_, Message> {
         .style(app_bg_style)
         .into();
 
-    let overlay: Element<'_, Message> =
-        match (app.filter_dialog_open, app.new_media_announcement.is_some()) {
-            (true, true) => stack([
-                shell,
-                render_filter_dialog(app),
-                render_new_media_dialog(app),
-            ])
+    let mut overlay: Element<'_, Message> = shell;
+    if app.filter_dialog_open {
+        overlay = stack([overlay, render_filter_dialog(app)])
             .width(Length::Fill)
             .height(Length::Fill)
-            .into(),
-            (true, false) => stack([shell, render_filter_dialog(app)])
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .into(),
-            (false, true) => stack([shell, render_new_media_dialog(app)])
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .into(),
-            (false, false) => shell,
-        };
+            .into();
+    }
+    if app.new_media_announcement.is_some() {
+        overlay = stack([overlay, render_new_media_dialog(app)])
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into();
+    }
+    if app.settings_open {
+        overlay = stack([overlay, render_settings_dialog(app)])
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into();
+    }
     overlay
 }
 
@@ -1387,7 +1345,7 @@ fn render_media_panel(app: &Librapix) -> (Element<'_, Message>, Element<'_, Mess
         .padding([SPACE_XS as u16, SPACE_XS as u16]),
         text(format!(
             "{}: {} \u{00B7} {}: {} \u{00B7} {}: {}",
-            app.i18n.text(TextKey::StatsShownLabel),
+            app.i18n.text(TextKey::StatsTotalLabel),
             stats.shown_items,
             app.i18n.text(TextKey::StatsImagesLabel),
             stats.image_count,
@@ -1603,10 +1561,48 @@ fn render_timeline_view<'a>(
             let header_item = &items[i];
             i += 1;
 
+            let count_chips: Element<'_, Message> = if let (Some(total), Some(img), Some(vid)) = (
+                header_item.group_total,
+                header_item.group_image_count,
+                header_item.group_video_count,
+            ) {
+                row![
+                    text(format!("{total}"))
+                        .size(FONT_CAPTION)
+                        .color(TEXT_SECONDARY),
+                    image(image::Handle::from_path(assets::icon_type_image()))
+                        .width(Length::Fixed(14.0))
+                        .height(Length::Fixed(14.0))
+                        .content_fit(ContentFit::Contain)
+                        .filter_method(FilterMethod::Linear),
+                    text(format!("{img}"))
+                        .size(FONT_CAPTION)
+                        .color(TEXT_SECONDARY),
+                    image(image::Handle::from_path(assets::icon_type_video()))
+                        .width(Length::Fixed(14.0))
+                        .height(Length::Fixed(14.0))
+                        .content_fit(ContentFit::Contain)
+                        .filter_method(FilterMethod::Linear),
+                    text(format!("{vid}"))
+                        .size(FONT_CAPTION)
+                        .color(TEXT_SECONDARY),
+                ]
+                .spacing(SPACE_SM)
+                .align_y(iced::Alignment::Center)
+                .into()
+            } else {
+                column![].into()
+            };
             let group_header = container(
-                text(header_item.title.clone())
-                    .size(FONT_SUBTITLE)
-                    .color(TEXT_PRIMARY),
+                row![
+                    text(header_item.title.clone())
+                        .size(FONT_SUBTITLE)
+                        .color(TEXT_PRIMARY),
+                    Space::new().width(Length::Fill),
+                    count_chips,
+                ]
+                .spacing(SPACE_SM)
+                .align_y(iced::Alignment::Center),
             )
             .padding([SPACE_SM as u16, 0]);
 
@@ -1776,6 +1772,38 @@ fn render_filter_dialog(app: &Librapix) -> Element<'_, Message> {
         );
     }
 
+    let mut library_chip_row = row![
+        text(app.i18n.text(TextKey::FilterLibraryLabel))
+            .size(FONT_BODY)
+            .color(TEXT_SECONDARY),
+        button(text(app.i18n.text(TextKey::FilterAllLabel)).size(FONT_BODY))
+            .on_press(Message::SetFilterLibrary(None))
+            .style(filter_chip_style(app.filter_source_root_id.is_none()))
+            .padding([SPACE_XS as u16, SPACE_MD as u16]),
+    ]
+    .spacing(SPACE_SM)
+    .align_y(iced::Alignment::Center);
+
+    for root in &app.state.library_roots {
+        let label = root
+            .display_name
+            .clone()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| {
+                root.normalized_path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| root.normalized_path.display().to_string())
+            });
+        let is_active = app.filter_source_root_id == Some(root.id);
+        library_chip_row = library_chip_row.push(
+            button(text(label).size(FONT_BODY))
+                .on_press(Message::SetFilterLibrary(Some(root.id)))
+                .style(filter_chip_style(is_active))
+                .padding([SPACE_XS as u16, SPACE_MD as u16]),
+        );
+    }
+
     let mut tag_chip_row = row![
         text(app.i18n.text(TextKey::FilterTagsLabel))
             .size(FONT_BODY)
@@ -1822,6 +1850,22 @@ fn render_filter_dialog(app: &Librapix) -> Element<'_, Message> {
             .into()
     };
 
+    let library_section: Element<'_, Message> = if app.state.library_roots.len() > 1 {
+        column![
+            section_heading(app.i18n.text(TextKey::FilterLibraryLabel)),
+            scrollable(library_chip_row)
+                .direction(scrollable::Direction::Horizontal(
+                    scrollable::Scrollbar::default(),
+                ))
+                .width(Length::Fill)
+                .height(Length::Shrink),
+        ]
+        .spacing(SPACE_SM)
+        .into()
+    } else {
+        column![].into()
+    };
+
     let dialog_content = column![
         text(app.i18n.text(TextKey::FiltersButtonLabel))
             .size(FONT_TITLE)
@@ -1837,6 +1881,7 @@ fn render_filter_dialog(app: &Librapix) -> Element<'_, Message> {
             ext_chips,
         ]
         .spacing(SPACE_SM),
+        library_section,
         column![
             section_heading(app.i18n.text(TextKey::FilterTagsLabel)),
             tag_section,
@@ -1854,6 +1899,185 @@ fn render_filter_dialog(app: &Librapix) -> Element<'_, Message> {
         .max_width(480.0)
         .padding(SPACE_LG as u16)
         .style(modal_dialog_style);
+
+    container(
+        container(dialog)
+            .center_x(Length::Fill)
+            .center_y(Length::Fill),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .padding([SPACE_2XL as u16, SPACE_XL as u16])
+    .style(modal_backdrop_style)
+    .into()
+}
+
+fn render_settings_dialog(app: &Librapix) -> Element<'_, Message> {
+    let indexing_section = column![
+        section_heading(app.i18n.text(TextKey::IndexingSectionLabel)),
+        button(
+            row![
+                image(image::Handle::from_path(assets::icon_index()))
+                    .width(Length::Fixed(18.0))
+                    .height(Length::Fixed(18.0))
+                    .content_fit(ContentFit::Contain)
+                    .filter_method(FilterMethod::Linear),
+                text(app.i18n.text(TextKey::IndexRunButton)).size(FONT_BODY),
+            ]
+            .spacing(SPACE_SM)
+            .align_y(iced::Alignment::Center),
+        )
+        .on_press(Message::RunIndexing)
+        .style(primary_button_style)
+        .width(Length::Fill)
+        .padding([SPACE_SM as u16, SPACE_MD as u16]),
+        text(app.indexing_status.clone())
+            .size(FONT_CAPTION)
+            .color(TEXT_TERTIARY),
+        text(app.thumbnail_status.clone())
+            .size(FONT_CAPTION)
+            .color(TEXT_TERTIARY),
+    ]
+    .spacing(SPACE_SM);
+
+    let ignore_section = column![
+        section_heading(app.i18n.text(TextKey::IgnoreRuleInputLabel)),
+        text_input("*.tmp, **/cache/**", &app.ignore_rule_input)
+            .on_input(Message::IgnoreRuleInputChanged)
+            .style(field_input_style),
+        row![
+            button(text(app.i18n.text(TextKey::IgnoreRuleAddButton)).size(FONT_CAPTION))
+                .on_press(Message::EnableIgnoreRule)
+                .style(subtle_button_style)
+                .padding([SPACE_2XS as u16, SPACE_SM as u16]),
+            button(text(app.i18n.text(TextKey::IgnoreRuleDisableButton)).size(FONT_CAPTION))
+                .on_press(Message::DisableIgnoreRule)
+                .style(subtle_button_style)
+                .padding([SPACE_2XS as u16, SPACE_SM as u16]),
+        ]
+        .spacing(SPACE_XS),
+        app.ignore_rules_preview
+            .iter()
+            .take(6)
+            .fold(column![].spacing(SPACE_2XS), |col, rule| {
+                col.push(text(rule.clone()).size(FONT_CAPTION).color(TEXT_TERTIARY))
+            }),
+        h_divider(),
+        row![
+            text(app.i18n.text(TextKey::MinFileSizeLabel))
+                .size(FONT_CAPTION)
+                .color(TEXT_SECONDARY),
+            text_input(
+                app.i18n.text(TextKey::MinFileSizeKbSuffix),
+                &app.min_file_size_input
+            )
+            .on_input(Message::MinFileSizeInputChanged)
+            .on_submit(Message::ApplyMinFileSize)
+            .width(Length::Fixed(60.0))
+            .style(field_input_style),
+            text(app.i18n.text(TextKey::MinFileSizeKbSuffix))
+                .size(FONT_CAPTION)
+                .color(TEXT_TERTIARY),
+            button(text(app.i18n.text(TextKey::ApplyLabel)).size(FONT_CAPTION))
+                .on_press(Message::ApplyMinFileSize)
+                .style(subtle_button_style)
+                .padding([SPACE_2XS as u16, SPACE_SM as u16]),
+        ]
+        .spacing(SPACE_XS)
+        .align_y(iced::Alignment::Center),
+    ]
+    .spacing(SPACE_SM);
+
+    let diagnostics_section = {
+        let state_lines = if app.diagnostics_lines.is_empty() {
+            column![
+                text("Click Refresh to load state.")
+                    .size(FONT_CAPTION)
+                    .color(TEXT_TERTIARY)
+            ]
+        } else {
+            app.diagnostics_lines
+                .iter()
+                .fold(column![].spacing(SPACE_2XS), |col, line| {
+                    col.push(
+                        text(line.as_str())
+                            .size(FONT_CAPTION)
+                            .color(TEXT_TERTIARY)
+                            .font(iced::Font::MONOSPACE),
+                    )
+                })
+        };
+        let event_lines = if app.diagnostics_events.is_empty() {
+            column![
+                text("(no events yet)")
+                    .size(FONT_CAPTION)
+                    .color(TEXT_TERTIARY)
+            ]
+        } else {
+            app.diagnostics_events
+                .iter()
+                .rev()
+                .fold(column![].spacing(SPACE_2XS), |col, line| {
+                    col.push(
+                        text(line.as_str())
+                            .size(FONT_CAPTION)
+                            .color(TEXT_TERTIARY)
+                            .font(iced::Font::MONOSPACE),
+                    )
+                })
+        };
+        column![
+            row![
+                section_heading(app.i18n.text(TextKey::DiagnosticsSectionLabel)),
+                Space::new().width(Length::Fill),
+                button(text(app.i18n.text(TextKey::RefreshButton)).size(FONT_CAPTION))
+                    .on_press(Message::RefreshDiagnostics)
+                    .style(subtle_button_style)
+                    .padding([SPACE_2XS as u16, SPACE_XS as u16]),
+            ]
+            .align_y(iced::Alignment::Center),
+            text("Events (newest first)")
+                .size(FONT_CAPTION)
+                .color(TEXT_SECONDARY),
+            scrollable(event_lines).height(Length::Fixed(120.0)),
+            text("State").size(FONT_CAPTION).color(TEXT_SECONDARY),
+            state_lines,
+        ]
+        .spacing(SPACE_SM)
+    };
+
+    let dialog_content = column![
+        row![
+            text(app.i18n.text(TextKey::SettingsDialogTitle))
+                .size(FONT_TITLE)
+                .color(TEXT_PRIMARY),
+            Space::new().width(Length::Fill),
+            button(text(app.i18n.text(TextKey::DismissButton)).size(FONT_BODY))
+                .on_press(Message::CloseSettings)
+                .style(subtle_button_style)
+                .padding([SPACE_XS as u16, SPACE_MD as u16]),
+        ]
+        .align_y(iced::Alignment::Center),
+        h_divider(),
+        indexing_section,
+        h_divider(),
+        ignore_section,
+        h_divider(),
+        diagnostics_section,
+        h_divider(),
+    ]
+    .spacing(SPACE_LG);
+
+    let dialog = container(
+        scrollable(dialog_content)
+            .height(Length::Fill)
+            .width(Length::Fill),
+    )
+    .width(Length::Fill)
+    .max_width(480.0)
+    .max_height(560.0)
+    .padding(SPACE_LG as u16)
+    .style(modal_dialog_style);
 
     container(
         container(dialog)
@@ -3236,6 +3460,9 @@ fn browse_item_from_row(
         is_group_header: false,
         line: format!("{} [{}]", row.absolute_path.display(), row.media_kind),
         aspect_ratio: aspect_ratio_from(row.width_px, row.height_px),
+        group_total: None,
+        group_image_count: None,
+        group_video_count: None,
     }
 }
 
@@ -3408,6 +3635,7 @@ fn spawn_background_work(
         filter_media_kind: app.filter_media_kind.clone(),
         filter_extension: app.filter_extension.clone(),
         filter_tag: app.filter_tag.clone(),
+        filter_source_root_id: app.filter_source_root_id,
         search_query: app.state.search_query.clone(),
         active_route: app.state.active_route,
         i18n: app.i18n,
@@ -3431,6 +3659,7 @@ fn do_background_work(input: BackgroundWorkInput) -> BackgroundWorkResult {
         filter_media_kind,
         filter_extension,
         filter_tag,
+        filter_source_root_id,
         search_query,
         active_route,
         i18n,
@@ -3625,7 +3854,9 @@ fn do_background_work(input: BackgroundWorkInput) -> BackgroundWorkResult {
         .map(map_roots_from_storage)
         .unwrap_or_default();
 
-    let all_rows = storage.list_all_media_read_models().unwrap_or_default();
+    let all_rows = storage
+        .list_all_media_read_models_filtered(filter_source_root_id)
+        .unwrap_or_default();
     out.available_filter_tags = collect_available_filter_tags(&all_rows);
     let active_tag_filter = filter_tag.as_ref().filter(|selected| {
         out.available_filter_tags
@@ -3673,6 +3904,9 @@ fn do_background_work(input: BackgroundWorkInput) -> BackgroundWorkResult {
                     is_group_header: false,
                     line: format!("{} [{}]", original.display(), item.media_kind),
                     aspect_ratio: 1.5,
+                    group_total: None,
+                    group_image_count: None,
+                    group_video_count: None,
                 }
             }
         })
@@ -3703,6 +3937,16 @@ fn do_background_work(input: BackgroundWorkInput) -> BackgroundWorkResult {
     let mut timeline_lines = Vec::new();
     let mut timeline_items = Vec::new();
     for bucket in buckets {
+        let image_count = bucket
+            .items
+            .iter()
+            .filter(|i| i.media_kind.eq_ignore_ascii_case("image"))
+            .count();
+        let video_count = bucket
+            .items
+            .iter()
+            .filter(|i| i.media_kind.eq_ignore_ascii_case("video"))
+            .count();
         timeline_lines.push(format!("{} ({})", bucket.label, bucket.item_count));
         timeline_items.push(BrowseItem {
             media_id: 0,
@@ -3713,6 +3957,9 @@ fn do_background_work(input: BackgroundWorkInput) -> BackgroundWorkResult {
             is_group_header: true,
             line: bucket.label.clone(),
             aspect_ratio: 1.5,
+            group_total: Some(bucket.item_count),
+            group_image_count: Some(image_count),
+            group_video_count: Some(video_count),
         });
         for tl_item in bucket.items {
             let matched_row = row_lookup.get(&tl_item.media_id).copied();
@@ -3739,6 +3986,9 @@ fn do_background_work(input: BackgroundWorkInput) -> BackgroundWorkResult {
                     is_group_header: false,
                     line: format!("{} [{}]", tl_item.absolute_path, tl_item.media_kind),
                     aspect_ratio: 1.5,
+                    group_total: None,
+                    group_image_count: None,
+                    group_video_count: None,
                 });
             }
         }
@@ -3984,6 +4234,7 @@ fn map_roots_from_storage(roots: Vec<librapix_storage::SourceRootRecord>) -> Vec
                 SourceRootLifecycle::Unavailable => RootLifecycle::Unavailable,
                 SourceRootLifecycle::Deactivated => RootLifecycle::Deactivated,
             },
+            display_name: root.display_name,
         })
         .collect()
 }

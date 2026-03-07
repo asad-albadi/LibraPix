@@ -30,11 +30,6 @@ jobs:
             package: exe
 
           - os: macos-latest
-            target: x86_64-apple-darwin
-            asset_suffix: macos-intel.dmg
-            package: dmg
-
-          - os: macos-latest
             target: aarch64-apple-darwin
             asset_suffix: macos-apple-silicon.dmg
             package: dmg

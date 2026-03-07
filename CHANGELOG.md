@@ -46,10 +46,11 @@ All notable changes to this project are documented in this file.
   - scripts for dev cert creation, EXE signing, and MSIX pack+sign
 
 ### Changed
+- Release workflow no longer builds/uploads Intel macOS DMG assets; future macOS release artifact is Apple Silicon DMG only.
 - Added live filesystem watch subscription over active roots using `notify`.
 - Auto-refresh now reacts to create/modify/remove file events without manual index/refresh.
 - Replaced blocking watcher channel receive with async channel delivery in Iced subscription worker.
-- Release workflow packaging now outputs versioned asset filenames for all platforms (for example `librapix-0.2.1-windows.exe`, `librapix-0.2.1-macos-intel.dmg`, `librapix-0.2.1-linux.AppImage`).
+- Release workflow packaging now outputs versioned asset filenames for active platform artifacts (for example `librapix-0.2.1-windows.exe`, `librapix-0.2.1-macos-apple-silicon.dmg`, `librapix-0.2.1-linux.AppImage`).
 - App now auto-indexes and loads gallery/timeline on startup from persisted state.
 - App now auto-indexes and refreshes gallery after adding a library root.
 - Gallery now refreshes after removing a library root.

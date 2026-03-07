@@ -45,6 +45,7 @@ All notable changes to this project are documented in this file.
 - Header logo now uses SVG (`assets/logo/blue/logo-blue.svg`) instead of PNG for crisp scaling at any size.
 - UI icons resized from 512×512 to 32×32 (Lanczos) to eliminate antialiasing artifacts when displayed at 16–20px.
 - Windows GUI builds for `librapix-app` now use the `windows` subsystem in the binary entrypoint, preventing an extra console window from opening at startup.
+- Windows video thumbnail extraction now launches `ffmpeg.exe` with `CREATE_NO_WINDOW`, preventing terminal window flicker during startup indexing and filesystem-triggered refreshes.
 - Release workflow now embeds real app icons in macOS DMG bundles (`icon.icns`) and Linux AppImage artifacts (`icon-256.png`) instead of a placeholder icon.
 - Release packaging metadata now uses canonical product naming (`LibraPix`) for generated macOS/Linux app entries.
 - Windows builds now embed `LibraPix` icon/resource metadata into the EXE via crate build script.

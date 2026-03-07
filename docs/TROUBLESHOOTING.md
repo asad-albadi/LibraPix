@@ -472,6 +472,22 @@
   - Install ffmpeg and add to system PATH, or ensure it is in PATH for GUI-launched apps.
   - See "Video thumbnails not showing" below for general ffmpeg requirements.
 
+## Terminal windows flicker on Windows during indexing/startup
+
+- Symptoms
+  - Terminal/command windows repeatedly open and close during startup restore.
+  - Flicker returns when filesystem watch triggers re-indexing (for example, when a new screenshot appears).
+- Affected area
+  - Video thumbnail generation subprocess spawning (`ffmpeg.exe`) on Windows GUI builds.
+- Confirmed cause
+  - GUI subsystem builds (`windows_subsystem = "windows"`) do not have a parent console, so each `ffmpeg.exe` invocation can create its own console window unless explicitly suppressed.
+- Resolution
+  - Launch `ffmpeg.exe` with Windows `CREATE_NO_WINDOW` creation flags in the thumbnail subprocess path.
+  - Keep stdout/stderr redirected to null to avoid noisy subprocess output.
+- Prevention guidance
+  - For Windows subprocesses used in background work, always set no-window creation flags when no interactive console is required.
+  - Re-check subprocess behavior after changing crate subsystem attributes.
+
 ## Video thumbnails not showing
 
 - Symptoms

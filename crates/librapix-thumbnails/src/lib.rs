@@ -6,6 +6,11 @@ use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::fs;
 use std::path::{Path, PathBuf};
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[derive(Debug)]
 pub enum ThumbnailError {
@@ -138,7 +143,8 @@ pub fn ensure_video_thumbnail(
     #[cfg(not(windows))]
     let ffmpeg_cmd = "ffmpeg";
 
-    let status = std::process::Command::new(ffmpeg_cmd)
+    let mut command = std::process::Command::new(ffmpeg_cmd);
+    command
         .args([
             "-y",
             "-i",
@@ -152,8 +158,14 @@ pub fn ensure_video_thumbnail(
             &output_str,
         ])
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
+        .stderr(std::process::Stdio::null());
+
+    #[cfg(windows)]
+    {
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let status = command.status();
 
     match status {
         Ok(s) if s.success() && output.exists() => Ok(ThumbnailOutcome {

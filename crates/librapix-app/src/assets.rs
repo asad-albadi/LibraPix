@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 
 /// Project repository URL for the GitHub link in the app header.
-pub const REPO_URL: &str = "https://github.com/asad-albadi/librapix";
+pub const REPO_URL: &str = "https://github.com/asad-albadi/LibraPix";
 
 /// Returns the assets directory (workspace root / assets).
 /// Resolution order:

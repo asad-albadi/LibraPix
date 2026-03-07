@@ -70,6 +70,6 @@ This checklist tracks the update-indicator milestone for startup checks, periodi
 
 ## 10. Commit checkpoints
 
-- [ ] Commit feature implementation milestone
-- [ ] Commit docs reconciliation milestone
-- [ ] Confirm working tree clean
+- [x] Commit feature implementation milestone
+- [x] Commit docs reconciliation milestone
+- [x] Confirm working tree clean

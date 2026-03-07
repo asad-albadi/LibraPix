@@ -1,78 +1,87 @@
-# Librapix
+# LibraPix
 
-Librapix is a cross-platform, desktop-first, non-destructive local media gallery/manager for screenshots and recordings.
+![LibraPix logo](assets/logo/blue/icon-128.png)
+
+**LibraPix** is a cross-platform, desktop-first, non-destructive local media gallery and manager for screenshots and recordings.
+
+## Screenshot
+
+![LibraPix screenshot](assets/screenshots/Screenshot 2026-03-07 at 2.55.48 PM.png)
 
 ## Status
 
-Project phase: MVP complete (technical + visual shell baseline).
+Project phase: **MVP complete** (technical + visual shell baseline).
 
 ## Core Principles
 
-- Non-destructive by design: source media is treated as read-only.
-- Documentation-driven: architecture and repository rules are first-class deliverables.
-- Clear boundaries: UI, application flow, domain logic, storage/indexing/search, i18n, and config remain isolated.
-- Simplicity first: small modules, explicit state transitions, and maintainable code.
+- **Non-destructive by design**: source media is treated as read-only.
+- **Documentation-driven**: architecture and repository rules are first-class deliverables.
+- **Clear boundaries**: UI, application flow, domain logic, storage/indexing/search, i18n, and config remain isolated.
+- **Simplicity first**: small modules, explicit state transitions, and maintainable code.
 
-## Current Workspace Layout
+## Features
 
-- `crates/librapix-app`: Iced desktop executable (presentation + app bootstrap).
-- `crates/librapix-config`: typed config models, path strategy, TOML loading/saving, and validation.
-- `crates/librapix-core`: domain and application orchestration primitives.
-- `crates/librapix-indexer`: indexing pipeline foundation and centralized ignore matching.
-- `crates/librapix-i18n`: key-based localization layer with locale fallback behavior.
-- `crates/librapix-projections`: timeline and gallery read projection subsystem.
-- `crates/librapix-search`: replaceable search contracts and fuzzy strategy baseline.
-- `crates/librapix-storage`: SQLite storage and migrations subsystem.
-- `crates/librapix-thumbnails`: app-owned image thumbnail cache subsystem.
-- `docs/`: architecture, roadmap, dependency records, and repository operational docs.
+- Multiple local library directories
+- Gallery and timeline views with justified layout
+- Fuzzy search over filenames, tags, and metadata
+- App-side and game tags
+- Media type filters (images/videos) and extension chips
+- Open file, show in folder, copy file, copy path actions
+- Keyboard shortcuts: `Cmd/Ctrl+C` (copy file), `Cmd/Ctrl+Shift+C` (copy path)
+- Live filesystem watching with new-file announcement dialog
+- Deterministic thumbnail cache (images and videos)
 
-## MSRV
+## Build & Run
 
-- Minimum Supported Rust Version (MSRV): `1.85`.
-- Reason: Rust 2024 edition is used and stabilized in Rust 1.85.0.
+### Prerequisites
 
-## Development Commands
+- Rust 1.85 or later (MSRV)
+- FFmpeg (for video thumbnails)
 
-- `cargo fmt --all`
-- `cargo check --workspace`
-- `cargo clippy --workspace --all-targets -- -D warnings`
-- `cargo test --workspace`
-- `cargo run -p librapix-app`
+### Commands
 
-## Foundation behavior
+```bash
+cargo fmt --all
+cargo check --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+cargo run -p librapix-app
+```
 
-- Config is stored as TOML in the platform config directory (`config.toml`).
-- SQLite database is stored in the platform data directory (`librapix.db`).
-- Thumbnails/cache remain app-owned data under the platform cache directory.
-- Startup bootstrap syncs configured library roots into storage via idempotent upsert.
-- Root lifecycle state is reconciled as `active`, `unavailable`, or `deactivated`.
-- Indexing baseline scans eligible roots, applies centralized ignore rules, and persists indexed media candidates.
-- Metadata baseline stores file size, modified time, media kind, and image dimensions where available.
-- Re-index runs apply incremental change detection and mark missing indexed files without destructive source operations.
-- Search-facing read-model queries are available over indexed media and tag joins.
-- Indexing/galleries now generate and reuse deterministic image thumbnails in app-owned cache.
-- Large browse/search refresh work runs in background tasks (`Task::perform`) so projection/search operations do not block UI interaction.
-- UI uses a desktop shell layout (header/sidebar/main/details) with media-first gallery/timeline browsing.
-- Timeline mode includes a projection-driven fast date scrubber with structure-weighted anchors, position-aligned year markers, and continuous scroll mapping for smooth large-library navigation.
-- Timeline day grouping uses local timezone day boundaries from `modified_unix_seconds`.
-- Browse filters include media type, extension, and tag chips (applied consistently across gallery/timeline/search).
-- Search results are no longer silently capped at 20.
-- Media cards show compact metadata (`kind · size · dimensions`) and corner media-type badges.
-- Details/actions support both copy-file and copy-path workflows, including keyboard shortcuts (`Cmd/Ctrl+C` for file, `Cmd/Ctrl+Shift+C` for path).
-- Details action layout is responsive in narrow panels (no clipped final action button).
-- Media header stats show `Shown`, `Images`, and `Videos` counts derived from the currently active browse/search result set.
-- Live filesystem refresh can surface an in-app modal new-file dialog with preview, metadata, and quick actions.
-- Windows `Copy File` uses native file-drop clipboard payload behavior (Explorer-paste compatible), while `Copy Path` remains text clipboard.
-- Windows publisher/signing baseline is documented under `packaging/windows/`.
+### Platform Notes
+
+- **Windows**: Copy File uses native `CF_HDROP` clipboard (Explorer-paste compatible). Publisher/signing baseline: `packaging/windows/`.
+- **macOS**: Apple Silicon DMG for releases.
+- **Linux**: AppImage for releases.
+
+## Workspace Layout
+
+| Crate | Purpose |
+|-------|---------|
+| `librapix-app` | Iced desktop executable (presentation + app bootstrap) |
+| `librapix-config` | Typed config, path strategy, TOML load/save |
+| `librapix-core` | Domain and application orchestration |
+| `librapix-indexer` | Indexing pipeline, centralized ignore matching |
+| `librapix-i18n` | Key-based localization with locale fallback |
+| `librapix-projections` | Timeline and gallery read projections |
+| `librapix-search` | Replaceable search contracts, fuzzy strategy |
+| `librapix-storage` | SQLite storage and migrations |
+| `librapix-thumbnails` | App-owned thumbnail cache |
 
 ## MVP Usage Flow
 
 1. Add one or more library roots.
 2. Configure ignore rules as needed.
-3. Run indexing/reindexing.
-4. Browse gallery or timeline and select media directly.
-5. Inspect details, attach app/game tags, run search, and use open/copy actions.
+3. Run indexing.
+4. Browse gallery or timeline and select media.
+5. Inspect details, attach tags, run search, use open/copy actions.
 
-## Documentation Index
+## Documentation
 
-See `docs/README.md` for the full documentation map.
+- [Documentation index](docs/README.md)
+- [Architecture overview](docs/architecture/overview.md)
+- [Branding guidelines](docs/branding.md)
+
+## License
+
+MIT License. See [LICENSE](LICENSE) for details.

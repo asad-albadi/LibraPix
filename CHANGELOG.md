@@ -13,12 +13,15 @@ All notable changes to this project are documented in this file.
 - Header About action and in-app About dialog with project/creator context.
 - Unified Add/Edit Library dialog for browse-first path selection, display-name editing, root-level tag management, and batch add flow.
 - Explicit `Edit` action per library row in the sidebar.
+- Dedicated Library Statistics dialog per root/library with persisted summary/indexing metrics.
+- Sidebar `Stats` action per library row to open the Library Statistics dialog quickly.
 
 ### Changed
 - Sidebar simplified: browse nav, library roots, and auto-tags only; operational controls moved to Settings.
 - Media-pane stat label changed from "Shown" to "Total".
 - Header branding refined: removed "- Media Library" subtitle; "Libra" and "Pix" spacing tightened for unified product word.
 - Migration `0007_source_root_display_name.sql` adds optional `display_name` column to `source_roots`.
+- Migration `0008_source_root_statistics.sql` adds persisted per-root statistics maintained during indexing.
 - Settings dialog and Details pane now reserve scrollbar gutter spacing to prevent overlap with controls/content.
 - Header logo now uses SVG (`assets/logo/blue/logo-blue.svg`) instead of PNG for crisp scaling at any size.
 - UI icons resized from 512×512 to 32×32 (Lanczos) to eliminate antialiasing artifacts when displayed at 16–20px.

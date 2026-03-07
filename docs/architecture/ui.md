@@ -59,7 +59,8 @@ All visual presentation is centralized in `librapix-app/src/ui.rs`:
   - display-name editing
   - root-level tag add/remove
   - save + save-and-add-another flow for batch library registration
-- Each library row has an explicit `Edit` action that opens the dialog in edit mode.
+- Each library row has explicit `Edit` and `Stats` actions.
+- Library statistics use a dedicated dialog (separate from Edit Library) with maintained persisted values per root.
 - Copy shortcuts are supported through ignored keyboard events (no text-input conflicts):
   - `Cmd/Ctrl+C`: copy selected file
   - `Cmd/Ctrl+Shift+C`: copy selected path
@@ -90,7 +91,7 @@ All visual presentation is centralized in `librapix-app/src/ui.rs`:
 
 Gallery, timeline, and search views share a unified media-view architecture:
 
-- **BrowseItem**: common data model with `media_id`, `title`, `media_kind`, `metadata_line`, `thumbnail_path`, `aspect_ratio`, `is_group_header`, and optional `group_total`, `group_image_count`, `group_video_count` for timeline headers.
+- **BrowseItem**: common data model with `media_id`, `title`, `media_kind`, `metadata_line`, `thumbnail_path`, `aspect_ratio`, `is_group_header`, and optional `group_image_count`, `group_video_count` for timeline headers.
 - **render_media_card()**: shared card rendering primitive used by all views.
 - **resolve_thumbnail()**: unified thumbnail resolution for images (Lanczos3) and videos (ffmpeg).
 - **populate_media_cache()**: caches read-model data alongside browse items to avoid per-click storage queries.

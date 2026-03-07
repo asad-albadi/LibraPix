@@ -55,6 +55,18 @@ SQLite is the primary persistent store for Librapix-owned metadata.
     - `last_seen_at` / `missing_since`
 - `tags` / `media_tags`
   - minimal tag-readiness schema for search-facing read models
+- `source_root_statistics` (migration `0008`)
+  - persisted per-library summary/indexing metrics:
+    - `total_size_bytes`
+    - `total_media_count`
+    - `total_images_count`
+    - `total_videos_count`
+    - `total_image_size_bytes`
+    - `total_video_size_bytes`
+    - `missing_count`
+    - `oldest_modified_unix_seconds`
+    - `newest_modified_unix_seconds`
+    - `last_indexed_unix_seconds`
 
 This schema is intentionally minimal to avoid overbuilding before indexing and search are implemented.
 
@@ -75,6 +87,14 @@ This schema is intentionally minimal to avoid overbuilding before indexing and s
 - App-level top media stats (`Total`, `Images`, `Videos`) are derived from the current projected browse/search result set, not from stale persisted counters.
 - Large browse/search refreshes read this query surface from background tasks (`Task::perform`) so SQLite reads/projection hydration do not block the UI thread.
 - This read layer is UI-agnostic and replaceable by richer search subsystems later.
+- Library statistics dialog reads maintained rows from `source_root_statistics` via `get_source_root_statistics(root_id)` and does not run expensive aggregation on dialog open.
+
+## Library statistics maintenance
+
+- `refresh_source_root_statistics(root_ids)` is called during indexing/re-indexing runs for the scanned roots.
+- Aggregation is performed in storage (SQLite), not in the UI layer.
+- Current maintained values include totals by kind/size, missing count, oldest/newest modified timestamps, and `last_indexed_unix_seconds`.
+- Dialog open path is read-only and fast (single-row lookup per selected root).
 
 ## Tag workflow baseline
 

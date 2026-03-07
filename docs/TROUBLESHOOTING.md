@@ -1,5 +1,20 @@
 # Troubleshooting
 
+## Library Statistics dialog shows no values yet
+
+- Symptoms
+  - Library Statistics dialog opens, but shows that no maintained statistics are available.
+- Affected area
+  - Per-library statistics display (`source_root_statistics` read path).
+- Confirmed cause
+  - Statistics are maintained during indexing/re-indexing, not computed on dialog open.
+  - If a root has not been indexed since stats maintenance was introduced, no persisted row exists yet.
+- Resolution
+  - Run indexing/refresh for the target library root.
+  - Re-open the Library Statistics dialog.
+- Prevention guidance
+  - Keep statistics maintenance in the indexing path and avoid adding on-demand heavy aggregation to UI dialog handlers.
+
 ## Icons appear jagged or have poor antialiasing
 
 - Symptoms

@@ -41,7 +41,8 @@ Indexing is a dedicated subsystem (`librapix-indexer`) isolated from UI renderin
 7. Persist/upsert candidates and mark missing files for scanned roots.
 8. Ensure media-kind tags are attached (`kind:image`, `kind:video`).
 9. Ensure root-level auto-tags (configured in library dialog) exist in the tags table and apply them to media under their root.
-10. Query read-model rows for verification or downstream browsing/search surfaces.
+10. Refresh persisted `source_root_statistics` for scanned roots (totals/counts/date bounds + last-indexed timestamp).
+11. Query read-model rows for verification or downstream browsing/search surfaces.
 
 ## Execution model
 

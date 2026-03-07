@@ -12,6 +12,12 @@ Librapix exposes simple file-oriented actions without mutating source media.
   - `Cmd/Ctrl+C`: copy selected media file
   - `Cmd/Ctrl+Shift+C`: copy selected media path
 
+## Library actions
+
+- Edit library opens the unified add/edit library dialog (path/display-name/root-level tags).
+- Stats opens a separate Library Statistics dialog for the selected library/root.
+- Library statistics are read from maintained persisted storage values; opening the dialog is read-only and does not trigger indexing work.
+
 ## Double-click open
 
 - Double-clicking a media item in gallery or timeline opens it in the OS default external app.

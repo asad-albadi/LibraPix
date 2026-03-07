@@ -21,6 +21,9 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
 - Edit root (library dialog, edit mode)
   - Explicit `Edit` action opens dialog with current path/display-name/tags preloaded.
   - Save updates normalized path and lifecycle to `active`, updates display name, and syncs root-level tags.
+- View root stats (library statistics dialog)
+  - Explicit `Stats` action opens a dedicated read-only dialog for the selected root.
+  - Dialog reads maintained persisted rows from storage (`get_source_root_statistics`) and does not trigger re-indexing or heavy recomputation.
 - Deactivate/reactivate/remove root
   - Lifecycle updates are explicit storage operations (available from edit dialog actions).
   - Remove deletes only Librapix-managed records.
@@ -34,6 +37,7 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
   - App loads eligible roots and enabled ignore patterns from storage.
   - `librapix-indexer` scans and emits media candidates.
   - App persists candidates incrementally to `indexed_media`, marks missing records, and records indexing summary in state.
+  - App refreshes maintained `source_root_statistics` for scanned roots.
   - App runs thumbnail generation for image read-model rows into app-owned thumbnail cache.
 - Run read-model query baseline
   - App schedules projection/search background work via `Task::perform`.

@@ -14,7 +14,7 @@ Add a separate Library Statistics dialog backed by maintained persisted statisti
 - [x] **Docs updates**: README/changelog/architecture/troubleshooting/checklist updates
 - [x] **Verification loop**: fmt/check/clippy/test after meaningful steps
 - [x] **Smoke runs**: app launch and quick stats-dialog open validation
-- [ ] **Commit checkpoints**: meaningful commits and clean working tree
+- [x] **Commit checkpoints**: meaningful commits and clean working tree
 
 ## Commit Plan
 

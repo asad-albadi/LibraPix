@@ -22,14 +22,17 @@ Project phase: **MVP complete** (technical + visual shell baseline).
 ## Features
 
 - Multiple local library directories
+- Unified Add/Edit Library dialog (browse-first), including display name and root-level tag management
 - Gallery and timeline views with justified layout
 - Fuzzy search over filenames, tags, and metadata
 - App-side and game tags
 - Media type filters (images/videos) and extension chips
+- Library filter chips (All libraries or selected library)
 - Open file, show in folder, copy file, copy path actions
 - Keyboard shortcuts: `Cmd/Ctrl+C` (copy file), `Cmd/Ctrl+Shift+C` (copy path)
 - Live filesystem watching with new-file announcement dialog
 - Deterministic thumbnail cache (images and videos)
+- Header About dialog with product and creator information
 
 ## Build & Run
 
@@ -70,7 +73,7 @@ cargo run -p librapix-app
 
 ## MVP Usage Flow
 
-1. Add one or more library roots.
+1. Add one or more libraries from the Add/Edit Library dialog.
 2. Configure ignore rules as needed.
 3. Run indexing.
 4. Browse gallery or timeline and select media.

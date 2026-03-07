@@ -43,7 +43,7 @@ This produces a Google-Photos-style justified layout where images maintain aspec
 
 ### Timeline
 - Renders date-grouped sections.
-- Each section has a group header (date label plus total/image/video count chips) followed by a justified mini-grid.
+- Each section has a group header (date label plus image/video count chips) followed by a justified mini-grid.
 - Uses full projected item set (no hidden UI cap).
 - Timeline mode includes a right-side fast scrubber driven by projection anchors.
 

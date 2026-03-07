@@ -52,6 +52,7 @@ This repository is documentation-driven. Architecture and operational decisions 
 - `docs/roadmap/windows-copy-dialog-background-checklist.md`
 - `docs/roadmap/windows-copy-timeline-scrubber-correctness-checklist.md`
 - `docs/roadmap/scrollbar-scrubber-correctness-checklist.md`
+- `docs/roadmap/about-library-management-checklist.md`
 
 ## Packaging
 

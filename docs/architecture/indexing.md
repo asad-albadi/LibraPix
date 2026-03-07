@@ -12,7 +12,7 @@ Indexing is a dedicated subsystem (`librapix-indexer`) isolated from UI renderin
 
 ## Baseline components
 
-- Source root selection from storage (`active` lifecycle roots only)
+- Source root selection from storage (`active` lifecycle roots only; registered/edited via unified library dialog)
 - Ignore matcher via centralized `IgnoreEngine` and glob rules
 - Size-based exclusion via `ScanOptions.min_file_size_bytes` (skips files below threshold)
 - Filesystem traversal with recursive walk
@@ -40,7 +40,7 @@ Indexing is a dedicated subsystem (`librapix-indexer`) isolated from UI renderin
 6. Extract baseline metadata for new/changed entries.
 7. Persist/upsert candidates and mark missing files for scanned roots.
 8. Ensure media-kind tags are attached (`kind:image`, `kind:video`).
-9. Ensure root-level auto-tags exist in the tags table and apply them to media under their root.
+9. Ensure root-level auto-tags (configured in library dialog) exist in the tags table and apply them to media under their root.
 10. Query read-model rows for verification or downstream browsing/search surfaces.
 
 ## Execution model

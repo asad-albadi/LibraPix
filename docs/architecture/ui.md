@@ -4,8 +4,8 @@ Librapix UI uses a Fluent-inspired design system with an app-shell layout.
 
 ## App shell baseline
 
-- Top header with product identity, integrated search bar, Settings button, and GitHub link.
-- Left sidebar with sectioned navigation (browse, library roots, auto-tags); operational controls (indexing, ignore rules, diagnostics) moved to Settings dialog.
+- Top header with product identity, integrated search bar, Settings button, About button, and GitHub link.
+- Left sidebar with sectioned navigation (browse, library roots); operational controls (indexing, ignore rules, diagnostics) moved to Settings dialog.
 - Main media pane for gallery grid, timeline groups, and search result cards.
 - Right details pane for preview, file info, tags, and actions.
 - Details pane shows an intentional empty state when no media is selected.
@@ -30,6 +30,7 @@ All visual presentation is centralized in `librapix-app/src/ui.rs`:
 - Button styles: primary (accent), subtle (transparent), action (card bg), nav (active/inactive), card (selection border), filter chip (pill radius, accent when active).
 - Text input styles: search and field now share the same rounded-corner language for consistency.
 - Container styles: header, sidebar, details pane, cards, empty states, thumbnail placeholders, dividers, timeline scrubber surfaces, media-kind badges, modal backdrop, and modal dialog surfaces.
+- Settings dialog scrollable uses embedded scrollbar spacing so form controls are not obscured by scrollbar chrome.
 
 ### Layout helpers
 - `section_heading()`: small-caps section label.
@@ -52,9 +53,13 @@ All visual presentation is centralized in `librapix-app/src/ui.rs`:
   - entering scrub mode keeps scrubber lane geometry stable (no first-click lateral snap)
 - Search is triggered via Enter key in the header search bar.
 - Root selection uses styled nav buttons with status dot indicators; display names shown when set.
-- Root management controls appear contextually when a root is selected.
-- Library root addition supports native folder picker dialog via Browse button.
-- Manual path input is hidden by default; toggle "Show path field" to reveal it.
+- Library management uses a unified add/edit dialog:
+  - browse-first folder selection
+  - optional manual path field toggle
+  - display-name editing
+  - root-level tag add/remove
+  - save + save-and-add-another flow for batch library registration
+- Each library row has an explicit `Edit` action that opens the dialog in edit mode.
 - Copy shortcuts are supported through ignored keyboard events (no text-input conflicts):
   - `Cmd/Ctrl+C`: copy selected file
   - `Cmd/Ctrl+Shift+C`: copy selected path
@@ -108,7 +113,7 @@ Gallery, timeline, and search views share a unified media-view architecture:
 
 ## Timeline rendering
 
-- Timeline renders as date-grouped sections, each with a group header (date label plus total/image/video count chips) and a justified mini-grid.
+- Timeline renders as date-grouped sections, each with a group header (date label plus image/video count chips) and a justified mini-grid.
 - The mini-grid within each group uses the same justified row algorithm as the gallery.
 - Both gallery and timeline use `render_media_card()` for card rendering.
 - Items are selectable with the same card style as gallery cards.
@@ -125,6 +130,7 @@ Gallery, timeline, and search views share a unified media-view architecture:
 - Tags section supports add/remove for app tags and game tags.
 - Actions section provides open, show-in-folder, copy-file, and copy-path commands.
 - Details actions are responsive (single-column, 2x2 grid, or one-row depending available width) to prevent clipped buttons.
+- Details pane scrollable uses embedded scrollbar spacing so scrollbar gutter does not overlap controls/text.
 
 ## Startup behavior
 
@@ -149,8 +155,8 @@ Gallery, timeline, and search views share a unified media-view architecture:
 
 ## Size-based exclusion
 
-- Min-size exclusion is part of the Exclusions/Ignores sidebar section (not Indexing).
-- Users configure a minimum file size in KB with an Apply button alongside ignore rules.
+- Min-size exclusion is configured in the Settings dialog alongside ignore rules.
+- Users configure a minimum file size in KB with an Apply button in that section.
 - When applied, the next indexing run skips files below the threshold.
 - Files previously indexed that fall below the threshold are marked missing on re-index.
 - The setting is session-local; config persistence is a future extension.
@@ -159,6 +165,7 @@ Gallery, timeline, and search views share a unified media-view architecture:
 
 - Blue logo icon (from `assets/logo/blue/`) displays at 32×32.
 - "Libra" displays in primary text color, "Pix" in accent color, creating a split-color product identity with minimal spacing.
+- Header includes an About dialog entry point for project/creator context.
 - GitHub link button (white icon) opens the project repository.
 - The header maintains the Fluent-inspired dark theme aesthetic.
 

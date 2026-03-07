@@ -33,5 +33,5 @@ Search is implemented as a replaceable subsystem.
 - Search results respect active type, extension, and tag filters applied at the app layer.
 - App search orchestration no longer applies a hidden fixed cap of 20 results; result limits are explicit and derived from the current read-model document set.
 - Search execution is routed through projection background work (`Task::perform`) to keep large-library fuzzy queries off the immediate UI thread.
-- While search is active, media-pane top stats are computed from the search result set (`Shown`, `Images`, `Videos`) for consistency.
+- While search is active, media-pane top stats are computed from the search result set (`Total`, `Images`, `Videos`) for consistency.
 - Designed to be replaced later with richer ranking or index-backed search.

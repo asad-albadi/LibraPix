@@ -14,15 +14,15 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
 
 ## Library root orchestration baseline
 
-- Add root
-  - UI message captures path input.
-  - App normalizes path and upserts source root in storage.
-  - Reconciliation refreshes root lifecycle states.
-- Update root
-  - UI selects root id and submits new path.
-  - Storage updates normalized path and lifecycle to `active`.
+- Add root (library dialog, add mode)
+  - Browse-first picker (with optional manual path input) captures path in dialog state.
+  - Save normalizes path, upserts source root, applies display name, and syncs root-level tags.
+  - Save can keep dialog open for batch add (`Save + Add Another`) or close after commit.
+- Edit root (library dialog, edit mode)
+  - Explicit `Edit` action opens dialog with current path/display-name/tags preloaded.
+  - Save updates normalized path and lifecycle to `active`, updates display name, and syncs root-level tags.
 - Deactivate/reactivate/remove root
-  - Lifecycle updates are explicit storage operations.
+  - Lifecycle updates are explicit storage operations (available from edit dialog actions).
   - Remove deletes only Librapix-managed records.
 - Refresh roots
   - Reconciliation runs and the root list is reloaded into app state.
@@ -83,9 +83,9 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
   - If roots exist, spawns background work via `Task::perform` to run indexing, thumbnail generation, and gallery/timeline projections on a background thread.
   - UI remains interactive while background work proceeds; activity status shown in header.
   - On completion, `BackgroundWorkComplete` message applies all results to app state atomically.
-- Folder picker
-  - `Message::BrowseFolder` opens a native OS folder picker via `rfd::FileDialog`.
-  - Selected path is written into root input state.
+- Library dialog folder picker
+  - `Message::LibraryDialogBrowseFolder` opens a native OS folder picker via `rfd::FileDialog`.
+  - Selected path is written into dialog path state.
 - Double-click open
   - `Message::SelectMedia(id)` detects double-click by comparing click timestamp.
   - If the same media is clicked within 400ms, opens the file in the default external app.
@@ -104,7 +104,7 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
     - `IndexAndProject`: indexing + thumbnails + projections/search
     - `ProjectOnly`: projections/search refresh without filesystem scan/index writes
   - `BackgroundWorkComplete` handler applies all returned state atomically.
-  - Multiple handlers share this pattern: `StartupRestore`, `FilesystemChanged`, `RunIndexing`, `ApplyMinFileSize`, `AddRoot`, auto-tag operations, manual route refresh, search run, and filter changes.
+  - Multiple handlers share this pattern: `StartupRestore`, `FilesystemChanged`, `RunIndexing`, `ApplyMinFileSize`, library-dialog save operations, manual route refresh, search run, and filter changes.
 
 ## Rules
 

@@ -18,6 +18,19 @@
   - Export icons at target sizes from the design tool.
   - Prefer SVG sources and export to PNG at needed resolutions.
 
+## Settings/Details scrollbar overlaps controls
+
+- Symptoms
+  - Scrollbar appears on top of form controls or text inside Settings or the Details pane.
+- Affected area
+  - Settings dialog scrollable and right Details-pane scrollable.
+- Confirmed cause
+  - Default scrollable behavior rendered floating scrollbar chrome over content instead of reserving a gutter.
+- Resolution
+  - Applied embedded vertical scrollbar spacing (same pattern as media pane) so scrollbar occupies a dedicated gutter beside content.
+- Prevention guidance
+  - For control-heavy panels, always configure scrollables with explicit vertical scrollbar spacing rather than relying on ad-hoc content padding.
+
 ## Release assets on Linux/macOS are extensionless binaries
 
 - Symptoms

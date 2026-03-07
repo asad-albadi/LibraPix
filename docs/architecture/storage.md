@@ -72,7 +72,7 @@ This schema is intentionally minimal to avoid overbuilding before indexing and s
   - search by path/tag text filter
   - media-by-id lookup for details/action orchestration
 - App orchestration derives the tag-filter chip list from read-model tag joins (excluding internal `kind:*` tags).
-- App-level top media stats (`Shown`, `Images`, `Videos`) are derived from the current projected browse/search result set, not from stale persisted counters.
+- App-level top media stats (`Total`, `Images`, `Videos`) are derived from the current projected browse/search result set, not from stale persisted counters.
 - Large browse/search refreshes read this query surface from background tasks (`Task::perform`) so SQLite reads/projection hydration do not block the UI thread.
 - This read layer is UI-agnostic and replaceable by richer search subsystems later.
 
@@ -89,7 +89,7 @@ This schema is intentionally minimal to avoid overbuilding before indexing and s
 - Each root can have zero or more auto-tags with a name and kind (`app` or `game`).
 - During indexing, `ensure_root_tags_exist()` creates any missing tag records, then `apply_root_auto_tags()` attaches them to all non-missing media under the corresponding root.
 - Auto-tags are applied via `INSERT OR IGNORE`, so they do not duplicate existing manual tags with the same name.
-- Root tags are managed through the sidebar UI when a root is selected.
+- Root tags are managed through the unified library add/edit dialog.
 - This design is non-destructive: removing a root tag removes the rule but does not strip existing tags from media.
 
 ## Missing-file policy baseline

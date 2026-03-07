@@ -257,6 +257,8 @@ const MAX_DIAGNOSTICS_EVENTS: usize = 100;
 const MEDIA_SCROLLABLE_ID: &str = "media-pane-scrollable";
 const SCRUBBER_YEAR_MARKER_LIMIT: usize = 10;
 const MEDIA_SCROLLBAR_SPACING: f32 = SPACE_XS as f32;
+const SCRUBBER_PANEL_WIDTH: f32 = 168.0;
+const SCRUBBER_CHIP_TRACK_WIDTH: f32 = 96.0;
 
 #[derive(Debug, Clone)]
 struct RuntimeContext {
@@ -1665,7 +1667,7 @@ fn render_timeline_view<'a>(
 fn render_timeline_scrubber(app: &Librapix) -> Element<'_, Message> {
     if app.timeline_anchors.is_empty() {
         return container(column![])
-            .width(Length::Fixed(88.0))
+            .width(Length::Fixed(SCRUBBER_PANEL_WIDTH))
             .height(Length::Fill)
             .into();
     }
@@ -1685,12 +1687,9 @@ fn render_timeline_scrubber(app: &Librapix) -> Element<'_, Message> {
     let chip_label = active_anchor
         .map(|anchor| format!("{} ({})", anchor.label, anchor.item_count))
         .unwrap_or_default();
-    let chip_position = active_anchor
-        .map(|anchor| anchor.normalized_position)
-        .unwrap_or(app.timeline_scrub_value)
-        .clamp(0.0, 1.0);
+    let chip_position = app.timeline_scrub_value.clamp(0.0, 1.0);
 
-    let chip_track: Element<'_, Message> = if app.timeline_scrubbing {
+    let chip_track_content: Element<'_, Message> = if app.timeline_scrubbing {
         let top = ((chip_position * 1000.0).round() as u16).min(1000);
         let bottom = 1000u16.saturating_sub(top);
         column![
@@ -1703,8 +1702,11 @@ fn render_timeline_scrubber(app: &Librapix) -> Element<'_, Message> {
         .height(Length::Fill)
         .into()
     } else {
-        Space::new().width(Length::Fixed(0.0)).into()
+        Space::new().height(Length::Fill).into()
     };
+    let chip_track = container(chip_track_content)
+        .width(Length::Fixed(SCRUBBER_CHIP_TRACK_WIDTH))
+        .height(Length::Fill);
 
     let year_markers = timeline_year_markers(&app.timeline_anchors);
     let marker_track = render_timeline_year_marker_track(&year_markers);
@@ -1718,7 +1720,7 @@ fn render_timeline_scrubber(app: &Librapix) -> Element<'_, Message> {
     .height(Length::Fill);
 
     container(column![scrub_controls].height(Length::Fill))
-        .width(Length::Fixed(128.0))
+        .width(Length::Fixed(SCRUBBER_PANEL_WIDTH))
         .height(Length::Fill)
         .padding([SPACE_SM as u16, SPACE_XS as u16])
         .style(scrubber_panel_style)

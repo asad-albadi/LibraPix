@@ -56,7 +56,7 @@ cargo run -p librapix-app
 
 ### Platform Notes
 
-- **Windows**: Copy File uses native `CF_HDROP` clipboard (Explorer-paste compatible). Publisher/signing baseline: `packaging/windows/`.
+- **Windows**: Copy File uses native `CF_HDROP` clipboard (Explorer-paste compatible). EXE signing baseline: `packaging/windows/`.
 - **macOS**: Apple Silicon DMG for releases.
 - **Linux**: AppImage for releases.
 

@@ -239,15 +239,14 @@
 - Affected area
   - Distribution/signing pipeline (not UI labels).
 - Confirmed cause
-  - Binary/package is unsigned, signed with an untrusted certificate, or package manifest publisher does not match certificate subject.
+  - EXE binary is unsigned or signed with an untrusted certificate.
 - Resolution
-  - Sign EXE/MSIX using SignTool with a certificate subject matching manifest publisher (`CN=Asad` baseline).
+  - Sign the EXE using SignTool with the intended certificate subject (`CN=Asad` baseline for local/dev flow).
   - For local testing, generate/import a dev self-signed cert.
   - For public release, use a trusted OV/EV certificate and timestamp signatures.
   - See `packaging/windows/README.md`.
 - Prevention guidance
-  - Keep manifest publisher and cert subject synchronized.
-  - Verify signatures in CI/release workflow (`signtool verify /pa /v`).
+  - Verify signatures before distribution (`signtool verify /pa /v`).
 
 ## "All" filter misses videos or only shows part of the library
 

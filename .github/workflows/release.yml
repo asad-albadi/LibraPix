@@ -63,11 +63,12 @@ jobs:
               cp "$BIN" "dist/$ASSET_NAME"
               ;;
             dmg)
-              APP_DIR="dist/Librapix.app"
+              APP_DIR="dist/LibraPix.app"
               DMG_ROOT="dist/dmg-root"
               mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources" "$DMG_ROOT"
               cp "$BIN" "$APP_DIR/Contents/MacOS/librapix-app"
               chmod +x "$APP_DIR/Contents/MacOS/librapix-app"
+              cp assets/logo/blue/icon.icns "$APP_DIR/Contents/Resources/icon.icns"
 
               printf '%s\n' \
                 '<?xml version="1.0" encoding="UTF-8"?>' \
@@ -75,9 +76,9 @@ jobs:
                 '<plist version="1.0">' \
                 '  <dict>' \
                 '    <key>CFBundleName</key>' \
-                '    <string>Librapix</string>' \
+                '    <string>LibraPix</string>' \
                 '    <key>CFBundleDisplayName</key>' \
-                '    <string>Librapix</string>' \
+                '    <string>LibraPix</string>' \
                 '    <key>CFBundleIdentifier</key>' \
                 '    <string>com.librapix.app</string>' \
                 '    <key>CFBundleVersion</key>' \
@@ -86,6 +87,8 @@ jobs:
                 "    <string>${VERSION}</string>" \
                 '    <key>CFBundleExecutable</key>' \
                 '    <string>librapix-app</string>' \
+                '    <key>CFBundleIconFile</key>' \
+                '    <string>icon.icns</string>' \
                 '    <key>CFBundlePackageType</key>' \
                 '    <string>APPL</string>' \
                 '    <key>LSMinimumSystemVersion</key>' \
@@ -97,7 +100,7 @@ jobs:
               mv "$APP_DIR" "$DMG_ROOT/"
               ln -s /Applications "$DMG_ROOT/Applications"
               hdiutil create \
-                -volname "Librapix" \
+                -volname "LibraPix" \
                 -srcfolder "$DMG_ROOT" \
                 -ov \
                 -format UDZO \
@@ -120,7 +123,7 @@ jobs:
               printf '%s\n' \
                 '[Desktop Entry]' \
                 'Type=Application' \
-                'Name=Librapix' \
+                'Name=LibraPix' \
                 'Exec=librapix-app' \
                 'Icon=librapix' \
                 'Categories=Graphics;Utility;' \
@@ -128,7 +131,7 @@ jobs:
                 > "$APPDIR/librapix.desktop"
               cp "$APPDIR/librapix.desktop" "$APPDIR/usr/share/applications/librapix.desktop"
 
-              echo "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4////fwAJ+wP9KobjigAAAABJRU5ErkJggg==" | base64 --decode > "$APPDIR/librapix.png"
+              cp assets/logo/blue/icon-256.png "$APPDIR/librapix.png"
               cp "$APPDIR/librapix.png" "$APPDIR/.DirIcon"
 
               curl -L -o appimagetool.AppImage \

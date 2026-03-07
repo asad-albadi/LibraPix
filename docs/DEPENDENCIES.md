@@ -277,3 +277,18 @@ This file tracks major direct dependencies that shape architecture and maintenan
   - `Copy Path` remains text clipboard via `clip`.
 - Risks/tradeoffs:
   - Includes `unsafe` Win32 interop in a narrow, platform-gated path that must remain well-tested and documented.
+
+## `winresource` (0.1.26, Windows build dependency)
+
+- Purpose: Embed Windows executable icon and version metadata at compile time.
+- Why chosen: Small focused crate that integrates with Cargo build scripts and standard Windows resource workflows.
+- Alternatives considered:
+  - Post-build resource editing in CI: extra toolchain complexity and less deterministic local builds.
+  - Leaving EXE metadata/icon unset: weak platform polish and less recognizable desktop executable.
+- Official docs consulted:
+  - [https://docs.rs/winresource/latest/winresource/](https://docs.rs/winresource/latest/winresource/)
+- Notes:
+  - Used in `crates/librapix-app/build.rs` and gated to Windows builds only.
+  - Embeds `assets/logo/blue/icon.ico` and `LibraPix` product metadata into `librapix-app.exe`.
+- Risks/tradeoffs:
+  - Adds a Windows-only build-time dependency surface.

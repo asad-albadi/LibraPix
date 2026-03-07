@@ -59,8 +59,7 @@ This repository is documentation-driven. Architecture and operational decisions 
 ## Packaging
 
 - `packaging/windows/README.md`: Windows publisher/signing/distribution baseline.
-- `packaging/windows/msix/AppxManifest.xml`: MSIX identity/publisher template (`CN=Asad`).
-- `packaging/windows/scripts/`: PowerShell scripts for dev cert creation, signing, and MSIX packaging.
+- `packaging/windows/scripts/`: PowerShell scripts for dev cert creation and EXE signing.
 
 ## ADRs
 

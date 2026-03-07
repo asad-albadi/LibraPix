@@ -256,6 +256,7 @@ const MAX_ROW_HEIGHT: f32 = 350.0;
 const MAX_DIAGNOSTICS_EVENTS: usize = 100;
 const MEDIA_SCROLLABLE_ID: &str = "media-pane-scrollable";
 const SCRUBBER_YEAR_MARKER_LIMIT: usize = 10;
+const MEDIA_SCROLLBAR_SPACING: f32 = SPACE_XS as f32;
 
 #[derive(Debug, Clone)]
 struct RuntimeContext {
@@ -1189,6 +1190,9 @@ fn view(app: &Librapix) -> Element<'_, Message> {
     let (media_header, media_scrollable_content) = render_media_panel(app);
     let base_media_scrollable = scrollable(media_scrollable_content)
         .id(Id::new(MEDIA_SCROLLABLE_ID))
+        .direction(scrollable::Direction::Vertical(
+            scrollable::Scrollbar::default().spacing(MEDIA_SCROLLBAR_SPACING),
+        ))
         .height(Length::Fill);
     let media_scrollable: Element<'_, Message> =
         if matches!(app.state.active_route, Route::Timeline) {

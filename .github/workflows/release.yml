@@ -3,6 +3,12 @@ name: Release
 on:
   release:
     types: [created]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to upload assets to (e.g., 0.2.0)"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -15,19 +21,23 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            name: librapix-linux
+            asset_name: librapix-linux.AppImage
+            package: appimage
 
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            name: librapix-windows.exe
+            asset_name: librapix-windows.exe
+            package: exe
 
           - os: macos-latest
             target: x86_64-apple-darwin
-            name: librapix-macos-intel
+            asset_name: librapix-macos-intel.dmg
+            package: dmg
 
           - os: macos-latest
             target: aarch64-apple-darwin
-            name: librapix-macos-apple-silicon
+            asset_name: librapix-macos-apple-silicon.dmg
+            package: dmg
 
     runs-on: ${{ matrix.os }}
 
@@ -44,14 +54,100 @@ jobs:
       - name: Package
         shell: bash
         run: |
-          mkdir dist
+          mkdir -p dist
           BIN=target/${{ matrix.target }}/release/librapix-app
+          VERSION="${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}"
+          VERSION="${VERSION#v}"
           if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
             BIN=$BIN.exe
           fi
-          cp $BIN dist/${{ matrix.name }}
+
+          case "${{ matrix.package }}" in
+            exe)
+              cp "$BIN" "dist/${{ matrix.asset_name }}"
+              ;;
+            dmg)
+              APP_DIR="dist/Librapix.app"
+              DMG_ROOT="dist/dmg-root"
+              mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources" "$DMG_ROOT"
+              cp "$BIN" "$APP_DIR/Contents/MacOS/librapix-app"
+              chmod +x "$APP_DIR/Contents/MacOS/librapix-app"
+
+              cat > "$APP_DIR/Contents/Info.plist" <<PLIST
+              <?xml version="1.0" encoding="UTF-8"?>
+              <!DOCTYPE plist PUBLIC "-//Apple Computer//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+              <plist version="1.0">
+                <dict>
+                  <key>CFBundleName</key>
+                  <string>Librapix</string>
+                  <key>CFBundleDisplayName</key>
+                  <string>Librapix</string>
+                  <key>CFBundleIdentifier</key>
+                  <string>com.librapix.app</string>
+                  <key>CFBundleVersion</key>
+                  <string>${VERSION}</string>
+                  <key>CFBundleShortVersionString</key>
+                  <string>${VERSION}</string>
+                  <key>CFBundleExecutable</key>
+                  <string>librapix-app</string>
+                  <key>CFBundlePackageType</key>
+                  <string>APPL</string>
+                  <key>LSMinimumSystemVersion</key>
+                  <string>11.0</string>
+                </dict>
+              </plist>
+              PLIST
+
+              mv "$APP_DIR" "$DMG_ROOT/"
+              ln -s /Applications "$DMG_ROOT/Applications"
+              hdiutil create \
+                -volname "Librapix" \
+                -srcfolder "$DMG_ROOT" \
+                -ov \
+                -format UDZO \
+                "dist/${{ matrix.asset_name }}"
+              rm -rf "$DMG_ROOT"
+              ;;
+            appimage)
+              APPDIR="dist/AppDir"
+              mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/applications"
+              cp "$BIN" "$APPDIR/usr/bin/librapix-app"
+              chmod +x "$APPDIR/usr/bin/librapix-app"
+
+              cat > "$APPDIR/AppRun" <<'APPRUN'
+              #!/bin/sh
+              HERE="$(dirname "$(readlink -f "$0")")"
+              exec "$HERE/usr/bin/librapix-app" "$@"
+              APPRUN
+              chmod +x "$APPDIR/AppRun"
+
+              cat > "$APPDIR/librapix.desktop" <<'DESKTOP'
+              [Desktop Entry]
+              Type=Application
+              Name=Librapix
+              Exec=librapix-app
+              Icon=librapix
+              Categories=Graphics;Utility;
+              Terminal=false
+              DESKTOP
+              cp "$APPDIR/librapix.desktop" "$APPDIR/usr/share/applications/librapix.desktop"
+
+              echo "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4////fwAJ+wP9KobjigAAAABJRU5ErkJggg==" | base64 --decode > "$APPDIR/librapix.png"
+              cp "$APPDIR/librapix.png" "$APPDIR/.DirIcon"
+
+              curl -L -o appimagetool.AppImage \
+                https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+              chmod +x appimagetool.AppImage
+              ARCH=x86_64 ./appimagetool.AppImage --appimage-extract-and-run "$APPDIR" "dist/${{ matrix.asset_name }}"
+              ;;
+            *)
+              echo "Unknown package type: ${{ matrix.package }}"
+              exit 1
+              ;;
+          esac
 
       - name: Upload to release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
           files: dist/*

@@ -1,5 +1,21 @@
 # Troubleshooting
 
+## Release assets on Linux/macOS are extensionless binaries
+
+- Symptoms
+  - GitHub release uploads include `librapix-linux`, `librapix-macos-intel`, or `librapix-macos-apple-silicon` without `.AppImage`/`.dmg`.
+- Affected area
+  - CI release packaging workflow (`.github/workflows/release.yml`).
+- Confirmed cause
+  - Workflow copied raw target binaries directly into release assets for Linux/macOS instead of packaging into platform-specific distributables.
+- Resolution
+  - Linux release asset now builds and uploads as `.AppImage`.
+  - macOS release assets now build and upload as `.dmg` (Intel and Apple Silicon).
+  - Windows remains a raw `.exe` asset by design.
+- Prevention guidance
+  - Keep release artifact naming and packaging policy explicit in workflow matrix fields (`asset_name`, `package`).
+  - For workflow reruns on existing tags, use `workflow_dispatch` with explicit tag input.
+
 ## Timeline scrubber is hidden or appears inactive
 
 - Symptoms

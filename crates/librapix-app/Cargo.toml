@@ -11,6 +11,10 @@ opener = "0.7"
 chrono.workspace = true
 rfd.workspace = true
 notify.workspace = true
+serde.workspace = true
+semver.workspace = true
+ureq.workspace = true
+serde_json.workspace = true
 librapix-config = { path = "../librapix-config" }
 librapix-core = { path = "../librapix-core" }
 librapix-indexer = { path = "../librapix-indexer" }

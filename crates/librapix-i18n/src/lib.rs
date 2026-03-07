@@ -153,6 +153,10 @@ pub enum TextKey {
     LibrarySaveButton,
     LibrarySaveAndAddAnotherButton,
     AboutButtonLabel,
+    UpdateChipUnknownLabel,
+    UpdateChipCheckingLabel,
+    UpdateChipUpToDateLabel,
+    UpdateChipNewReleaseLabel,
     AboutDialogTitle,
     AboutCreatorLabel,
     AboutWeekendProjectNote,
@@ -350,10 +354,16 @@ fn en_us(key: TextKey) -> &'static str {
         TextKey::LibrarySaveButton => "Save",
         TextKey::LibrarySaveAndAddAnotherButton => "Save + Add Another",
         TextKey::AboutButtonLabel => "About",
+        TextKey::UpdateChipUnknownLabel => "Updates",
+        TextKey::UpdateChipCheckingLabel => "Checking...",
+        TextKey::UpdateChipUpToDateLabel => "Up to date",
+        TextKey::UpdateChipNewReleaseLabel => "New release",
         TextKey::AboutDialogTitle => "About LibraPix",
         TextKey::AboutCreatorLabel => "Creator: Asad Al Badi",
         TextKey::AboutWeekendProjectNote => "This is a weekend project.",
-        TextKey::AboutSecondNote => "Built it because I needed it. or at least I think I do, either way it's fun to build, AND I'm currently using it.",
+        TextKey::AboutSecondNote => {
+            "Built it because I needed it. or at least I think I do, either way it's fun to build, AND I'm currently using it."
+        }
         TextKey::LibraryStatsDialogTitle => "Library Statistics",
         TextKey::LibraryStatsSummarySectionLabel => "SUMMARY",
         TextKey::LibraryStatsIndexingSectionLabel => "INDEXING",

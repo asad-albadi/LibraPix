@@ -35,10 +35,12 @@ use librapix_storage::{
 };
 use librapix_thumbnails::{ensure_image_thumbnail, ensure_video_thumbnail};
 use notify::{EventKind, RecursiveMode, Watcher};
+use semver::Version;
+use serde::Deserialize;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::Instant;
+use std::time::{Duration, Instant, SystemTime};
 use ui::*;
 
 fn main() -> iced::Result {
@@ -104,6 +106,9 @@ enum Message {
     DismissNewMediaAnnouncement,
     RefreshDiagnostics,
     OpenGitHub,
+    UpdateChipPressed,
+    UpdateCheckTick,
+    UpdateCheckCompleted(UpdateCheckTaskResult),
     ToggleFilterDialog,
     OpenSettings,
     CloseSettings,
@@ -165,6 +170,37 @@ struct BackgroundWorkResult {
     browse_status: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum UpdateCheckState {
+    Unknown,
+    Checking,
+    UpToDate,
+    UpdateAvailable { version: String, url: String },
+    Failed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UpdateCheckTrigger {
+    Startup,
+    Automatic,
+    Manual,
+}
+
+#[derive(Debug, Clone)]
+struct UpdateCheckTaskResult {
+    trigger: UpdateCheckTrigger,
+    checked_at: SystemTime,
+    state: UpdateCheckState,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct GitHubLatestReleaseResponse {
+    tag_name: String,
+    html_url: String,
+    prerelease: bool,
+    draft: bool,
+}
+
 struct Librapix {
     state: AppState,
     i18n: Translator,
@@ -220,6 +256,10 @@ struct Librapix {
     library_stats_root_id: Option<i64>,
     library_stats_record: Option<SourceRootStatisticsRecord>,
     filter_source_root_id: Option<i64>,
+    update_check_state: UpdateCheckState,
+    last_successful_update_check: Option<SystemTime>,
+    last_manual_update_check: Option<SystemTime>,
+    last_auto_update_check_attempt: Option<SystemTime>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -320,6 +360,13 @@ const MEDIA_SCROLLBAR_SPACING: f32 = SPACE_XS as f32;
 const PANEL_SCROLLBAR_SPACING: f32 = SPACE_XS as f32;
 const SCRUBBER_PANEL_WIDTH: f32 = 168.0;
 const SCRUBBER_CHIP_TRACK_WIDTH: f32 = 96.0;
+const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+const GITHUB_LATEST_RELEASE_API_URL: &str =
+    "https://api.github.com/repos/asad-albadi/LibraPix/releases/latest";
+const GITHUB_RELEASES_PAGE_URL: &str = "https://github.com/asad-albadi/LibraPix/releases";
+const UPDATE_CHECK_TICK_INTERVAL: Duration = Duration::from_secs(60);
+const AUTO_UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
+const MANUAL_UPDATE_CHECK_COOLDOWN: Duration = Duration::from_secs(5 * 60);
 
 #[derive(Debug, Clone)]
 struct RuntimeContext {
@@ -393,6 +440,10 @@ impl Default for Librapix {
             library_stats_root_id: None,
             library_stats_record: None,
             filter_source_root_id: None,
+            update_check_state: UpdateCheckState::Unknown,
+            last_successful_update_check: None,
+            last_manual_update_check: None,
+            last_auto_update_check_attempt: None,
         };
         refresh_ignore_rules(&mut app);
         app
@@ -419,6 +470,7 @@ struct WatchSubscriptionConfig {
 
 fn subscription(app: &Librapix) -> Subscription<Message> {
     let keyboard_subscription = keyboard::listen().map(Message::KeyboardEvent);
+    let update_tick_subscription = Subscription::run(update_check_tick_stream);
 
     let roots = app
         .state
@@ -429,13 +481,26 @@ fn subscription(app: &Librapix) -> Subscription<Message> {
         .collect::<Vec<_>>();
 
     if roots.is_empty() {
-        keyboard_subscription
+        Subscription::batch(vec![keyboard_subscription, update_tick_subscription])
     } else {
         Subscription::batch(vec![
             keyboard_subscription,
+            update_tick_subscription,
             Subscription::run_with(WatchSubscriptionConfig { roots }, watch_filesystem),
         ])
     }
+}
+
+fn update_check_tick_stream() -> impl iced::futures::Stream<Item = Message> + use<> {
+    use iced::futures::sink::SinkExt;
+    use iced::stream;
+
+    stream::channel(1, async move |mut output| {
+        loop {
+            std::thread::sleep(UPDATE_CHECK_TICK_INTERVAL);
+            let _ = output.send(Message::UpdateCheckTick).await;
+        }
+    })
 }
 
 fn watch_filesystem(
@@ -538,6 +603,11 @@ fn message_event_label(msg: &Message) -> String {
         Message::DismissNewMediaAnnouncement => "DismissNewMediaAnnouncement".into(),
         Message::RefreshDiagnostics => "RefreshDiagnostics".into(),
         Message::OpenGitHub => "OpenGitHub".into(),
+        Message::UpdateChipPressed => "UpdateChipPressed".into(),
+        Message::UpdateCheckTick => "UpdateCheckTick".into(),
+        Message::UpdateCheckCompleted(result) => {
+            format!("UpdateCheckCompleted({:?})", result.trigger)
+        }
         Message::ToggleFilterDialog => "ToggleFilterDialog".into(),
         Message::OpenSettings => "OpenSettings".into(),
         Message::CloseSettings => "CloseSettings".into(),
@@ -766,15 +836,25 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
             app.ignore_rule_input.clear();
         }
         Message::StartupRestore => {
-            if app.state.library_roots.is_empty() {
+            let mut tasks = Vec::new();
+
+            if !app.state.library_roots.is_empty() {
+                app.activity_status = app.i18n.text(TextKey::StatusRestoringLabel).to_owned();
+                tasks.push(spawn_background_work(
+                    app,
+                    BackgroundWorkReason::UserOrSystem,
+                    BackgroundWorkMode::IndexAndProject,
+                ));
+            }
+
+            if !matches!(app.update_check_state, UpdateCheckState::Checking) {
+                tasks.push(start_update_check(app, UpdateCheckTrigger::Startup));
+            }
+
+            if tasks.is_empty() {
                 return Task::none();
             }
-            app.activity_status = app.i18n.text(TextKey::StatusRestoringLabel).to_owned();
-            return spawn_background_work(
-                app,
-                BackgroundWorkReason::UserOrSystem,
-                BackgroundWorkMode::IndexAndProject,
-            );
+            return Task::batch(tasks);
         }
         Message::FilesystemChanged => {
             app.activity_status = app.i18n.text(TextKey::LoadingIndexingLabel).to_owned();
@@ -870,6 +950,35 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
         }
         Message::OpenGitHub => {
             let _ = opener::open(assets::REPO_URL);
+        }
+        Message::UpdateChipPressed => {
+            if let UpdateCheckState::UpdateAvailable { url, .. } = &app.update_check_state {
+                let target = if url.trim().is_empty() {
+                    GITHUB_RELEASES_PAGE_URL
+                } else {
+                    url.as_str()
+                };
+                let _ = opener::open(target);
+                return Task::none();
+            }
+
+            if matches!(app.update_check_state, UpdateCheckState::Checking) {
+                return Task::none();
+            }
+
+            if !can_run_manual_update_check(app, SystemTime::now()) {
+                return Task::none();
+            }
+
+            return start_update_check(app, UpdateCheckTrigger::Manual);
+        }
+        Message::UpdateCheckTick => {
+            if should_run_auto_update_check(app, SystemTime::now()) {
+                return start_update_check(app, UpdateCheckTrigger::Automatic);
+            }
+        }
+        Message::UpdateCheckCompleted(result) => {
+            apply_update_check_result(app, result);
         }
         Message::ToggleFilterDialog => {
             app.filter_dialog_open = !app.filter_dialog_open;
@@ -987,6 +1096,148 @@ fn projection_loading_key(search_query: &str, active_route: Route) -> TextKey {
     }
 }
 
+fn update_chip_text_key(state: &UpdateCheckState) -> TextKey {
+    match state {
+        UpdateCheckState::Unknown | UpdateCheckState::Failed => TextKey::UpdateChipUnknownLabel,
+        UpdateCheckState::Checking => TextKey::UpdateChipCheckingLabel,
+        UpdateCheckState::UpToDate => TextKey::UpdateChipUpToDateLabel,
+        UpdateCheckState::UpdateAvailable { .. } => TextKey::UpdateChipNewReleaseLabel,
+    }
+}
+
+fn should_run_auto_update_check(app: &Librapix, now: SystemTime) -> bool {
+    if matches!(app.update_check_state, UpdateCheckState::Checking) {
+        return false;
+    }
+    let reference = app
+        .last_successful_update_check
+        .or(app.last_auto_update_check_attempt);
+    match reference.and_then(|at| now.duration_since(at).ok()) {
+        None => true,
+        Some(elapsed) => elapsed >= AUTO_UPDATE_CHECK_INTERVAL,
+    }
+}
+
+fn can_run_manual_update_check(app: &Librapix, now: SystemTime) -> bool {
+    match app
+        .last_manual_update_check
+        .and_then(|at| now.duration_since(at).ok())
+    {
+        Some(elapsed) => elapsed >= MANUAL_UPDATE_CHECK_COOLDOWN,
+        None => true,
+    }
+}
+
+fn start_update_check(app: &mut Librapix, trigger: UpdateCheckTrigger) -> Task<Message> {
+    app.update_check_state = UpdateCheckState::Checking;
+    let now = SystemTime::now();
+    match trigger {
+        UpdateCheckTrigger::Startup | UpdateCheckTrigger::Automatic => {
+            app.last_auto_update_check_attempt = Some(now);
+        }
+        UpdateCheckTrigger::Manual => {
+            app.last_manual_update_check = Some(now);
+        }
+    }
+
+    Task::perform(
+        async move { run_update_check(trigger) },
+        Message::UpdateCheckCompleted,
+    )
+}
+
+fn run_update_check(trigger: UpdateCheckTrigger) -> UpdateCheckTaskResult {
+    let checked_at = SystemTime::now();
+    let state = match fetch_latest_release() {
+        Ok(Some(latest)) => match compare_release_versions(APP_VERSION, &latest.version) {
+            Some(true) => UpdateCheckState::UpdateAvailable {
+                version: latest.version,
+                url: latest.url,
+            },
+            Some(false) => UpdateCheckState::UpToDate,
+            None => UpdateCheckState::Failed,
+        },
+        Ok(None) => UpdateCheckState::UpToDate,
+        Err(()) => UpdateCheckState::Failed,
+    };
+
+    UpdateCheckTaskResult {
+        trigger,
+        checked_at,
+        state,
+    }
+}
+
+#[derive(Debug, Clone)]
+struct LatestRelease {
+    version: String,
+    url: String,
+}
+
+fn fetch_latest_release() -> Result<Option<LatestRelease>, ()> {
+    let mut response = ureq::get(GITHUB_LATEST_RELEASE_API_URL)
+        .header("Accept", "application/vnd.github+json")
+        .header("User-Agent", "librapix-update-checker")
+        .call()
+        .map_err(|_| ())?;
+    let payload_text = response.body_mut().read_to_string().map_err(|_| ())?;
+    let payload =
+        serde_json::from_str::<GitHubLatestReleaseResponse>(&payload_text).map_err(|_| ())?;
+
+    if payload.draft || payload.prerelease {
+        return Ok(None);
+    }
+
+    let version = normalize_version_string(&payload.tag_name);
+    if version.is_empty() {
+        return Err(());
+    }
+
+    let url = if payload.html_url.trim().is_empty() {
+        GITHUB_RELEASES_PAGE_URL.to_owned()
+    } else {
+        payload.html_url
+    };
+
+    Ok(Some(LatestRelease { version, url }))
+}
+
+fn normalize_version_string(version: &str) -> String {
+    version.trim().trim_start_matches(['v', 'V']).to_owned()
+}
+
+fn compare_release_versions(current: &str, latest: &str) -> Option<bool> {
+    let current = normalize_version_string(current);
+    let latest = normalize_version_string(latest);
+    match (Version::parse(&current), Version::parse(&latest)) {
+        (Ok(current), Ok(latest)) => Some(latest > current),
+        _ => None,
+    }
+}
+
+fn apply_update_check_result(app: &mut Librapix, result: UpdateCheckTaskResult) {
+    let success = matches!(
+        result.state,
+        UpdateCheckState::UpToDate | UpdateCheckState::UpdateAvailable { .. }
+    );
+    app.update_check_state = result.state;
+    if success {
+        app.last_successful_update_check = Some(result.checked_at);
+    }
+}
+
+fn update_check_status_label(state: &UpdateCheckState) -> String {
+    match state {
+        UpdateCheckState::Unknown => "unknown".to_owned(),
+        UpdateCheckState::Checking => "checking".to_owned(),
+        UpdateCheckState::UpToDate => "up_to_date".to_owned(),
+        UpdateCheckState::UpdateAvailable { version, .. } => {
+            format!("update_available({version})")
+        }
+        UpdateCheckState::Failed => "failed".to_owned(),
+    }
+}
+
 fn view(app: &Librapix) -> Element<'_, Message> {
     let _required_rules = non_destructive::required_rules();
     let is_gallery = matches!(app.state.active_route, Route::Gallery);
@@ -1028,6 +1279,22 @@ fn view(app: &Librapix) -> Element<'_, Message> {
     .style(subtle_button_style)
     .padding([SPACE_XS as u16, SPACE_XS as u16]);
 
+    let mut update_chip = button(
+        text(app.i18n.text(update_chip_text_key(&app.update_check_state))).size(FONT_CAPTION),
+    )
+    .padding([SPACE_XS as u16, SPACE_MD as u16]);
+    if !matches!(app.update_check_state, UpdateCheckState::Checking) {
+        update_chip = update_chip.on_press(Message::UpdateChipPressed);
+    }
+    let update_chip = match &app.update_check_state {
+        UpdateCheckState::UpdateAvailable { .. } => update_chip.style(primary_button_style),
+        UpdateCheckState::Checking => update_chip.style(action_button_style),
+        UpdateCheckState::UpToDate => update_chip.style(action_button_style),
+        UpdateCheckState::Unknown | UpdateCheckState::Failed => {
+            update_chip.style(subtle_button_style)
+        }
+    };
+
     let header = container(
         row![
             brand,
@@ -1050,6 +1317,7 @@ fn view(app: &Librapix) -> Element<'_, Message> {
             .spacing(SPACE_SM)
             .align_y(iced::Alignment::Center),
             Space::new().width(Length::Fill),
+            update_chip,
             text(app.activity_status.clone())
                 .size(FONT_CAPTION)
                 .color(ACCENT),
@@ -4919,6 +5187,10 @@ fn refresh_diagnostics(app: &mut Librapix) {
         app.filter_tag.as_deref().unwrap_or("all")
     ));
     lines.push(format!("min file size: {} bytes", app.min_file_size_bytes));
+    lines.push(format!(
+        "updates: {}",
+        update_check_status_label(&app.update_check_state)
+    ));
     lines.push(format!("browse status: {}", app.browse_status));
 
     app.diagnostics_lines = lines;

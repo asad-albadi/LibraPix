@@ -6983,4 +6983,20 @@ mod tests {
             app.i18n.text(TextKey::StageRefreshingGalleryLabel)
         );
     }
+
+    #[test]
+    fn finalize_background_flow_sets_ready_when_no_work_remains() {
+        let mut app = Librapix::default();
+        set_activity_stage(
+            &mut app,
+            TextKey::StageRefreshingGalleryLabel,
+            String::new(),
+            true,
+        );
+
+        let _ = finalize_background_flow(&mut app);
+
+        assert!(!app.activity_progress.busy);
+        assert_eq!(app.activity_status, app.i18n.text(TextKey::StageReadyLabel));
+    }
 }

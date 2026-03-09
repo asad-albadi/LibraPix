@@ -1,11 +1,14 @@
 mod migration;
 
 use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
+use std::collections::HashSet;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+const SQLITE_PARAMETER_LIMIT_SAFE_CHUNK: usize = 900;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SourceRootLifecycle {
@@ -756,6 +759,48 @@ impl Storage {
             .map_err(StorageError::Sql)
     }
 
+    pub fn upsert_projection_snapshot(
+        &self,
+        snapshot_key: &str,
+        payload_json: &str,
+    ) -> Result<(), StorageError> {
+        self.connection.execute(
+            "INSERT INTO projection_snapshots (
+                snapshot_key,
+                payload_json,
+                updated_unix_seconds,
+                updated_at
+             ) VALUES (
+                ?1,
+                ?2,
+                CAST(strftime('%s', 'now') AS INTEGER),
+                CURRENT_TIMESTAMP
+             )
+             ON CONFLICT(snapshot_key) DO UPDATE SET
+                payload_json = excluded.payload_json,
+                updated_unix_seconds = CAST(strftime('%s', 'now') AS INTEGER),
+                updated_at = CURRENT_TIMESTAMP",
+            params![snapshot_key, payload_json],
+        )?;
+        Ok(())
+    }
+
+    pub fn load_projection_snapshot(
+        &self,
+        snapshot_key: &str,
+    ) -> Result<Option<String>, StorageError> {
+        self.connection
+            .query_row(
+                "SELECT payload_json
+                 FROM projection_snapshots
+                 WHERE snapshot_key = ?1",
+                params![snapshot_key],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(StorageError::Sql)
+    }
+
     pub fn refresh_source_root_statistics(&self, root_ids: &[i64]) -> Result<(), StorageError> {
         if root_ids.is_empty() {
             return Ok(());
@@ -943,6 +988,112 @@ impl Storage {
             .query_row(params![media_id], map_media_read_model_row)
             .optional()?;
         Ok(row)
+    }
+
+    pub fn list_media_read_models_by_paths(
+        &self,
+        absolute_paths: &[PathBuf],
+    ) -> Result<Vec<MediaReadModel>, StorageError> {
+        if absolute_paths.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut unique_paths = absolute_paths
+            .iter()
+            .map(|path| path.to_string_lossy().to_string())
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        unique_paths.sort();
+
+        let mut collected = Vec::new();
+        for chunk in unique_paths.chunks(SQLITE_PARAMETER_LIMIT_SAFE_CHUNK) {
+            if chunk.is_empty() {
+                continue;
+            }
+
+            let placeholders = vec!["?"; chunk.len()].join(", ");
+            let sql = format!(
+                "SELECT m.id, m.source_root_id, m.absolute_path, m.media_kind,
+                        m.file_size_bytes, m.modified_unix_seconds, m.width_px, m.height_px,
+                        m.metadata_status, COALESCE(GROUP_CONCAT(t.name, ','), '')
+                 FROM indexed_media m
+                 LEFT JOIN media_tags mt ON mt.media_id = m.id
+                 LEFT JOIN tags t ON t.id = mt.tag_id
+                 WHERE m.metadata_status != 'missing'
+                   AND m.absolute_path IN ({placeholders})
+                 GROUP BY m.id
+                 ORDER BY m.modified_unix_seconds DESC, m.absolute_path ASC"
+            );
+
+            let mut statement = self.connection.prepare(&sql)?;
+            let rows = statement.query_map(params_from_iter(chunk.iter()), |row| {
+                map_media_read_model_row(row)
+            })?;
+            let chunk_rows: Result<Vec<_>, rusqlite::Error> = rows.collect();
+            collected.extend(chunk_rows?);
+        }
+
+        collected.sort_by(|left, right| {
+            right
+                .modified_unix_seconds
+                .cmp(&left.modified_unix_seconds)
+                .then_with(|| left.absolute_path.cmp(&right.absolute_path))
+        });
+        Ok(collected)
+    }
+
+    pub fn list_media_read_models_by_ids(
+        &self,
+        media_ids: &[i64],
+    ) -> Result<Vec<MediaReadModel>, StorageError> {
+        if media_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut unique_ids = media_ids
+            .iter()
+            .copied()
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        unique_ids.sort_unstable();
+
+        let mut collected = Vec::new();
+        for chunk in unique_ids.chunks(SQLITE_PARAMETER_LIMIT_SAFE_CHUNK) {
+            if chunk.is_empty() {
+                continue;
+            }
+
+            let placeholders = vec!["?"; chunk.len()].join(", ");
+            let sql = format!(
+                "SELECT m.id, m.source_root_id, m.absolute_path, m.media_kind,
+                        m.file_size_bytes, m.modified_unix_seconds, m.width_px, m.height_px,
+                        m.metadata_status, COALESCE(GROUP_CONCAT(t.name, ','), '')
+                 FROM indexed_media m
+                 LEFT JOIN media_tags mt ON mt.media_id = m.id
+                 LEFT JOIN tags t ON t.id = mt.tag_id
+                 WHERE m.metadata_status != 'missing'
+                   AND m.id IN ({placeholders})
+                 GROUP BY m.id
+                 ORDER BY m.modified_unix_seconds DESC, m.absolute_path ASC"
+            );
+
+            let mut statement = self.connection.prepare(&sql)?;
+            let rows = statement.query_map(params_from_iter(chunk.iter()), |row| {
+                map_media_read_model_row(row)
+            })?;
+            let chunk_rows: Result<Vec<_>, rusqlite::Error> = rows.collect();
+            collected.extend(chunk_rows?);
+        }
+
+        collected.sort_by(|left, right| {
+            right
+                .modified_unix_seconds
+                .cmp(&left.modified_unix_seconds)
+                .then_with(|| left.absolute_path.cmp(&right.absolute_path))
+        });
+        Ok(collected)
     }
 
     fn query_media_read_models_unbounded(
@@ -1167,7 +1318,31 @@ mod tests {
         let version = storage
             .migration_version()
             .expect("migration version should be queryable");
-        assert_eq!(version, 8);
+        assert_eq!(version, 9);
+
+        let _ = std::fs::remove_file(db);
+    }
+
+    #[test]
+    fn projection_snapshot_round_trip() {
+        let db = temp_db_file("projection-snapshot");
+        let storage = Storage::open(&db).expect("database should open");
+
+        storage
+            .upsert_projection_snapshot("default", "{\"gallery\":[]}")
+            .expect("snapshot upsert should succeed");
+        let loaded = storage
+            .load_projection_snapshot("default")
+            .expect("snapshot load should succeed");
+        assert_eq!(loaded.as_deref(), Some("{\"gallery\":[]}"));
+
+        storage
+            .upsert_projection_snapshot("default", "{\"gallery\":[1]}")
+            .expect("snapshot update should succeed");
+        let updated = storage
+            .load_projection_snapshot("default")
+            .expect("snapshot load should succeed");
+        assert_eq!(updated.as_deref(), Some("{\"gallery\":[1]}"));
 
         let _ = std::fs::remove_file(db);
     }
@@ -1492,6 +1667,60 @@ mod tests {
             .expect("all query should work");
         assert_eq!(all_rows.len(), 3);
         assert!(all_rows.iter().any(|row| row.media_kind == "video"));
+
+        let _ = std::fs::remove_file(db);
+    }
+
+    #[test]
+    fn list_media_read_models_by_ids_and_paths_handle_large_parameter_sets() {
+        let db = temp_db_file("read-model-batch-ids-paths");
+        let mut storage = Storage::open(&db).expect("database should open");
+        storage
+            .upsert_source_root(Path::new("/tmp/librapix-read-model-batch"))
+            .expect("root insert should work");
+        let root_id = storage
+            .list_source_roots()
+            .expect("roots should list")
+            .first()
+            .expect("one root expected")
+            .id;
+
+        let writes = (0..1100)
+            .map(|index| IndexedMediaWrite {
+                source_root_id: root_id,
+                absolute_path: PathBuf::from(format!(
+                    "/tmp/librapix-read-model-batch/shot-{index:04}.png"
+                )),
+                media_kind: "image".to_owned(),
+                file_size_bytes: 100 + index as u64,
+                modified_unix_seconds: Some(1_700_000_000 + index as i64),
+                width_px: Some(20),
+                height_px: Some(20),
+                metadata_status: IndexedMetadataStatus::Ok,
+            })
+            .collect::<Vec<_>>();
+        storage
+            .apply_incremental_index(&writes, &[root_id])
+            .expect("apply should work");
+
+        let all_rows = storage
+            .list_all_media_read_models()
+            .expect("all rows should list");
+        let media_ids = all_rows.iter().map(|row| row.media_id).collect::<Vec<_>>();
+        let absolute_paths = all_rows
+            .iter()
+            .map(|row| row.absolute_path.clone())
+            .collect::<Vec<_>>();
+
+        let rows_by_id = storage
+            .list_media_read_models_by_ids(&media_ids)
+            .expect("id-batch query should work");
+        let rows_by_path = storage
+            .list_media_read_models_by_paths(&absolute_paths)
+            .expect("path-batch query should work");
+
+        assert_eq!(rows_by_id.len(), writes.len());
+        assert_eq!(rows_by_path.len(), writes.len());
 
         let _ = std::fs::remove_file(db);
     }

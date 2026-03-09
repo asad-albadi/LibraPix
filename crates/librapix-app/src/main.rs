@@ -9,8 +9,8 @@ use iced::keyboard;
 use iced::keyboard::key;
 use iced::widget::image::FilterMethod;
 use iced::widget::{
-    Id, Space, button, column, container, image, mouse_area, operation, responsive, row,
-    scrollable, stack, svg, text, text_input, vertical_slider,
+    Id, Space, button, column, container, image, mouse_area, operation, progress_bar, responsive,
+    row, scrollable, stack, svg, text, text_input, vertical_slider,
 };
 use iced::{ContentFit, Element, Length, Size, Subscription, Task, Theme};
 use librapix_config::{
@@ -33,10 +33,11 @@ use librapix_storage::{
     IndexedMediaWrite, IndexedMetadataStatus, SourceRootLifecycle, SourceRootStatisticsRecord,
     Storage, TagKind,
 };
-use librapix_thumbnails::{ensure_image_thumbnail, ensure_video_thumbnail};
+use librapix_thumbnails::{ensure_image_thumbnail, ensure_video_thumbnail, thumbnail_path};
 use notify::{EventKind, RecursiveMode, Watcher};
 use semver::Version;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -89,7 +90,7 @@ enum Message {
     IgnoreRuleApplyEdit,
     IgnoreRuleCancelEdit,
     StartupRestore,
-    FilesystemChanged,
+    FilesystemChanged(Vec<PathBuf>),
     SetFilterMediaKind(Option<String>),
     SetFilterExtension(Option<String>),
     SetFilterTag(Option<String>),
@@ -100,7 +101,11 @@ enum Message {
     JumpToTimelineAnchor(usize),
     MediaViewportChanged { absolute_y: f32, max_y: f32 },
     KeyboardEvent(keyboard::Event),
-    BackgroundWorkComplete(Box<BackgroundWorkResult>),
+    HydrateSnapshotComplete(Box<SnapshotHydrateResult>),
+    ScanJobComplete(Box<ScanJobResult>),
+    ProjectionJobComplete(Box<ProjectionJobResult>),
+    ThumbnailBatchComplete(Box<ThumbnailBatchResult>),
+    ThumbnailRetryEnqueue(ThumbnailWorkItem),
     OpenMediaById(i64),
     CopyMediaFileById(i64),
     DismissNewMediaAnnouncement,
@@ -144,21 +149,117 @@ enum BackgroundWorkReason {
     FilesystemWatch,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-enum BackgroundWorkMode {
-    #[default]
-    IndexAndProject,
-    ProjectOnly,
+#[derive(Debug, Clone, Default)]
+struct ActivityProgressState {
+    stage_text: String,
+    detail_text: String,
+    items_done: usize,
+    items_total: Option<usize>,
+    roots_done: usize,
+    roots_total: Option<usize>,
+    queue_depth: usize,
+    busy: bool,
+    indeterminate: bool,
+    started_at: Option<Instant>,
+    last_error: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+enum ThumbnailState {
+    Missing,
+    Queued {
+        attempt: u8,
+    },
+    Generating {
+        attempt: u8,
+    },
+    Ready(PathBuf),
+    Failed {
+        retryable: bool,
+        last_error: String,
+        attempt: u8,
+    },
+}
+
+#[derive(Debug, Clone)]
+struct ThumbnailWorkItem {
+    generation: u64,
+    media_id: i64,
+    absolute_path: PathBuf,
+    media_kind: String,
+    file_size_bytes: u64,
+    modified_unix_seconds: Option<i64>,
+    attempt: u8,
+}
+
+#[derive(Debug, Clone)]
+struct ThumbnailWorkOutcome {
+    media_id: i64,
+    state: ThumbnailState,
+    thumbnail_path: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone)]
+struct SnapshotHydrateInput {
+    generation: u64,
+    database_file: PathBuf,
 }
 
 #[derive(Debug, Clone, Default)]
-struct BackgroundWorkResult {
-    mode: BackgroundWorkMode,
+struct SnapshotHydrateResult {
+    generation: u64,
+    roots: Vec<LibraryRootView>,
+    ignore_rules: Vec<librapix_storage::IgnoreRuleRecord>,
+    snapshot: Option<PersistedProjectionSnapshot>,
+    snapshot_error: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct ScanJobInput {
+    generation: u64,
+    reason: BackgroundWorkReason,
+    database_file: PathBuf,
+    min_file_size_bytes: u64,
+    visible_media_ids: Vec<i64>,
+    i18n: Translator,
+}
+
+#[derive(Debug, Clone, Default)]
+struct ScanJobResult {
+    generation: u64,
     reason: BackgroundWorkReason,
     roots: Vec<LibraryRootView>,
     indexing_summary: Option<IndexingSummary>,
-    thumbnail_status: String,
     indexing_status: String,
+    ignore_rules: Vec<librapix_storage::IgnoreRuleRecord>,
+    scanned_root_ids: Vec<i64>,
+    root_count: usize,
+    changed_media: Vec<ThumbnailWorkItem>,
+    visible_media: Vec<ThumbnailWorkItem>,
+    has_media_changes: bool,
+    error: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct ProjectionJobInput {
+    generation: u64,
+    reason: BackgroundWorkReason,
+    database_file: PathBuf,
+    thumbnails_dir: PathBuf,
+    filter_media_kind: Option<String>,
+    filter_extension: Option<String>,
+    filter_tag: Option<String>,
+    filter_source_root_id: Option<i64>,
+    search_query: String,
+    active_route: Route,
+    i18n: Translator,
+}
+
+#[derive(Debug, Clone, Default)]
+struct ProjectionJobResult {
+    generation: u64,
+    reason: BackgroundWorkReason,
+    roots: Vec<LibraryRootView>,
     gallery_items: Vec<BrowseItem>,
     timeline_items: Vec<BrowseItem>,
     search_items: Vec<BrowseItem>,
@@ -166,10 +267,77 @@ struct BackgroundWorkResult {
     gallery_preview_lines: Vec<String>,
     timeline_preview_lines: Vec<String>,
     search_preview_lines: Vec<String>,
-    media_cache: std::collections::HashMap<i64, CachedDetails>,
+    media_cache: HashMap<i64, CachedDetails>,
     available_filter_tags: Vec<String>,
-    ignore_rules: Vec<librapix_storage::IgnoreRuleRecord>,
     browse_status: String,
+    ignore_rules: Vec<librapix_storage::IgnoreRuleRecord>,
+    snapshot_payload: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct ThumbnailBatchInput {
+    generation: u64,
+    thumbnails_dir: PathBuf,
+    items: Vec<ThumbnailWorkItem>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct ThumbnailBatchResult {
+    generation: u64,
+    outcomes: Vec<ThumbnailWorkOutcome>,
+    retry_items: Vec<ThumbnailWorkItem>,
+    generated: usize,
+    reused: usize,
+    failed: usize,
+}
+
+#[derive(Debug, Clone, Default)]
+struct BackgroundCoordinator {
+    snapshot_generation: u64,
+    reconcile_generation: u64,
+    projection_generation: u64,
+    thumbnail_generation: u64,
+    snapshot_loaded: bool,
+    startup_reconcile_queued: bool,
+    reconcile_in_flight: bool,
+    projection_in_flight: bool,
+    thumbnail_in_flight: bool,
+    pending_reconcile: bool,
+    pending_reconcile_reason: BackgroundWorkReason,
+    pending_projection: bool,
+    pending_projection_reason: BackgroundWorkReason,
+    pending_watch_paths: HashSet<PathBuf>,
+    reconcile_has_media_changes: bool,
+    reconcile_force_projection: bool,
+    deferred_thumbnail_items: Vec<ThumbnailWorkItem>,
+    thumbnail_queue: VecDeque<ThumbnailWorkItem>,
+    thumbnail_queued_ids: HashSet<i64>,
+    thumbnail_done: usize,
+    thumbnail_total: usize,
+    thumbnail_generated: usize,
+    thumbnail_reused: usize,
+    thumbnail_failed: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PersistedTimelineAnchor {
+    group_index: usize,
+    label: String,
+    year: Option<i32>,
+    month: Option<u32>,
+    day: Option<u32>,
+    item_count: usize,
+    normalized_position: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct PersistedProjectionSnapshot {
+    version: u32,
+    gallery_items: Vec<BrowseItem>,
+    timeline_items: Vec<BrowseItem>,
+    timeline_anchors: Vec<PersistedTimelineAnchor>,
+    available_filter_tags: Vec<String>,
+    updated_unix_seconds: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -229,13 +397,16 @@ struct Librapix {
     last_click_media_id: Option<i64>,
     last_click_time: Option<Instant>,
     activity_status: String,
+    activity_progress: ActivityProgressState,
     filter_media_kind: Option<String>,
     filter_extension: Option<String>,
     filter_tag: Option<String>,
     available_filter_tags: Vec<String>,
     min_file_size_bytes: u64,
     min_file_size_input: String,
-    media_cache: std::collections::HashMap<i64, CachedDetails>,
+    media_cache: HashMap<i64, CachedDetails>,
+    thumbnail_states: HashMap<i64, ThumbnailState>,
+    background: BackgroundCoordinator,
     diagnostics_lines: Vec<String>,
     diagnostics_events: Vec<String>,
     timeline_scrub_value: f32,
@@ -270,7 +441,7 @@ enum LibraryDialogMode {
     Edit(i64),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct BrowseItem {
     media_id: i64,
     title: String,
@@ -332,25 +503,6 @@ struct BrowseStats {
     video_count: usize,
 }
 
-#[derive(Debug, Clone)]
-struct BackgroundWorkInput {
-    database_file: PathBuf,
-    thumbnails_dir: PathBuf,
-    min_file_size_bytes: u64,
-    filter_media_kind: Option<String>,
-    filter_extension: Option<String>,
-    filter_tag: Option<String>,
-    filter_source_root_id: Option<i64>,
-    search_query: String,
-    active_route: Route,
-    i18n: Translator,
-    selected_root_id: Option<i64>,
-    current_thumbnail_status: String,
-    current_indexing_status: String,
-    mode: BackgroundWorkMode,
-    reason: BackgroundWorkReason,
-}
-
 const GALLERY_THUMB_SIZE: u32 = 400;
 const DETAIL_THUMB_SIZE: u32 = 800;
 const TARGET_ROW_HEIGHT: f32 = 200.0;
@@ -371,6 +523,12 @@ const GITHUB_RELEASES_PAGE_URL: &str = "https://github.com/asad-albadi/LibraPix/
 const UPDATE_CHECK_TICK_INTERVAL: Duration = Duration::from_secs(60);
 const AUTO_UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 const MANUAL_UPDATE_CHECK_COOLDOWN: Duration = Duration::from_secs(5 * 60);
+const PROJECTION_SNAPSHOT_KEY: &str = "default";
+const PROJECTION_SNAPSHOT_VERSION: u32 = 1;
+const THUMBNAIL_BATCH_SIZE: usize = 32;
+const THUMBNAIL_MAX_RETRY_ATTEMPTS: u8 = 5;
+const THUMBNAIL_RETRY_DELAY_MS: u64 = 1200;
+const VISIBLE_THUMBNAIL_QUEUE_LIMIT: usize = 180;
 
 #[derive(Debug, Clone)]
 struct RuntimeContext {
@@ -415,13 +573,16 @@ impl Default for Librapix {
             last_click_media_id: None,
             last_click_time: None,
             activity_status: String::new(),
+            activity_progress: ActivityProgressState::default(),
             filter_media_kind: None,
             filter_extension: None,
             filter_tag: None,
             available_filter_tags: Vec::new(),
             min_file_size_bytes: 0,
             min_file_size_input: String::new(),
-            media_cache: std::collections::HashMap::new(),
+            media_cache: HashMap::new(),
+            thumbnail_states: HashMap::new(),
+            background: BackgroundCoordinator::default(),
             diagnostics_lines: Vec::new(),
             diagnostics_events: Vec::new(),
             timeline_scrub_value: 0.0,
@@ -528,10 +689,9 @@ fn watch_filesystem(
         };
 
         for root in &roots {
-            if watcher.watch(root, RecursiveMode::Recursive).is_err() {}
+            let _ = watcher.watch(root, RecursiveMode::Recursive);
         }
 
-        let mut last_signal = Instant::now();
         loop {
             match rx.next().await {
                 Some(Ok(event)) => {
@@ -542,9 +702,17 @@ fn watch_filesystem(
                             | EventKind::Remove(_)
                             | EventKind::Any
                     );
-                    if should_trigger && last_signal.elapsed().as_millis() > 500 {
-                        last_signal = Instant::now();
-                        let _ = output.send(Message::FilesystemChanged).await;
+                    if should_trigger {
+                        let mut batch = event
+                            .paths
+                            .into_iter()
+                            .collect::<HashSet<_>>()
+                            .into_iter()
+                            .collect::<Vec<_>>();
+                        batch.sort();
+                        if !batch.is_empty() {
+                            let _ = output.send(Message::FilesystemChanged(batch)).await;
+                        }
                     }
                 }
                 Some(Err(_)) => {}
@@ -588,7 +756,9 @@ fn message_event_label(msg: &Message) -> String {
         Message::IgnoreRuleApplyEdit => "IgnoreRuleApplyEdit".into(),
         Message::IgnoreRuleCancelEdit => "IgnoreRuleCancelEdit".into(),
         Message::StartupRestore => "StartupRestore".into(),
-        Message::FilesystemChanged => "FilesystemChanged".into(),
+        Message::FilesystemChanged(paths) => {
+            format!("FilesystemChanged(paths={})", paths.len())
+        }
         Message::SetFilterMediaKind(k) => format!("SetFilterMediaKind({:?})", k.as_deref()),
         Message::SetFilterExtension(e) => format!("SetFilterExtension({:?})", e.as_deref()),
         Message::SetFilterTag(tag) => format!("SetFilterTag({:?})", tag.as_deref()),
@@ -601,7 +771,11 @@ fn message_event_label(msg: &Message) -> String {
             format!("MediaViewportChanged({absolute_y:.1}/{max_y:.1})")
         }
         Message::KeyboardEvent(_) => "KeyboardEvent".into(),
-        Message::BackgroundWorkComplete(_) => "BackgroundWorkComplete".into(),
+        Message::HydrateSnapshotComplete(_) => "HydrateSnapshotComplete".into(),
+        Message::ScanJobComplete(_) => "ScanJobComplete".into(),
+        Message::ProjectionJobComplete(_) => "ProjectionJobComplete".into(),
+        Message::ThumbnailBatchComplete(_) => "ThumbnailBatchComplete".into(),
+        Message::ThumbnailRetryEnqueue(_) => "ThumbnailRetryEnqueue".into(),
         Message::OpenMediaById(id) => format!("OpenMediaById({id})"),
         Message::CopyMediaFileById(id) => format!("CopyMediaFileById({id})"),
         Message::DismissNewMediaAnnouncement => "DismissNewMediaAnnouncement".into(),
@@ -725,52 +899,27 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
                 app.root_status = app.i18n.text(TextKey::RootActionSuccess).to_owned();
                 app.library_dialog_open = false;
                 app.library_stats_dialog_open = false;
-                app.activity_status = app.i18n.text(TextKey::LoadingGalleryLabel).to_owned();
-                return spawn_background_work(
-                    app,
-                    BackgroundWorkReason::UserOrSystem,
-                    BackgroundWorkMode::ProjectOnly,
-                );
+                return request_projection_refresh(app, BackgroundWorkReason::UserOrSystem);
             }
         }
         Message::RefreshRoots => {
             refresh_roots(app);
         }
         Message::RunIndexing => {
-            app.activity_status = app.i18n.text(TextKey::LoadingIndexingLabel).to_owned();
-            return spawn_background_work(
-                app,
-                BackgroundWorkReason::UserOrSystem,
-                BackgroundWorkMode::IndexAndProject,
-            );
+            return request_reconcile(app, BackgroundWorkReason::UserOrSystem);
         }
         Message::SearchQueryChanged(value) => {
             app.state.apply(AppMessage::SetSearchQuery);
             app.state.set_search_query(value);
         }
         Message::RunSearchQuery => {
-            app.activity_status = app.i18n.text(TextKey::LoadingSearchLabel).to_owned();
-            return spawn_background_work(
-                app,
-                BackgroundWorkReason::UserOrSystem,
-                BackgroundWorkMode::ProjectOnly,
-            );
+            return request_projection_refresh(app, BackgroundWorkReason::UserOrSystem);
         }
         Message::RunTimelineProjection => {
-            app.activity_status = app.i18n.text(TextKey::LoadingTimelineLabel).to_owned();
-            return spawn_background_work(
-                app,
-                BackgroundWorkReason::UserOrSystem,
-                BackgroundWorkMode::ProjectOnly,
-            );
+            return request_projection_refresh(app, BackgroundWorkReason::UserOrSystem);
         }
         Message::RunGalleryProjection => {
-            app.activity_status = app.i18n.text(TextKey::LoadingGalleryLabel).to_owned();
-            return spawn_background_work(
-                app,
-                BackgroundWorkReason::UserOrSystem,
-                BackgroundWorkMode::ProjectOnly,
-            );
+            return request_projection_refresh(app, BackgroundWorkReason::UserOrSystem);
         }
         Message::SelectMedia(media_id) => {
             if app
@@ -794,6 +943,10 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
                 app.state.apply(AppMessage::SetSelectedMedia);
                 app.state.set_selected_media(Some(media_id));
                 load_media_details_cached(app);
+                let task = queue_selected_media_thumbnail(app);
+                if app.background.thumbnail_in_flight {
+                    return task;
+                }
             }
         }
         Message::DetailsTagInputChanged(value) => {
@@ -856,13 +1009,11 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
         Message::StartupRestore => {
             let mut tasks = Vec::new();
 
+            tasks.push(start_snapshot_hydrate(app));
             if !app.state.library_roots.is_empty() {
-                app.activity_status = app.i18n.text(TextKey::StatusRestoringLabel).to_owned();
-                tasks.push(spawn_background_work(
-                    app,
-                    BackgroundWorkReason::UserOrSystem,
-                    BackgroundWorkMode::IndexAndProject,
-                ));
+                app.background.startup_reconcile_queued = true;
+            } else {
+                set_activity_ready(app);
             }
 
             if !matches!(app.update_check_state, UpdateCheckState::Checking) {
@@ -874,41 +1025,21 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
             }
             return Task::batch(tasks);
         }
-        Message::FilesystemChanged => {
-            app.activity_status = app.i18n.text(TextKey::LoadingIndexingLabel).to_owned();
-            return spawn_background_work(
-                app,
-                BackgroundWorkReason::FilesystemWatch,
-                BackgroundWorkMode::IndexAndProject,
-            );
+        Message::FilesystemChanged(paths) => {
+            return on_filesystem_changed(app, paths);
         }
         Message::SetFilterMediaKind(kind) => {
             app.filter_media_kind = kind;
             app.filter_extension = None;
-            app.activity_status = projection_loading_label(app).to_owned();
-            return spawn_background_work(
-                app,
-                BackgroundWorkReason::UserOrSystem,
-                BackgroundWorkMode::ProjectOnly,
-            );
+            return request_projection_refresh(app, BackgroundWorkReason::UserOrSystem);
         }
         Message::SetFilterExtension(ext) => {
             app.filter_extension = ext;
-            app.activity_status = projection_loading_label(app).to_owned();
-            return spawn_background_work(
-                app,
-                BackgroundWorkReason::UserOrSystem,
-                BackgroundWorkMode::ProjectOnly,
-            );
+            return request_projection_refresh(app, BackgroundWorkReason::UserOrSystem);
         }
         Message::SetFilterTag(tag) => {
             app.filter_tag = tag;
-            app.activity_status = projection_loading_label(app).to_owned();
-            return spawn_background_work(
-                app,
-                BackgroundWorkReason::UserOrSystem,
-                BackgroundWorkMode::ProjectOnly,
-            );
+            return request_projection_refresh(app, BackgroundWorkReason::UserOrSystem);
         }
         Message::MinFileSizeInputChanged(value) => {
             app.min_file_size_input = value;
@@ -919,12 +1050,7 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
             } else if app.min_file_size_input.trim().is_empty() {
                 app.min_file_size_bytes = 0;
             }
-            app.activity_status = app.i18n.text(TextKey::LoadingIndexingLabel).to_owned();
-            return spawn_background_work(
-                app,
-                BackgroundWorkReason::UserOrSystem,
-                BackgroundWorkMode::IndexAndProject,
-            );
+            return request_reconcile(app, BackgroundWorkReason::UserOrSystem);
         }
         Message::TimelineScrubChanged(value) => {
             return apply_timeline_scrub(app, value, true);
@@ -948,8 +1074,25 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
                 }
             }
         }
-        Message::BackgroundWorkComplete(result) => {
-            apply_background_result(app, *result);
+        Message::HydrateSnapshotComplete(result) => {
+            let task = apply_snapshot_hydrate_result(app, *result);
+            refresh_diagnostics(app);
+            return task;
+        }
+        Message::ScanJobComplete(result) => {
+            return apply_scan_job_result(app, *result);
+        }
+        Message::ProjectionJobComplete(result) => {
+            return apply_projection_job_result(app, *result);
+        }
+        Message::ThumbnailBatchComplete(result) => {
+            return apply_thumbnail_batch_result(app, *result);
+        }
+        Message::ThumbnailRetryEnqueue(item) => {
+            if item_retry_generation_is_current(app, &item) {
+                enqueue_thumbnail_items(app, vec![item]);
+                return run_next_thumbnail_batch_if_idle(app);
+            }
             refresh_diagnostics(app);
         }
         Message::OpenMediaById(media_id) => {
@@ -1089,25 +1232,14 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
         }
         Message::SetFilterLibrary(root_id) => {
             app.filter_source_root_id = root_id;
-            app.activity_status = app.i18n.text(TextKey::LoadingGalleryLabel).to_owned();
-            return spawn_background_work(
-                app,
-                BackgroundWorkReason::UserOrSystem,
-                BackgroundWorkMode::ProjectOnly,
-            );
+            return request_projection_refresh(app, BackgroundWorkReason::UserOrSystem);
         }
     }
 
     Task::none()
 }
 
-fn projection_loading_label(app: &Librapix) -> &'static str {
-    app.i18n.text(projection_loading_key(
-        &app.state.search_query,
-        app.state.active_route,
-    ))
-}
-
+#[cfg(test)]
 fn projection_loading_key(search_query: &str, active_route: Route) -> TextKey {
     if !search_query.trim().is_empty() {
         TextKey::LoadingSearchLabel
@@ -1340,9 +1472,7 @@ fn view(app: &Librapix) -> Element<'_, Message> {
             .align_y(iced::Alignment::Center),
             Space::new().width(Length::Fill),
             update_chip,
-            text(app.activity_status.clone())
-                .size(FONT_CAPTION)
-                .color(ACCENT),
+            render_activity_status(app),
             settings_btn,
             about_btn,
             github_btn,
@@ -1579,6 +1709,87 @@ fn view(app: &Librapix) -> Element<'_, Message> {
     overlay
 }
 
+fn render_activity_status(app: &Librapix) -> Element<'_, Message> {
+    let progress = &app.activity_progress;
+    if !progress.busy {
+        return text(app.activity_status.clone())
+            .size(FONT_CAPTION)
+            .color(ACCENT)
+            .into();
+    }
+
+    let progress_line = if let Some(total) = progress.items_total {
+        format!(
+            "{}: {} / {}",
+            app.i18n.text(TextKey::ProgressItemsLabel),
+            progress.items_done,
+            total
+        )
+    } else {
+        format!("{}: --", app.i18n.text(TextKey::ProgressItemsLabel))
+    };
+    let queue_line = format!(
+        "{}: {}",
+        app.i18n.text(TextKey::ProgressQueueLabel),
+        progress.queue_depth
+    );
+    let roots_line = progress.roots_total.map(|total| {
+        format!(
+            "{}: {} / {}",
+            app.i18n.text(TextKey::ProgressRootsLabel),
+            progress.roots_done.min(total),
+            total
+        )
+    });
+    let bar: Element<'_, Message> = if let Some(total) = progress.items_total {
+        let capped_total = total.max(1) as f32;
+        let done = progress.items_done.min(total) as f32;
+        container(progress_bar(0.0..=capped_total, done))
+            .height(Length::Fixed(4.0))
+            .into()
+    } else {
+        container(progress_bar(
+            0.0..=1.0,
+            if progress.indeterminate { 0.35 } else { 0.0 },
+        ))
+        .height(Length::Fixed(4.0))
+        .into()
+    };
+
+    let mut lines = column![
+        text(progress.stage_text.clone())
+            .size(FONT_CAPTION)
+            .color(ACCENT),
+        bar,
+        text(progress_line).size(FONT_CAPTION).color(TEXT_TERTIARY),
+    ]
+    .spacing(SPACE_2XS);
+    if let Some(roots_line) = roots_line {
+        lines = lines.push(text(roots_line).size(FONT_CAPTION).color(TEXT_TERTIARY));
+    }
+    lines = lines.push(text(queue_line).size(FONT_CAPTION).color(TEXT_TERTIARY));
+    if !progress.detail_text.trim().is_empty() {
+        lines = lines.push(
+            text(progress.detail_text.clone())
+                .size(FONT_CAPTION)
+                .color(TEXT_TERTIARY),
+        );
+    }
+    if let Some(error) = progress.last_error.as_ref() {
+        lines = lines.push(
+            text(format!(
+                "{}: {}",
+                app.i18n.text(TextKey::ProgressErrorLabel),
+                error
+            ))
+            .size(FONT_CAPTION)
+            .color(WARNING_COLOR),
+        );
+    }
+
+    container(lines).width(Length::Fixed(220.0)).into()
+}
+
 fn render_media_panel(app: &Librapix) -> (Element<'_, Message>, Element<'_, Message>) {
     let route_title = match app.state.active_route {
         Route::Gallery => app.i18n.text(TextKey::GalleryTab),
@@ -1663,7 +1874,7 @@ fn render_media_panel(app: &Librapix) -> (Element<'_, Message>, Element<'_, Mess
 
             column![
                 search_header,
-                render_justified_gallery(&app.search_items, app.state.selected_media_id),
+                render_justified_gallery(app, &app.search_items, app.state.selected_media_id),
             ]
             .spacing(SPACE_SM)
             .into()
@@ -1685,8 +1896,10 @@ fn render_media_panel(app: &Librapix) -> (Element<'_, Message>, Element<'_, Mess
             .into()
     } else {
         match app.state.active_route {
-            Route::Gallery => render_justified_gallery(browse_items, app.state.selected_media_id),
-            Route::Timeline => render_timeline_view(browse_items, app.state.selected_media_id),
+            Route::Gallery => {
+                render_justified_gallery(app, browse_items, app.state.selected_media_id)
+            }
+            Route::Timeline => render_timeline_view(app, browse_items, app.state.selected_media_id),
         }
     };
 
@@ -1698,6 +1911,7 @@ fn render_media_panel(app: &Librapix) -> (Element<'_, Message>, Element<'_, Mess
 }
 
 fn render_justified_gallery<'a>(
+    app: &'a Librapix,
     items: &'a [BrowseItem],
     selected_id: Option<i64>,
 ) -> Element<'a, Message> {
@@ -1734,7 +1948,8 @@ fn render_justified_gallery<'a>(
             let mut row_widget = row![].spacing(GALLERY_GAP);
             for item in &media[row_start..row_end] {
                 let portion = (item.aspect_ratio * 1000.0).max(1.0) as u16;
-                let card = render_media_card(item, selected_id == Some(item.media_id), row_height);
+                let card =
+                    render_media_card(app, item, selected_id == Some(item.media_id), row_height);
                 row_widget = row_widget.push(container(card).width(Length::FillPortion(portion)));
             }
             grid = grid.push(row_widget);
@@ -1746,18 +1961,62 @@ fn render_justified_gallery<'a>(
     .into()
 }
 
-fn render_media_card(item: &BrowseItem, selected: bool, height: f32) -> Element<'_, Message> {
-    let thumb: Element<'_, Message> = if let Some(path) = &item.thumbnail_path {
+fn render_media_card<'a>(
+    app: &'a Librapix,
+    item: &'a BrowseItem,
+    selected: bool,
+    height: f32,
+) -> Element<'a, Message> {
+    let resolved_thumb = match app.thumbnail_states.get(&item.media_id) {
+        Some(ThumbnailState::Ready(path)) => Some(path.clone()),
+        _ => item.thumbnail_path.clone(),
+    };
+    let thumb: Element<'_, Message> = if let Some(path) = &resolved_thumb {
         image(image::Handle::from_path(path))
             .width(Length::Fill)
             .height(Length::Fixed(height))
             .content_fit(ContentFit::Cover)
             .into()
     } else {
+        let placeholder_label = match app.thumbnail_states.get(&item.media_id) {
+            Some(ThumbnailState::Queued { attempt })
+            | Some(ThumbnailState::Generating { attempt }) => {
+                format!(
+                    "{} ({})",
+                    app.i18n.text(TextKey::ThumbnailRetryingLabel),
+                    attempt.saturating_add(1)
+                )
+            }
+            Some(ThumbnailState::Failed {
+                retryable,
+                last_error,
+                attempt,
+            }) => {
+                if *retryable {
+                    format!(
+                        "{} ({}/{}): {}",
+                        app.i18n.text(TextKey::ThumbnailRetryingLabel),
+                        attempt.saturating_add(1),
+                        THUMBNAIL_MAX_RETRY_ATTEMPTS,
+                        last_error
+                    )
+                } else {
+                    format!(
+                        "{}: {}",
+                        app.i18n.text(TextKey::ThumbnailFailedLabel),
+                        last_error
+                    )
+                }
+            }
+            Some(ThumbnailState::Missing) => {
+                app.i18n.text(TextKey::ThumbnailUnavailable).to_owned()
+            }
+            _ => item.title.clone(),
+        };
         container(
             column![
                 Space::new().height(Length::Fill),
-                text(item.title.clone())
+                text(placeholder_label)
                     .size(FONT_CAPTION)
                     .color(TEXT_TERTIARY),
             ]
@@ -1828,6 +2087,7 @@ fn compute_browse_stats(items: &[BrowseItem]) -> BrowseStats {
 }
 
 fn render_timeline_view<'a>(
+    app: &'a Librapix,
     items: &'a [BrowseItem],
     selected_id: Option<i64>,
 ) -> Element<'a, Message> {
@@ -1918,8 +2178,12 @@ fn render_timeline_view<'a>(
                     let mut row_widget = row![].spacing(GALLERY_GAP);
                     for item in &group_media[row_start..row_end] {
                         let portion = (item.aspect_ratio * 1000.0).max(1.0) as u16;
-                        let card =
-                            render_media_card(item, selected_id == Some(item.media_id), row_height);
+                        let card = render_media_card(
+                            app,
+                            item,
+                            selected_id == Some(item.media_id),
+                            row_height,
+                        );
                         row_widget =
                             row_widget.push(container(card).width(Length::FillPortion(portion)));
                     }
@@ -2033,8 +2297,8 @@ fn render_wrapped_filter_chips(chips: Vec<FilterChipSpec>) -> Element<'static, M
         } else {
             SPACE_SM as f32
         };
-        let would_overflow =
-            !current_row.is_empty() && (current_row_width + spacing + chip_width) > FILTER_DIALOG_CHIP_ROW_MAX_WIDTH;
+        let would_overflow = !current_row.is_empty()
+            && (current_row_width + spacing + chip_width) > FILTER_DIALOG_CHIP_ROW_MAX_WIDTH;
 
         if would_overflow {
             rows.push(current_row);
@@ -3784,7 +4048,20 @@ fn save_library_dialog(app: &mut Librapix, keep_open_for_add: bool) -> Option<Ta
     app.state.set_selected_root(Some(root_id));
 
     app.root_status = app.i18n.text(TextKey::RootActionSuccess).to_owned();
-    app.activity_status = app.i18n.text(TextKey::LoadingIndexingLabel).to_owned();
+    if matches!(mode, LibraryDialogMode::Add)
+        && app
+            .filter_source_root_id
+            .is_some_and(|active_filter| active_filter != root_id)
+    {
+        // Keep "All libraries" semantics explicit when the current filter would hide the new root.
+        app.filter_source_root_id = None;
+        let message = app
+            .i18n
+            .text(TextKey::LibraryFilterAdjustedLabel)
+            .to_owned();
+        app.browse_status = message.clone();
+        app.root_status = message;
+    }
 
     if matches!(mode, LibraryDialogMode::Add) && keep_open_for_add {
         app.library_dialog_mode = LibraryDialogMode::Add;
@@ -3797,11 +4074,7 @@ fn save_library_dialog(app: &mut Librapix, keep_open_for_add: bool) -> Option<Ta
         app.library_dialog_open = false;
     }
 
-    Some(spawn_background_work(
-        app,
-        BackgroundWorkReason::UserOrSystem,
-        BackgroundWorkMode::IndexAndProject,
-    ))
+    Some(request_reconcile(app, BackgroundWorkReason::UserOrSystem))
 }
 
 fn refresh_roots(app: &mut Librapix) {
@@ -3813,6 +4086,7 @@ fn refresh_roots(app: &mut Librapix) {
     .unwrap_or_default();
     app.state.apply(AppMessage::ReplaceLibraryRoots);
     app.state.replace_library_roots(roots);
+    ensure_valid_library_filter(app);
     refresh_ignore_rules(app);
 }
 
@@ -4650,51 +4924,22 @@ fn resolve_thumbnail(
     row: &librapix_storage::MediaReadModel,
     max_edge: u32,
 ) -> Option<PathBuf> {
-    if row.media_kind == "image" {
-        ensure_image_thumbnail(
-            thumbnails_dir,
-            &row.absolute_path,
-            row.file_size_bytes,
-            row.modified_unix_seconds,
-            max_edge,
-        )
-        .ok()
-        .map(|o| o.thumbnail_path)
-    } else if row.media_kind == "video" {
-        ensure_video_thumbnail(
-            thumbnails_dir,
-            &row.absolute_path,
-            row.file_size_bytes,
-            row.modified_unix_seconds,
-            max_edge,
-        )
-        .ok()
-        .map(|o| o.thumbnail_path)
+    if !row.media_kind.eq_ignore_ascii_case("image")
+        && !row.media_kind.eq_ignore_ascii_case("video")
+    {
+        return None;
+    }
+    let candidate = thumbnail_path(
+        thumbnails_dir,
+        &row.absolute_path,
+        row.file_size_bytes,
+        row.modified_unix_seconds,
+        max_edge,
+    );
+    if candidate.exists() {
+        Some(candidate)
     } else {
         None
-    }
-}
-
-fn populate_media_cache(
-    cache: &mut std::collections::HashMap<i64, CachedDetails>,
-    rows: &[librapix_storage::MediaReadModel],
-    thumbnails_dir: &std::path::Path,
-) {
-    cache.clear();
-    for row in rows {
-        let detail_thumbnail_path = resolve_thumbnail(thumbnails_dir, row, DETAIL_THUMB_SIZE);
-        cache.insert(
-            row.media_id,
-            CachedDetails {
-                absolute_path: row.absolute_path.clone(),
-                media_kind: row.media_kind.clone(),
-                file_size_bytes: row.file_size_bytes,
-                modified_unix_seconds: row.modified_unix_seconds,
-                width_px: row.width_px,
-                height_px: row.height_px,
-                detail_thumbnail_path,
-            },
-        );
     }
 }
 
@@ -4762,77 +5007,322 @@ fn rows_to_projection_media(rows: &[librapix_storage::MediaReadModel]) -> Vec<Pr
         .collect()
 }
 
-fn spawn_background_work(
-    app: &Librapix,
-    reason: BackgroundWorkReason,
-    mode: BackgroundWorkMode,
-) -> Task<Message> {
-    let input = BackgroundWorkInput {
-        database_file: app.runtime.database_file.clone(),
-        thumbnails_dir: app.runtime.thumbnails_dir.clone(),
-        min_file_size_bytes: app.min_file_size_bytes,
-        filter_media_kind: app.filter_media_kind.clone(),
-        filter_extension: app.filter_extension.clone(),
-        filter_tag: app.filter_tag.clone(),
-        filter_source_root_id: app.filter_source_root_id,
-        search_query: app.state.search_query.clone(),
-        active_route: app.state.active_route,
-        i18n: app.i18n,
-        selected_root_id: app.state.selected_root_id,
-        current_thumbnail_status: app.thumbnail_status.clone(),
-        current_indexing_status: app.indexing_status.clone(),
-        mode,
-        reason,
+fn set_activity_stage(
+    app: &mut Librapix,
+    key: TextKey,
+    detail_text: impl Into<String>,
+    indeterminate: bool,
+) {
+    app.activity_status = app.i18n.text(key).to_owned();
+    app.activity_progress.stage_text = app.activity_status.clone();
+    app.activity_progress.detail_text = detail_text.into();
+    app.activity_progress.indeterminate = indeterminate;
+    app.activity_progress.busy = true;
+    app.activity_progress
+        .started_at
+        .get_or_insert_with(Instant::now);
+}
+
+fn set_activity_ready(app: &mut Librapix) {
+    app.activity_status = app.i18n.text(TextKey::StageReadyLabel).to_owned();
+    app.activity_progress.stage_text = app.activity_status.clone();
+    app.activity_progress.detail_text.clear();
+    app.activity_progress.items_done = 0;
+    app.activity_progress.items_total = None;
+    app.activity_progress.roots_done = 0;
+    app.activity_progress.roots_total = None;
+    app.activity_progress.queue_depth = 0;
+    app.activity_progress.indeterminate = false;
+    app.activity_progress.busy = false;
+    app.activity_progress.started_at = None;
+    app.activity_progress.last_error = None;
+}
+
+fn projection_stage_key(app: &Librapix) -> TextKey {
+    if !app.state.search_query.trim().is_empty() {
+        TextKey::StageRefreshingSearchLabel
+    } else if matches!(app.state.active_route, Route::Timeline) {
+        TextKey::StageRefreshingTimelineLabel
+    } else {
+        TextKey::StageRefreshingGalleryLabel
+    }
+}
+
+fn merge_work_reason(
+    current: BackgroundWorkReason,
+    incoming: BackgroundWorkReason,
+) -> BackgroundWorkReason {
+    if matches!(incoming, BackgroundWorkReason::FilesystemWatch)
+        || matches!(current, BackgroundWorkReason::FilesystemWatch)
+    {
+        BackgroundWorkReason::FilesystemWatch
+    } else {
+        BackgroundWorkReason::UserOrSystem
+    }
+}
+
+fn collect_visible_media_ids_for_thumbnailing(app: &Librapix) -> Vec<i64> {
+    let mut seen = HashSet::new();
+    let mut ordered = Vec::new();
+
+    let append_items = |items: &[BrowseItem], ordered: &mut Vec<i64>, seen: &mut HashSet<i64>| {
+        for media_id in items
+            .iter()
+            .filter(|item| !item.is_group_header)
+            .map(|item| item.media_id)
+        {
+            if seen.insert(media_id) {
+                ordered.push(media_id);
+            }
+            if ordered.len() >= VISIBLE_THUMBNAIL_QUEUE_LIMIT {
+                break;
+            }
+        }
     };
 
-    Task::perform(async move { do_background_work(input) }, |result| {
-        Message::BackgroundWorkComplete(Box::new(result))
+    if !app.state.search_query.trim().is_empty() {
+        append_items(&app.search_items, &mut ordered, &mut seen);
+    }
+    if ordered.len() < VISIBLE_THUMBNAIL_QUEUE_LIMIT {
+        match app.state.active_route {
+            Route::Gallery => append_items(&app.gallery_items, &mut ordered, &mut seen),
+            Route::Timeline => append_items(&app.timeline_items, &mut ordered, &mut seen),
+        }
+    }
+
+    ordered
+}
+
+fn ensure_valid_library_filter(app: &mut Librapix) {
+    let Some(active_filter) = app.filter_source_root_id else {
+        return;
+    };
+    if app
+        .state
+        .library_roots
+        .iter()
+        .any(|root| root.id == active_filter)
+    {
+        return;
+    }
+    app.filter_source_root_id = None;
+    let message = app
+        .i18n
+        .text(TextKey::LibraryFilterResetUnavailableLabel)
+        .to_owned();
+    app.browse_status = message.clone();
+    app.root_status = message;
+}
+
+fn reconcile_selected_media_after_projection(app: &mut Librapix) {
+    let Some(selected_media_id) = app.state.selected_media_id else {
+        return;
+    };
+    if app.media_cache.contains_key(&selected_media_id) {
+        load_media_details_cached(app);
+        return;
+    }
+
+    app.state.apply(AppMessage::SetSelectedMedia);
+    app.state.set_selected_media(None);
+    load_media_details_cached(app);
+}
+
+fn start_snapshot_hydrate(app: &mut Librapix) -> Task<Message> {
+    app.background.snapshot_generation = app.background.snapshot_generation.saturating_add(1);
+    let generation = app.background.snapshot_generation;
+    set_activity_stage(app, TextKey::StageLoadingSnapshotLabel, String::new(), true);
+
+    let input = SnapshotHydrateInput {
+        generation,
+        database_file: app.runtime.database_file.clone(),
+    };
+    Task::perform(async move { do_snapshot_hydrate(input) }, |result| {
+        Message::HydrateSnapshotComplete(Box::new(result))
     })
 }
 
-fn do_background_work(input: BackgroundWorkInput) -> BackgroundWorkResult {
-    let BackgroundWorkInput {
-        database_file,
-        thumbnails_dir,
-        min_file_size_bytes,
-        filter_media_kind,
-        filter_extension,
-        filter_tag,
-        filter_source_root_id,
-        search_query,
-        active_route,
-        i18n,
-        selected_root_id,
-        current_thumbnail_status,
-        current_indexing_status,
-        mode,
-        reason,
-    } = input;
+fn do_snapshot_hydrate(input: SnapshotHydrateInput) -> SnapshotHydrateResult {
+    let mut out = SnapshotHydrateResult {
+        generation: input.generation,
+        ..Default::default()
+    };
+    let Ok(storage) = Storage::open(&input.database_file) else {
+        return out;
+    };
 
-    let mut out = BackgroundWorkResult {
-        mode,
+    out.roots = storage
+        .list_source_roots()
+        .map(map_roots_from_storage)
+        .unwrap_or_default();
+    out.ignore_rules = storage.list_ignore_rules("global").unwrap_or_default();
+    if let Some(json) = storage
+        .load_projection_snapshot(PROJECTION_SNAPSHOT_KEY)
+        .ok()
+        .flatten()
+    {
+        match serde_json::from_str::<PersistedProjectionSnapshot>(&json) {
+            Ok(snapshot) if snapshot.version == PROJECTION_SNAPSHOT_VERSION => {
+                out.snapshot = Some(snapshot);
+            }
+            Ok(snapshot) => {
+                out.snapshot_error = Some(format!(
+                    "snapshot version mismatch: expected {}, got {}",
+                    PROJECTION_SNAPSHOT_VERSION, snapshot.version
+                ));
+            }
+            Err(error) => {
+                out.snapshot_error = Some(format!("snapshot parse failed: {error}"));
+            }
+        }
+    }
+    out
+}
+
+fn apply_snapshot_hydrate_result(
+    app: &mut Librapix,
+    result: SnapshotHydrateResult,
+) -> Task<Message> {
+    if result.generation != app.background.snapshot_generation {
+        return Task::none();
+    }
+
+    app.state.apply(AppMessage::ReplaceLibraryRoots);
+    app.state.replace_library_roots(result.roots);
+    ensure_valid_library_filter(app);
+    app.ignore_rules = result.ignore_rules;
+    app.background.snapshot_loaded = true;
+    app.activity_progress.last_error = result.snapshot_error;
+
+    if let Some(snapshot) = result.snapshot {
+        app.gallery_items = snapshot.gallery_items;
+        app.timeline_items = snapshot.timeline_items;
+        app.timeline_anchors = snapshot
+            .timeline_anchors
+            .into_iter()
+            .map(|anchor| TimelineAnchor {
+                group_index: anchor.group_index,
+                label: anchor.label,
+                year: anchor.year,
+                month: anchor.month,
+                day: anchor.day,
+                item_count: anchor.item_count,
+                normalized_position: anchor.normalized_position,
+            })
+            .collect();
+        app.available_filter_tags = snapshot.available_filter_tags;
+        app.state.apply(AppMessage::ReplaceGalleryPreview);
+        app.state.replace_gallery_preview(
+            app.gallery_items
+                .iter()
+                .map(|item| item.line.clone())
+                .collect(),
+        );
+        app.state.apply(AppMessage::ReplaceTimelinePreview);
+        app.state.replace_timeline_preview(
+            app.timeline_items
+                .iter()
+                .map(|item| item.line.clone())
+                .collect(),
+        );
+        refresh_thumbnail_states_from_items(app);
+    }
+
+    if !app.background.reconcile_in_flight && !app.background.projection_in_flight {
+        set_activity_ready(app);
+    }
+    if app.background.startup_reconcile_queued {
+        app.background.startup_reconcile_queued = false;
+        return request_reconcile(app, BackgroundWorkReason::UserOrSystem);
+    }
+    Task::none()
+}
+
+fn request_reconcile(app: &mut Librapix, reason: BackgroundWorkReason) -> Task<Message> {
+    if app.background.reconcile_in_flight {
+        app.background.pending_reconcile = true;
+        app.background.pending_reconcile_reason =
+            merge_work_reason(app.background.pending_reconcile_reason, reason);
+        return Task::none();
+    }
+
+    app.background.reconcile_in_flight = true;
+    app.background.reconcile_generation = app.background.reconcile_generation.saturating_add(1);
+    app.background.pending_reconcile = false;
+    app.background.pending_reconcile_reason = reason;
+    if matches!(reason, BackgroundWorkReason::FilesystemWatch) {
+        app.background.pending_watch_paths.clear();
+    }
+    app.background.reconcile_has_media_changes = false;
+    app.background.reconcile_force_projection = !app.background.snapshot_loaded
+        || app.gallery_items.is_empty()
+        || app.timeline_items.is_empty();
+    app.background.deferred_thumbnail_items.clear();
+
+    app.background.thumbnail_generation = app.background.reconcile_generation;
+    app.background.thumbnail_queue.clear();
+    app.background.thumbnail_queued_ids.clear();
+    app.background.thumbnail_done = 0;
+    app.background.thumbnail_total = 0;
+    app.background.thumbnail_generated = 0;
+    app.background.thumbnail_reused = 0;
+    app.background.thumbnail_failed = 0;
+
+    set_activity_stage(
+        app,
+        TextKey::StageCheckingLibrariesLabel,
+        app.i18n.text(TextKey::StageScanningFilesLabel),
+        true,
+    );
+    app.activity_progress.roots_total = Some(app.state.library_roots.len());
+    app.activity_progress.roots_done = 0;
+    app.activity_progress.items_done = 0;
+    app.activity_progress.items_total = None;
+    app.activity_progress.last_error = None;
+    app.indexing_status = app.i18n.text(TextKey::StageScanningFilesLabel).to_owned();
+
+    let input = ScanJobInput {
+        generation: app.background.reconcile_generation,
         reason,
-        thumbnail_status: current_thumbnail_status,
-        indexing_status: current_indexing_status,
+        database_file: app.runtime.database_file.clone(),
+        min_file_size_bytes: app.min_file_size_bytes,
+        visible_media_ids: collect_visible_media_ids_for_thumbnailing(app),
+        i18n: app.i18n,
+    };
+    Task::perform(async move { do_scan_job(input) }, |result| {
+        Message::ScanJobComplete(Box::new(result))
+    })
+}
+
+fn do_scan_job(input: ScanJobInput) -> ScanJobResult {
+    let mut out = ScanJobResult {
+        generation: input.generation,
+        reason: input.reason,
         ..Default::default()
     };
 
-    let mut storage = match Storage::open(&database_file) {
-        Ok(s) => s,
-        Err(_) => {
-            out.indexing_status = i18n.text(TextKey::ErrorIndexingFailedLabel).to_owned();
+    let mut storage = match Storage::open(&input.database_file) {
+        Ok(storage) => storage,
+        Err(error) => {
+            out.error = Some(error.to_string());
+            out.indexing_status = input
+                .i18n
+                .text(TextKey::ErrorIndexingFailedLabel)
+                .to_owned();
             return out;
         }
     };
 
     let _ = storage.reconcile_source_root_availability();
     let _ = storage.ensure_default_ignore_rules();
-
     out.ignore_rules = storage.list_ignore_rules("global").unwrap_or_default();
-
-    let _ = selected_root_id;
+    out.roots = storage
+        .list_source_roots()
+        .map(map_roots_from_storage)
+        .unwrap_or_default();
 
     let eligible_roots = storage.list_eligible_source_roots().unwrap_or_default();
+    out.root_count = eligible_roots.len();
     let roots_for_scan: Vec<ScanRoot> = eligible_roots
         .iter()
         .map(|root| ScanRoot {
@@ -4844,152 +5334,238 @@ fn do_background_work(input: BackgroundWorkInput) -> BackgroundWorkResult {
     let patterns = storage
         .list_enabled_ignore_patterns("global")
         .unwrap_or_default();
-
-    if matches!(mode, BackgroundWorkMode::IndexAndProject) {
-        let indexing_summary = (|| -> Option<IndexingSummary> {
-            let ignore = IgnoreEngine::new(&patterns).ok()?;
-            let root_ids: Vec<i64> = roots_for_scan.iter().map(|r| r.source_root_id).collect();
-            let existing = storage
-                .list_existing_indexed_media_snapshots(&root_ids)
-                .ok()?;
-
-            let existing_for_indexer: Vec<librapix_indexer::ExistingIndexedEntry> = existing
-                .into_iter()
-                .map(|entry| librapix_indexer::ExistingIndexedEntry {
-                    source_root_id: entry.source_root_id,
-                    absolute_path: entry.absolute_path,
-                    file_size_bytes: entry.file_size_bytes,
-                    modified_unix_seconds: entry.modified_unix_seconds,
-                    width_px: entry.width_px,
-                    height_px: entry.height_px,
-                })
-                .collect();
-
-            let scan_options = ScanOptions {
-                min_file_size_bytes,
-            };
-            let result = scan_roots(
-                &roots_for_scan,
-                &ignore,
-                &existing_for_indexer,
-                &scan_options,
-            );
-
-            let writes: Vec<IndexedMediaWrite> = result
-                .candidates
-                .iter()
-                .map(|c| IndexedMediaWrite {
-                    source_root_id: c.source_root_id,
-                    absolute_path: c.absolute_path.clone(),
-                    media_kind: c.media_kind.as_str().to_owned(),
-                    file_size_bytes: c.file_size_bytes,
-                    modified_unix_seconds: c.modified_unix_seconds,
-                    width_px: c.width_px,
-                    height_px: c.height_px,
-                    metadata_status: match c.metadata_status {
-                        librapix_indexer::MetadataStatus::Ok => IndexedMetadataStatus::Ok,
-                        librapix_indexer::MetadataStatus::Partial => IndexedMetadataStatus::Partial,
-                        librapix_indexer::MetadataStatus::Unreadable => {
-                            IndexedMetadataStatus::Unreadable
-                        }
-                    },
-                })
-                .collect();
-
-            let apply_summary = storage
-                .apply_incremental_index(&writes, &result.scanned_root_ids)
-                .ok()?;
-            let _ = storage.ensure_media_kind_tags_attached();
-            let _ = storage.ensure_root_tags_exist();
-            let _ = storage.apply_root_auto_tags();
-            let _ = storage.refresh_source_root_statistics(&result.scanned_root_ids);
-
-            let read_models = storage.list_all_media_read_models().ok()?;
-
-            let mut generated = 0usize;
-            let mut reused = 0usize;
-            let mut failed = 0usize;
-            for row in &read_models {
-                let thumb = if row.media_kind == "image" {
-                    ensure_image_thumbnail(
-                        &thumbnails_dir,
-                        &row.absolute_path,
-                        row.file_size_bytes,
-                        row.modified_unix_seconds,
-                        GALLERY_THUMB_SIZE,
-                    )
-                } else if row.media_kind == "video" {
-                    ensure_video_thumbnail(
-                        &thumbnails_dir,
-                        &row.absolute_path,
-                        row.file_size_bytes,
-                        row.modified_unix_seconds,
-                        GALLERY_THUMB_SIZE,
-                    )
-                } else {
-                    continue;
-                };
-                match thumb {
-                    Ok(o) if o.generated => generated += 1,
-                    Ok(_) => reused += 1,
-                    Err(_) => failed += 1,
-                }
-            }
-
-            out.thumbnail_status = format!(
-                "{}: {}={generated}, {}={reused}, {}={failed}",
-                i18n.text(TextKey::ThumbnailStatusLabel),
-                i18n.text(TextKey::ThumbnailGeneratedLabel),
-                i18n.text(TextKey::ThumbnailReusedLabel),
-                i18n.text(TextKey::ThumbnailFailedLabel),
-            );
-
-            Some(IndexingSummary {
-                scanned_roots: result.summary.scanned_roots,
-                candidate_files: result.summary.candidate_files,
-                ignored_entries: result.summary.ignored_entries,
-                unreadable_entries: result.summary.unreadable_entries,
-                new_files: result.summary.new_files,
-                changed_files: result.summary.changed_files,
-                unchanged_files: result.summary.unchanged_files,
-                missing_marked: apply_summary.missing_marked_count,
-                read_model_count: read_models.len(),
-            })
-        })();
-
-        if indexing_summary.is_some() {
-            out.indexing_summary = indexing_summary;
-            out.indexing_status = i18n.text(TextKey::IndexingCompletedLabel).to_owned();
-        } else {
-            out.indexing_status = i18n.text(TextKey::ErrorIndexingFailedLabel).to_owned();
+    let ignore = match IgnoreEngine::new(&patterns) {
+        Ok(ignore) => ignore,
+        Err(error) => {
+            out.error = Some(error.to_string());
+            out.indexing_status = input
+                .i18n
+                .text(TextKey::ErrorIndexingFailedLabel)
+                .to_owned();
+            return out;
         }
-    }
+    };
 
+    let root_ids: Vec<i64> = roots_for_scan
+        .iter()
+        .map(|root| root.source_root_id)
+        .collect();
+    let existing = storage
+        .list_existing_indexed_media_snapshots(&root_ids)
+        .unwrap_or_default();
+    let existing_for_indexer = existing
+        .into_iter()
+        .map(|entry| librapix_indexer::ExistingIndexedEntry {
+            source_root_id: entry.source_root_id,
+            absolute_path: entry.absolute_path,
+            file_size_bytes: entry.file_size_bytes,
+            modified_unix_seconds: entry.modified_unix_seconds,
+            width_px: entry.width_px,
+            height_px: entry.height_px,
+        })
+        .collect::<Vec<_>>();
+    let scan_result = scan_roots(
+        &roots_for_scan,
+        &ignore,
+        &existing_for_indexer,
+        &ScanOptions {
+            min_file_size_bytes: input.min_file_size_bytes,
+        },
+    );
+    out.scanned_root_ids = scan_result.scanned_root_ids.clone();
+
+    let writes = scan_result
+        .candidates
+        .iter()
+        .map(|candidate| IndexedMediaWrite {
+            source_root_id: candidate.source_root_id,
+            absolute_path: candidate.absolute_path.clone(),
+            media_kind: candidate.media_kind.as_str().to_owned(),
+            file_size_bytes: candidate.file_size_bytes,
+            modified_unix_seconds: candidate.modified_unix_seconds,
+            width_px: candidate.width_px,
+            height_px: candidate.height_px,
+            metadata_status: match candidate.metadata_status {
+                librapix_indexer::MetadataStatus::Ok => IndexedMetadataStatus::Ok,
+                librapix_indexer::MetadataStatus::Partial => IndexedMetadataStatus::Partial,
+                librapix_indexer::MetadataStatus::Unreadable => IndexedMetadataStatus::Unreadable,
+            },
+        })
+        .collect::<Vec<_>>();
+
+    let apply_summary =
+        match storage.apply_incremental_index(&writes, &scan_result.scanned_root_ids) {
+            Ok(summary) => summary,
+            Err(error) => {
+                out.error = Some(error.to_string());
+                out.indexing_status = input
+                    .i18n
+                    .text(TextKey::ErrorIndexingFailedLabel)
+                    .to_owned();
+                return out;
+            }
+        };
+
+    let _ = storage.ensure_media_kind_tags_attached();
+    let _ = storage.ensure_root_tags_exist();
+    let _ = storage.apply_root_auto_tags();
+    let _ = storage.refresh_source_root_statistics(&scan_result.scanned_root_ids);
+
+    let read_model_count = storage.count_indexed_media().unwrap_or_default().max(0) as usize;
+    out.indexing_summary = Some(IndexingSummary {
+        scanned_roots: scan_result.summary.scanned_roots,
+        candidate_files: scan_result.summary.candidate_files,
+        ignored_entries: scan_result.summary.ignored_entries,
+        unreadable_entries: scan_result.summary.unreadable_entries,
+        new_files: scan_result.summary.new_files,
+        changed_files: scan_result.summary.changed_files,
+        unchanged_files: scan_result.summary.unchanged_files,
+        missing_marked: apply_summary.missing_marked_count,
+        read_model_count,
+    });
+    out.has_media_changes = scan_result.summary.new_files > 0
+        || scan_result.summary.changed_files > 0
+        || apply_summary.missing_marked_count > 0;
+    out.indexing_status = input.i18n.text(TextKey::IndexingCompletedLabel).to_owned();
+
+    let changed_paths = scan_result
+        .candidates
+        .iter()
+        .filter(|candidate| {
+            !matches!(
+                candidate.change_kind,
+                librapix_indexer::ChangeKind::Unchanged
+            )
+        })
+        .map(|candidate| candidate.absolute_path.clone())
+        .collect::<Vec<_>>();
+    let changed_rows = storage
+        .list_media_read_models_by_paths(&changed_paths)
+        .unwrap_or_default();
+    out.changed_media = changed_rows
+        .into_iter()
+        .filter(|row| {
+            row.media_kind.eq_ignore_ascii_case("image")
+                || row.media_kind.eq_ignore_ascii_case("video")
+        })
+        .map(|row| ThumbnailWorkItem {
+            generation: input.generation,
+            media_id: row.media_id,
+            absolute_path: row.absolute_path,
+            media_kind: row.media_kind,
+            file_size_bytes: row.file_size_bytes,
+            modified_unix_seconds: row.modified_unix_seconds,
+            attempt: 0,
+        })
+        .collect();
+
+    out.visible_media = storage
+        .list_media_read_models_by_ids(&input.visible_media_ids)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|row| {
+            row.media_kind.eq_ignore_ascii_case("image")
+                || row.media_kind.eq_ignore_ascii_case("video")
+        })
+        .map(|row| ThumbnailWorkItem {
+            generation: input.generation,
+            media_id: row.media_id,
+            absolute_path: row.absolute_path,
+            media_kind: row.media_kind,
+            file_size_bytes: row.file_size_bytes,
+            modified_unix_seconds: row.modified_unix_seconds,
+            attempt: 0,
+        })
+        .collect();
+    out
+}
+
+fn request_projection_refresh(app: &mut Librapix, reason: BackgroundWorkReason) -> Task<Message> {
+    if app.background.reconcile_in_flight {
+        app.background.pending_projection_reason = if app.background.pending_projection {
+            merge_work_reason(app.background.pending_projection_reason, reason)
+        } else {
+            reason
+        };
+        app.background.pending_projection = true;
+        set_activity_stage(app, projection_stage_key(app), String::new(), true);
+        return Task::none();
+    }
+    if app.background.projection_in_flight {
+        app.background.pending_projection_reason = if app.background.pending_projection {
+            merge_work_reason(app.background.pending_projection_reason, reason)
+        } else {
+            reason
+        };
+        app.background.pending_projection = true;
+        set_activity_stage(app, projection_stage_key(app), String::new(), true);
+        return Task::none();
+    }
+    start_projection_refresh(app, reason)
+}
+
+fn start_projection_refresh(app: &mut Librapix, reason: BackgroundWorkReason) -> Task<Message> {
+    app.background.projection_in_flight = true;
+    app.background.pending_projection = false;
+    app.background.pending_projection_reason = reason;
+    app.background.projection_generation = app.background.projection_generation.saturating_add(1);
+    set_activity_stage(app, projection_stage_key(app), String::new(), true);
+
+    let input = ProjectionJobInput {
+        generation: app.background.projection_generation,
+        reason,
+        database_file: app.runtime.database_file.clone(),
+        thumbnails_dir: app.runtime.thumbnails_dir.clone(),
+        filter_media_kind: app.filter_media_kind.clone(),
+        filter_extension: app.filter_extension.clone(),
+        filter_tag: app.filter_tag.clone(),
+        filter_source_root_id: app.filter_source_root_id,
+        search_query: app.state.search_query.clone(),
+        active_route: app.state.active_route,
+        i18n: app.i18n,
+    };
+    Task::perform(async move { do_projection_job(input) }, |result| {
+        Message::ProjectionJobComplete(Box::new(result))
+    })
+}
+
+fn do_projection_job(input: ProjectionJobInput) -> ProjectionJobResult {
+    let mut out = ProjectionJobResult {
+        generation: input.generation,
+        reason: input.reason,
+        ..Default::default()
+    };
+
+    let Ok(storage) = Storage::open(&input.database_file) else {
+        return out;
+    };
     let _ = storage.reconcile_source_root_availability();
+    let _ = storage.ensure_default_ignore_rules();
+    out.ignore_rules = storage.list_ignore_rules("global").unwrap_or_default();
     out.roots = storage
         .list_source_roots()
         .map(map_roots_from_storage)
         .unwrap_or_default();
 
     let all_rows = storage
-        .list_all_media_read_models_filtered(filter_source_root_id)
+        .list_all_media_read_models_filtered(input.filter_source_root_id)
         .unwrap_or_default();
     out.available_filter_tags = collect_available_filter_tags(&all_rows);
-    let active_tag_filter = filter_tag.as_ref().filter(|selected| {
+    let active_tag_filter = input.filter_tag.as_ref().filter(|selected| {
         out.available_filter_tags
             .iter()
             .any(|existing| existing.eq_ignore_ascii_case(selected))
     });
+
     let row_lookup = all_rows
         .iter()
         .map(|row| (row.media_id, row))
-        .collect::<std::collections::HashMap<_, _>>();
-
+        .collect::<HashMap<_, _>>();
     let media = rows_to_projection_media(&all_rows);
 
     let gallery_query = GalleryQuery {
-        media_kind: filter_media_kind.clone(),
-        extension: filter_extension.clone(),
+        media_kind: input.filter_media_kind.clone(),
+        extension: input.filter_extension.clone(),
         tag: active_tag_filter.cloned(),
         sort: GallerySort::ModifiedDesc,
         limit: all_rows.len(),
@@ -4998,119 +5574,130 @@ fn do_background_work(input: BackgroundWorkInput) -> BackgroundWorkResult {
     out.gallery_items = project_gallery(&media, &gallery_query)
         .into_iter()
         .map(|item| {
-            let matched_row = row_lookup.get(&item.media_id).copied();
-            if let Some(row) = matched_row {
-                browse_item_from_row(i18n, &thumbnails_dir, row)
-            } else {
-                let original = PathBuf::from(&item.absolute_path);
-                BrowseItem {
-                    media_id: item.media_id,
-                    title: original
-                        .file_name()
-                        .map(|s| s.to_string_lossy().to_string())
-                        .unwrap_or_else(|| original.display().to_string()),
-                    thumbnail_path: None,
-                    media_kind: item.media_kind.clone(),
-                    metadata_line: build_card_metadata_line(
-                        i18n,
-                        &item.media_kind,
-                        None,
-                        None,
-                        None,
-                    ),
-                    is_group_header: false,
-                    line: format!("{} [{}]", original.display(), item.media_kind),
-                    aspect_ratio: 1.5,
-                    group_image_count: None,
-                    group_video_count: None,
-                }
-            }
+            row_lookup.get(&item.media_id).copied().map_or_else(
+                || {
+                    let path = PathBuf::from(item.absolute_path);
+                    BrowseItem {
+                        media_id: item.media_id,
+                        title: path
+                            .file_name()
+                            .map(|name| name.to_string_lossy().to_string())
+                            .unwrap_or_else(|| path.display().to_string()),
+                        thumbnail_path: None,
+                        media_kind: item.media_kind.clone(),
+                        metadata_line: build_card_metadata_line(
+                            input.i18n,
+                            &item.media_kind,
+                            None,
+                            None,
+                            None,
+                        ),
+                        is_group_header: false,
+                        line: format!("{} [{}]", path.display(), item.media_kind),
+                        aspect_ratio: 1.5,
+                        group_image_count: None,
+                        group_video_count: None,
+                    }
+                },
+                |row| browse_item_from_row(input.i18n, &input.thumbnails_dir, row),
+            )
         })
         .collect();
+    out.gallery_preview_lines = out
+        .gallery_items
+        .iter()
+        .map(|item| item.line.clone())
+        .collect();
 
-    out.gallery_preview_lines = out.gallery_items.iter().map(|i| i.line.clone()).collect();
-
-    let filtered_media: Vec<ProjectionMedia> = media
+    let filtered_media = media
         .into_iter()
-        .filter(|m| {
-            filter_media_kind
+        .filter(|item| {
+            input
+                .filter_media_kind
                 .as_ref()
-                .is_none_or(|k| m.media_kind.eq_ignore_ascii_case(k))
+                .is_none_or(|kind| item.media_kind.eq_ignore_ascii_case(kind))
         })
-        .filter(|m| {
-            filter_extension.as_ref().is_none_or(|ext| {
-                m.absolute_path
+        .filter(|item| {
+            input.filter_extension.as_ref().is_none_or(|ext| {
+                item.absolute_path
                     .rsplit('.')
                     .next()
-                    .is_some_and(|e| e.eq_ignore_ascii_case(ext))
+                    .is_some_and(|value| value.eq_ignore_ascii_case(ext))
             })
         })
-        .filter(|m| projection_matches_tag_filter(m, active_tag_filter.map(|tag| tag.as_str())))
-        .collect();
+        .filter(|item| {
+            projection_matches_tag_filter(item, active_tag_filter.map(|tag| tag.as_str()))
+        })
+        .collect::<Vec<_>>();
 
     let buckets = project_timeline(&filtered_media, TimelineGranularity::Day);
     out.timeline_anchors = build_timeline_anchors(&buckets);
-    let mut timeline_lines = Vec::new();
-    let mut timeline_items = Vec::new();
-    for bucket in buckets {
-        let image_count = bucket
-            .items
-            .iter()
-            .filter(|i| i.media_kind.eq_ignore_ascii_case("image"))
-            .count();
-        let video_count = bucket
-            .items
-            .iter()
-            .filter(|i| i.media_kind.eq_ignore_ascii_case("video"))
-            .count();
-        timeline_lines.push(format!("{} ({})", bucket.label, bucket.item_count));
-        timeline_items.push(BrowseItem {
-            media_id: 0,
-            title: bucket.label.clone(),
-            thumbnail_path: None,
-            media_kind: String::new(),
-            metadata_line: String::new(),
-            is_group_header: true,
-            line: bucket.label.clone(),
-            aspect_ratio: 1.5,
-            group_image_count: Some(image_count),
-            group_video_count: Some(video_count),
-        });
-        for tl_item in bucket.items {
-            let matched_row = row_lookup.get(&tl_item.media_id).copied();
-            if let Some(row) = matched_row {
-                let mut item = browse_item_from_row(i18n, &thumbnails_dir, row);
-                item.line = format!("{} [{}]", tl_item.absolute_path, tl_item.media_kind);
-                timeline_items.push(item);
-            } else {
-                timeline_items.push(BrowseItem {
-                    media_id: tl_item.media_id,
-                    title: PathBuf::from(&tl_item.absolute_path)
-                        .file_name()
-                        .map(|s| s.to_string_lossy().to_string())
-                        .unwrap_or(tl_item.absolute_path.clone()),
-                    thumbnail_path: None,
-                    media_kind: tl_item.media_kind.clone(),
-                    metadata_line: build_card_metadata_line(
-                        i18n,
-                        &tl_item.media_kind,
-                        None,
-                        None,
-                        None,
-                    ),
-                    is_group_header: false,
-                    line: format!("{} [{}]", tl_item.absolute_path, tl_item.media_kind),
-                    aspect_ratio: 1.5,
-                    group_image_count: None,
-                    group_video_count: None,
-                });
-            }
-        }
-    }
-    out.timeline_items = timeline_items;
-    out.timeline_preview_lines = timeline_lines;
+    out.timeline_items = buckets
+        .into_iter()
+        .flat_map(|bucket| {
+            let image_count = bucket
+                .items
+                .iter()
+                .filter(|item| item.media_kind.eq_ignore_ascii_case("image"))
+                .count();
+            let video_count = bucket
+                .items
+                .iter()
+                .filter(|item| item.media_kind.eq_ignore_ascii_case("video"))
+                .count();
+            let mut rows = vec![BrowseItem {
+                media_id: 0,
+                title: bucket.label.clone(),
+                thumbnail_path: None,
+                media_kind: String::new(),
+                metadata_line: String::new(),
+                is_group_header: true,
+                line: bucket.label.clone(),
+                aspect_ratio: 1.5,
+                group_image_count: Some(image_count),
+                group_video_count: Some(video_count),
+            }];
+            rows.extend(bucket.items.into_iter().map(|item| {
+                row_lookup.get(&item.media_id).copied().map_or_else(
+                    || BrowseItem {
+                        media_id: item.media_id,
+                        title: PathBuf::from(&item.absolute_path)
+                            .file_name()
+                            .map(|name| name.to_string_lossy().to_string())
+                            .unwrap_or(item.absolute_path.clone()),
+                        thumbnail_path: None,
+                        media_kind: item.media_kind.clone(),
+                        metadata_line: build_card_metadata_line(
+                            input.i18n,
+                            &item.media_kind,
+                            None,
+                            None,
+                            None,
+                        ),
+                        is_group_header: false,
+                        line: format!("{} [{}]", item.absolute_path, item.media_kind),
+                        aspect_ratio: 1.5,
+                        group_image_count: None,
+                        group_video_count: None,
+                    },
+                    |row| {
+                        let mut browse =
+                            browse_item_from_row(input.i18n, &input.thumbnails_dir, row);
+                        browse.line = format!("{} [{}]", item.absolute_path, item.media_kind);
+                        browse
+                    },
+                )
+            }));
+            rows
+        })
+        .collect();
+    out.timeline_preview_lines = out
+        .timeline_items
+        .iter()
+        .map(|item| item.line.clone())
+        .collect();
 
-    if !search_query.trim().is_empty() {
+    if !input.search_query.trim().is_empty() {
         let docs = all_rows
             .iter()
             .map(|row| SearchDocument {
@@ -5129,30 +5716,29 @@ fn do_background_work(input: BackgroundWorkInput) -> BackgroundWorkResult {
         let hits = strategy.search(
             &docs,
             &SearchQuery {
-                text: search_query.clone(),
+                text: input.search_query.clone(),
                 limit: all_rows.len(),
             },
         );
         out.search_items = hits
             .into_iter()
-            .filter_map(|hit| row_lookup.get(&hit.media_id).copied().map(|row| (hit, row)))
-            .filter(|(_, row)| {
-                filter_media_kind
+            .filter_map(|hit| row_lookup.get(&hit.media_id).copied())
+            .filter(|row| {
+                input
+                    .filter_media_kind
                     .as_ref()
-                    .is_none_or(|k| row.media_kind.eq_ignore_ascii_case(k))
+                    .is_none_or(|kind| row.media_kind.eq_ignore_ascii_case(kind))
             })
-            .filter(|(_, row)| {
-                filter_extension.as_ref().is_none_or(|ext| {
+            .filter(|row| {
+                input.filter_extension.as_ref().is_none_or(|ext| {
                     row.absolute_path
                         .extension()
-                        .and_then(|e| e.to_str())
-                        .is_some_and(|e| e.eq_ignore_ascii_case(ext))
+                        .and_then(|value| value.to_str())
+                        .is_some_and(|value| value.eq_ignore_ascii_case(ext))
                 })
             })
-            .filter(|(_, row)| {
-                row_matches_tag_filter(row, active_tag_filter.map(|tag| tag.as_str()))
-            })
-            .map(|(_hit, row)| browse_item_from_row(i18n, &thumbnails_dir, row))
+            .filter(|row| row_matches_tag_filter(row, active_tag_filter.map(|tag| tag.as_str())))
+            .map(|row| browse_item_from_row(input.i18n, &input.thumbnails_dir, row))
             .collect::<Vec<_>>();
         out.search_preview_lines = out
             .search_items
@@ -5161,18 +5747,634 @@ fn do_background_work(input: BackgroundWorkInput) -> BackgroundWorkResult {
             .collect();
     }
 
-    populate_media_cache(&mut out.media_cache, &all_rows, &thumbnails_dir);
+    let projected_ids = out
+        .gallery_items
+        .iter()
+        .chain(out.timeline_items.iter())
+        .chain(out.search_items.iter())
+        .filter(|item| !item.is_group_header)
+        .map(|item| item.media_id)
+        .collect::<HashSet<_>>();
+    out.media_cache = projected_ids
+        .iter()
+        .filter_map(|media_id| row_lookup.get(media_id).copied())
+        .map(|row| {
+            (
+                row.media_id,
+                CachedDetails {
+                    absolute_path: row.absolute_path.clone(),
+                    media_kind: row.media_kind.clone(),
+                    file_size_bytes: row.file_size_bytes,
+                    modified_unix_seconds: row.modified_unix_seconds,
+                    width_px: row.width_px,
+                    height_px: row.height_px,
+                    detail_thumbnail_path: resolve_thumbnail(
+                        &input.thumbnails_dir,
+                        row,
+                        DETAIL_THUMB_SIZE,
+                    ),
+                },
+            )
+        })
+        .collect();
 
-    if search_query.trim().is_empty() {
-        out.browse_status = if matches!(active_route, Route::Timeline) {
-            i18n.text(TextKey::TimelineCompletedLabel).to_owned()
+    out.browse_status = if input.search_query.trim().is_empty() {
+        if matches!(input.active_route, Route::Timeline) {
+            input.i18n.text(TextKey::TimelineCompletedLabel).to_owned()
         } else {
-            i18n.text(TextKey::GalleryCompletedLabel).to_owned()
-        };
+            input.i18n.text(TextKey::GalleryCompletedLabel).to_owned()
+        }
     } else {
-        out.browse_status = i18n.text(TextKey::SearchCompletedLabel).to_owned();
+        input.i18n.text(TextKey::SearchCompletedLabel).to_owned()
+    };
+
+    if input.filter_media_kind.is_none()
+        && input.filter_extension.is_none()
+        && input.filter_source_root_id.is_none()
+        && active_tag_filter.is_none()
+        && input.search_query.trim().is_empty()
+    {
+        let snapshot = PersistedProjectionSnapshot {
+            version: PROJECTION_SNAPSHOT_VERSION,
+            gallery_items: out.gallery_items.clone(),
+            timeline_items: out.timeline_items.clone(),
+            timeline_anchors: out
+                .timeline_anchors
+                .iter()
+                .map(|anchor| PersistedTimelineAnchor {
+                    group_index: anchor.group_index,
+                    label: anchor.label.clone(),
+                    year: anchor.year,
+                    month: anchor.month,
+                    day: anchor.day,
+                    item_count: anchor.item_count,
+                    normalized_position: anchor.normalized_position,
+                })
+                .collect(),
+            available_filter_tags: out.available_filter_tags.clone(),
+            updated_unix_seconds: chrono::Utc::now().timestamp(),
+        };
+        out.snapshot_payload = serde_json::to_string(&snapshot).ok();
     }
+
     out
+}
+
+fn request_post_projection_thumbnail_work(app: &mut Librapix) -> Task<Message> {
+    let mut items = Vec::new();
+    items.extend(app.background.deferred_thumbnail_items.clone());
+    app.background.deferred_thumbnail_items.clear();
+    items.extend(visible_thumbnail_candidates(app));
+    enqueue_thumbnail_items(app, items);
+    app.background.thumbnail_total = app
+        .background
+        .thumbnail_total
+        .max(app.background.thumbnail_done + app.background.thumbnail_queue.len());
+    run_next_thumbnail_batch_if_idle(app)
+}
+
+fn visible_thumbnail_candidates(app: &Librapix) -> Vec<ThumbnailWorkItem> {
+    let items = if !app.state.search_query.trim().is_empty() {
+        &app.search_items
+    } else if matches!(app.state.active_route, Route::Timeline) {
+        &app.timeline_items
+    } else {
+        &app.gallery_items
+    };
+
+    items
+        .iter()
+        .filter(|item| !item.is_group_header)
+        .take(VISIBLE_THUMBNAIL_QUEUE_LIMIT)
+        .filter_map(|item| {
+            app.media_cache
+                .get(&item.media_id)
+                .map(|details| (item, details))
+        })
+        .filter(|(_, details)| {
+            details.media_kind.eq_ignore_ascii_case("image")
+                || details.media_kind.eq_ignore_ascii_case("video")
+        })
+        .map(|(item, details)| ThumbnailWorkItem {
+            generation: app.background.thumbnail_generation,
+            media_id: item.media_id,
+            absolute_path: details.absolute_path.clone(),
+            media_kind: details.media_kind.clone(),
+            file_size_bytes: details.file_size_bytes,
+            modified_unix_seconds: details.modified_unix_seconds,
+            attempt: 0,
+        })
+        .collect()
+}
+
+fn queue_selected_media_thumbnail(app: &mut Librapix) -> Task<Message> {
+    let Some(media_id) = app.state.selected_media_id else {
+        return Task::none();
+    };
+    let details = if let Some(cached) = app.media_cache.get(&media_id) {
+        cached.clone()
+    } else {
+        let Some(row) = with_storage(&app.runtime, |storage| {
+            storage.get_media_read_model_by_id(media_id)
+        })
+        .ok()
+        .flatten() else {
+            return Task::none();
+        };
+        let details = CachedDetails {
+            absolute_path: row.absolute_path.clone(),
+            media_kind: row.media_kind.clone(),
+            file_size_bytes: row.file_size_bytes,
+            modified_unix_seconds: row.modified_unix_seconds,
+            width_px: row.width_px,
+            height_px: row.height_px,
+            detail_thumbnail_path: resolve_thumbnail(
+                &app.runtime.thumbnails_dir,
+                &row,
+                DETAIL_THUMB_SIZE,
+            ),
+        };
+        app.media_cache.insert(media_id, details.clone());
+        details
+    };
+    let item = ThumbnailWorkItem {
+        generation: app.background.thumbnail_generation,
+        media_id,
+        absolute_path: details.absolute_path,
+        media_kind: details.media_kind,
+        file_size_bytes: details.file_size_bytes,
+        modified_unix_seconds: details.modified_unix_seconds,
+        attempt: 0,
+    };
+    enqueue_thumbnail_items(app, vec![item]);
+    run_next_thumbnail_batch_if_idle(app)
+}
+
+fn enqueue_thumbnail_items(app: &mut Librapix, items: Vec<ThumbnailWorkItem>) {
+    for item in items {
+        if item.generation != app.background.thumbnail_generation {
+            continue;
+        }
+        if app.background.thumbnail_queued_ids.contains(&item.media_id) {
+            continue;
+        }
+        if let Some(ThumbnailState::Ready(_)) = app.thumbnail_states.get(&item.media_id) {
+            continue;
+        }
+        if let Some(ThumbnailState::Generating { .. }) = app.thumbnail_states.get(&item.media_id) {
+            continue;
+        }
+        if matches!(
+            app.thumbnail_states.get(&item.media_id),
+            Some(ThumbnailState::Failed {
+                retryable: false,
+                ..
+            })
+        ) {
+            continue;
+        }
+        app.background.thumbnail_queued_ids.insert(item.media_id);
+        app.background.thumbnail_queue.push_back(item.clone());
+        app.thumbnail_states.insert(
+            item.media_id,
+            ThumbnailState::Queued {
+                attempt: item.attempt,
+            },
+        );
+    }
+    app.activity_progress.queue_depth = app.background.thumbnail_queue.len();
+}
+
+fn run_next_thumbnail_batch_if_idle(app: &mut Librapix) -> Task<Message> {
+    if app.background.thumbnail_in_flight || app.background.thumbnail_queue.is_empty() {
+        return Task::none();
+    }
+
+    app.background.thumbnail_in_flight = true;
+    let mut batch = Vec::new();
+    for _ in 0..THUMBNAIL_BATCH_SIZE {
+        let Some(item) = app.background.thumbnail_queue.pop_front() else {
+            break;
+        };
+        app.thumbnail_states.insert(
+            item.media_id,
+            ThumbnailState::Generating {
+                attempt: item.attempt,
+            },
+        );
+        batch.push(item);
+    }
+
+    app.activity_progress.items_total =
+        Some(app.background.thumbnail_total.max(
+            app.background.thumbnail_done + batch.len() + app.background.thumbnail_queue.len(),
+        ));
+    app.activity_progress.items_done = app.background.thumbnail_done;
+    app.activity_progress.queue_depth = app.background.thumbnail_queue.len() + batch.len();
+    set_activity_stage(
+        app,
+        TextKey::StageGeneratingThumbnailsLabel,
+        String::new(),
+        false,
+    );
+
+    let input = ThumbnailBatchInput {
+        generation: app.background.thumbnail_generation,
+        thumbnails_dir: app.runtime.thumbnails_dir.clone(),
+        items: batch,
+    };
+    Task::perform(async move { do_thumbnail_batch(input) }, |result| {
+        Message::ThumbnailBatchComplete(Box::new(result))
+    })
+}
+
+fn do_thumbnail_batch(input: ThumbnailBatchInput) -> ThumbnailBatchResult {
+    let mut out = ThumbnailBatchResult {
+        generation: input.generation,
+        ..Default::default()
+    };
+
+    for item in input.items {
+        let outcome = if item.media_kind.eq_ignore_ascii_case("image") {
+            ensure_image_thumbnail(
+                &input.thumbnails_dir,
+                &item.absolute_path,
+                item.file_size_bytes,
+                item.modified_unix_seconds,
+                GALLERY_THUMB_SIZE,
+            )
+        } else if item.media_kind.eq_ignore_ascii_case("video") {
+            ensure_video_thumbnail(
+                &input.thumbnails_dir,
+                &item.absolute_path,
+                item.file_size_bytes,
+                item.modified_unix_seconds,
+                GALLERY_THUMB_SIZE,
+            )
+        } else {
+            continue;
+        };
+
+        match outcome {
+            Ok(thumbnail) => {
+                if thumbnail.generated {
+                    out.generated += 1;
+                } else {
+                    out.reused += 1;
+                }
+                out.outcomes.push(ThumbnailWorkOutcome {
+                    media_id: item.media_id,
+                    state: ThumbnailState::Ready(thumbnail.thumbnail_path.clone()),
+                    thumbnail_path: Some(thumbnail.thumbnail_path),
+                });
+            }
+            Err(error) => {
+                let retryable = thumbnail_error_retryable(&error);
+                out.failed += 1;
+                out.outcomes.push(ThumbnailWorkOutcome {
+                    media_id: item.media_id,
+                    state: ThumbnailState::Failed {
+                        retryable,
+                        last_error: error.to_string(),
+                        attempt: item.attempt,
+                    },
+                    thumbnail_path: None,
+                });
+                if retryable && item.attempt.saturating_add(1) < THUMBNAIL_MAX_RETRY_ATTEMPTS {
+                    out.retry_items.push(ThumbnailWorkItem {
+                        generation: item.generation,
+                        media_id: item.media_id,
+                        absolute_path: item.absolute_path,
+                        media_kind: item.media_kind,
+                        file_size_bytes: item.file_size_bytes,
+                        modified_unix_seconds: item.modified_unix_seconds,
+                        attempt: item.attempt.saturating_add(1),
+                    });
+                }
+            }
+        }
+    }
+
+    out
+}
+
+fn thumbnail_error_retryable(error: &librapix_thumbnails::ThumbnailError) -> bool {
+    match error {
+        librapix_thumbnails::ThumbnailError::Io(io) => !io
+            .to_string()
+            .to_ascii_lowercase()
+            .contains("ffmpeg may not be installed"),
+        librapix_thumbnails::ThumbnailError::Image(_) => true,
+    }
+}
+
+fn item_retry_generation_is_current(app: &Librapix, item: &ThumbnailWorkItem) -> bool {
+    item.generation == app.background.thumbnail_generation
+}
+
+fn thumbnail_retry_delay_ms(attempt: u8) -> u64 {
+    let exponent = u32::from(attempt.saturating_sub(1)).min(4);
+    THUMBNAIL_RETRY_DELAY_MS.saturating_mul(2u64.saturating_pow(exponent))
+}
+
+fn on_filesystem_changed(app: &mut Librapix, paths: Vec<PathBuf>) -> Task<Message> {
+    if paths.is_empty() {
+        return Task::none();
+    }
+    app.background.pending_watch_paths.extend(paths);
+    app.activity_progress.detail_text = format!(
+        "{}: {}",
+        app.i18n.text(TextKey::ProgressQueueLabel),
+        app.background.pending_watch_paths.len()
+    );
+    request_reconcile(app, BackgroundWorkReason::FilesystemWatch)
+}
+
+fn apply_scan_job_result(app: &mut Librapix, result: ScanJobResult) -> Task<Message> {
+    if result.generation != app.background.reconcile_generation {
+        return Task::none();
+    }
+    let reason = result.reason;
+
+    app.state.apply(AppMessage::ReplaceLibraryRoots);
+    app.state.replace_library_roots(result.roots);
+    ensure_valid_library_filter(app);
+    app.ignore_rules = result.ignore_rules;
+    app.indexing_status = result.indexing_status;
+    app.activity_progress.roots_total = Some(result.root_count);
+    app.activity_progress.roots_done = result.scanned_root_ids.len();
+    if let Some(summary) = result.indexing_summary {
+        app.state.apply(AppMessage::RecordIndexingSummary);
+        app.state.record_indexing_summary(summary);
+    }
+
+    if let Some(error) = result.error {
+        app.activity_progress.last_error = Some(error);
+    }
+    app.background.reconcile_has_media_changes = result.has_media_changes;
+    let mut deferred_thumbnail_items = Vec::new();
+    let mut deferred_ids = HashSet::new();
+    for item in result
+        .changed_media
+        .into_iter()
+        .chain(result.visible_media.into_iter())
+    {
+        if deferred_ids.insert(item.media_id) {
+            deferred_thumbnail_items.push(item);
+        }
+    }
+    app.background.deferred_thumbnail_items = deferred_thumbnail_items;
+    app.background.thumbnail_total = app.background.deferred_thumbnail_items.len();
+    app.background.thumbnail_done = 0;
+    app.background.thumbnail_generated = 0;
+    app.background.thumbnail_reused = 0;
+    app.background.thumbnail_failed = 0;
+    if app.library_stats_dialog_open
+        && let Some(root_id) = app.library_stats_root_id
+    {
+        app.library_stats_record = with_storage(&app.runtime, |storage| {
+            storage.get_source_root_statistics(root_id)
+        })
+        .ok()
+        .flatten();
+    }
+
+    if app.background.reconcile_has_media_changes
+        || app.background.reconcile_force_projection
+        || app.background.pending_projection
+    {
+        return request_projection_refresh(app, reason);
+    }
+
+    let thumbnail_task = request_post_projection_thumbnail_work(app);
+    if app.background.thumbnail_in_flight {
+        return thumbnail_task;
+    }
+
+    app.background.reconcile_in_flight = false;
+    finalize_background_flow(app)
+}
+
+fn apply_projection_job_result(app: &mut Librapix, result: ProjectionJobResult) -> Task<Message> {
+    if result.generation != app.background.projection_generation {
+        return Task::none();
+    }
+    app.background.projection_in_flight = false;
+
+    let previous_media_ids = app.media_cache.keys().copied().collect::<HashSet<_>>();
+    let announcement = if matches!(result.reason, BackgroundWorkReason::FilesystemWatch) {
+        build_new_media_announcement(app.i18n, &previous_media_ids, &result.media_cache)
+    } else {
+        None
+    };
+
+    app.state.apply(AppMessage::ReplaceLibraryRoots);
+    app.state.replace_library_roots(result.roots);
+    ensure_valid_library_filter(app);
+    app.ignore_rules = result.ignore_rules;
+
+    app.state.apply(AppMessage::ReplaceSearchPreview);
+    app.state
+        .replace_search_preview(result.search_preview_lines);
+    app.search_items = result.search_items;
+
+    app.state.apply(AppMessage::ReplaceGalleryPreview);
+    app.state
+        .replace_gallery_preview(result.gallery_preview_lines);
+    app.gallery_items = result.gallery_items;
+
+    app.state.apply(AppMessage::ReplaceTimelinePreview);
+    app.state
+        .replace_timeline_preview(result.timeline_preview_lines);
+    app.timeline_items = result.timeline_items;
+    app.timeline_anchors = result.timeline_anchors;
+    sync_timeline_scrub_selection(app, app.timeline_scrub_value);
+
+    app.media_cache = result.media_cache;
+    refresh_thumbnail_states_from_items(app);
+    reconcile_selected_media_after_projection(app);
+    app.available_filter_tags = result.available_filter_tags;
+    if app.filter_tag.as_ref().is_some_and(|tag| {
+        !app.available_filter_tags
+            .iter()
+            .any(|existing| existing.eq_ignore_ascii_case(tag))
+    }) {
+        app.filter_tag = None;
+    }
+    app.browse_status = result.browse_status;
+
+    if let Some(announcement) = announcement {
+        app.new_media_announcement = Some(announcement);
+    }
+
+    if let Some(payload) = result.snapshot_payload {
+        let _ = with_storage(&app.runtime, |storage| {
+            storage.upsert_projection_snapshot(PROJECTION_SNAPSHOT_KEY, &payload)
+        });
+    }
+    if app.library_stats_dialog_open
+        && let Some(root_id) = app.library_stats_root_id
+    {
+        app.library_stats_record = with_storage(&app.runtime, |storage| {
+            storage.get_source_root_statistics(root_id)
+        })
+        .ok()
+        .flatten();
+    }
+
+    let thumbnail_task = request_post_projection_thumbnail_work(app);
+    if app.background.thumbnail_in_flight {
+        return thumbnail_task;
+    }
+
+    if app.background.reconcile_in_flight {
+        app.background.reconcile_in_flight = false;
+    }
+    finalize_background_flow(app)
+}
+
+fn apply_thumbnail_batch_result(app: &mut Librapix, result: ThumbnailBatchResult) -> Task<Message> {
+    if result.generation != app.background.thumbnail_generation {
+        return Task::none();
+    }
+
+    app.background.thumbnail_in_flight = false;
+    app.background.thumbnail_generated += result.generated;
+    app.background.thumbnail_reused += result.reused;
+    app.background.thumbnail_failed += result.failed;
+
+    for outcome in result.outcomes {
+        app.background
+            .thumbnail_queued_ids
+            .remove(&outcome.media_id);
+        if let ThumbnailState::Failed { last_error, .. } = &outcome.state {
+            app.activity_progress.last_error = Some(last_error.clone());
+        }
+        app.thumbnail_states
+            .insert(outcome.media_id, outcome.state.clone());
+        if let Some(path) = outcome.thumbnail_path {
+            patch_thumbnail_path(&mut app.gallery_items, outcome.media_id, &path);
+            patch_thumbnail_path(&mut app.timeline_items, outcome.media_id, &path);
+            patch_thumbnail_path(&mut app.search_items, outcome.media_id, &path);
+            if let Some(details) = app.media_cache.get_mut(&outcome.media_id) {
+                details.detail_thumbnail_path = Some(path.clone());
+            }
+            if app.state.selected_media_id == Some(outcome.media_id) {
+                app.details_preview_path = Some(path);
+            }
+        }
+        app.background.thumbnail_done = app.background.thumbnail_done.saturating_add(1);
+    }
+
+    let retry_tasks = result
+        .retry_items
+        .into_iter()
+        .map(|item| {
+            let delay_ms = thumbnail_retry_delay_ms(item.attempt);
+            Task::perform(
+                async move {
+                    std::thread::sleep(Duration::from_millis(delay_ms));
+                    item
+                },
+                Message::ThumbnailRetryEnqueue,
+            )
+        })
+        .collect::<Vec<_>>();
+
+    app.thumbnail_status = format!(
+        "{}: {}={}, {}={}, {}={}",
+        app.i18n.text(TextKey::ThumbnailStatusLabel),
+        app.i18n.text(TextKey::ThumbnailGeneratedLabel),
+        app.background.thumbnail_generated,
+        app.i18n.text(TextKey::ThumbnailReusedLabel),
+        app.background.thumbnail_reused,
+        app.i18n.text(TextKey::ThumbnailFailedLabel),
+        app.background.thumbnail_failed,
+    );
+
+    app.activity_progress.items_total = Some(
+        app.background
+            .thumbnail_total
+            .max(app.background.thumbnail_done),
+    );
+    app.activity_progress.items_done = app.background.thumbnail_done;
+    app.activity_progress.queue_depth = app.background.thumbnail_queue.len();
+
+    let mut tasks = Vec::new();
+    let next_batch = run_next_thumbnail_batch_if_idle(app);
+    if app.background.thumbnail_in_flight {
+        tasks.push(next_batch);
+    } else {
+        if app.background.reconcile_in_flight {
+            app.background.reconcile_in_flight = false;
+            tasks.push(finalize_background_flow(app));
+        } else if !app.background.projection_in_flight {
+            set_activity_ready(app);
+        }
+    }
+
+    tasks.extend(retry_tasks);
+    if tasks.is_empty() {
+        Task::none()
+    } else {
+        Task::batch(tasks)
+    }
+}
+
+fn patch_thumbnail_path(items: &mut [BrowseItem], media_id: i64, path: &Path) {
+    for item in items.iter_mut().filter(|item| item.media_id == media_id) {
+        item.thumbnail_path = Some(path.to_path_buf());
+    }
+}
+
+fn refresh_thumbnail_states_from_items(app: &mut Librapix) {
+    let mut seen_ids = HashSet::new();
+    for item in app
+        .gallery_items
+        .iter()
+        .chain(app.timeline_items.iter())
+        .chain(app.search_items.iter())
+        .filter(|item| !item.is_group_header)
+    {
+        seen_ids.insert(item.media_id);
+        if matches!(
+            app.thumbnail_states.get(&item.media_id),
+            Some(ThumbnailState::Queued { .. }) | Some(ThumbnailState::Generating { .. })
+        ) {
+            continue;
+        }
+        if let Some(path) = &item.thumbnail_path {
+            app.thumbnail_states
+                .insert(item.media_id, ThumbnailState::Ready(path.clone()));
+        } else {
+            app.thumbnail_states
+                .insert(item.media_id, ThumbnailState::Missing);
+        }
+    }
+    app.thumbnail_states.retain(|media_id, state| {
+        seen_ids.contains(media_id)
+            || matches!(
+                state,
+                ThumbnailState::Queued { .. } | ThumbnailState::Generating { .. }
+            )
+    });
+}
+
+fn finalize_background_flow(app: &mut Librapix) -> Task<Message> {
+    if app.background.pending_reconcile {
+        let reason = app.background.pending_reconcile_reason;
+        app.background.pending_reconcile = false;
+        return request_reconcile(app, reason);
+    }
+    if app.background.pending_projection {
+        let reason = app.background.pending_projection_reason;
+        app.background.pending_projection = false;
+        return request_projection_refresh(app, reason);
+    }
+    if !app.background.thumbnail_in_flight && !app.background.projection_in_flight {
+        set_activity_ready(app);
+    }
+    Task::none()
 }
 
 fn refresh_diagnostics(app: &mut Librapix) {
@@ -5206,7 +6408,8 @@ fn refresh_diagnostics(app: &mut Librapix) {
         app.timeline_scrub_value, app.timeline_scrub_anchor_index, app.timeline_scrubbing
     ));
     lines.push(format!(
-        "filter: kind={:?}, ext={:?}, tag={:?}",
+        "filter: root={:?}, kind={:?}, ext={:?}, tag={:?}",
+        app.filter_source_root_id,
         app.filter_media_kind.as_deref().unwrap_or("all"),
         app.filter_extension.as_deref().unwrap_or("all"),
         app.filter_tag.as_deref().unwrap_or("all")
@@ -5217,14 +6420,46 @@ fn refresh_diagnostics(app: &mut Librapix) {
         update_check_status_label(&app.update_check_state)
     ));
     lines.push(format!("browse status: {}", app.browse_status));
+    lines.push(format!(
+        "activity: stage='{}', busy={}, indeterminate={}, queue={}",
+        app.activity_progress.stage_text,
+        app.activity_progress.busy,
+        app.activity_progress.indeterminate,
+        app.activity_progress.queue_depth
+    ));
+    lines.push(format!(
+        "work generations: snapshot={}, reconcile={}, projection={}, thumbnail={}",
+        app.background.snapshot_generation,
+        app.background.reconcile_generation,
+        app.background.projection_generation,
+        app.background.thumbnail_generation
+    ));
+    lines.push(format!(
+        "work in-flight: reconcile={}, projection={}, thumbnail={}",
+        app.background.reconcile_in_flight,
+        app.background.projection_in_flight,
+        app.background.thumbnail_in_flight
+    ));
+    lines.push(format!(
+        "watch pending paths: {}",
+        app.background.pending_watch_paths.len()
+    ));
+    lines.push(format!(
+        "thumbnails: done={}, total={}, generated={}, reused={}, failed={}",
+        app.background.thumbnail_done,
+        app.background.thumbnail_total,
+        app.background.thumbnail_generated,
+        app.background.thumbnail_reused,
+        app.background.thumbnail_failed
+    ));
 
     app.diagnostics_lines = lines;
 }
 
 fn build_new_media_announcement(
     i18n: Translator,
-    previous_media_ids: &std::collections::HashSet<i64>,
-    current_media_cache: &std::collections::HashMap<i64, CachedDetails>,
+    previous_media_ids: &HashSet<i64>,
+    current_media_cache: &HashMap<i64, CachedDetails>,
 ) -> Option<NewMediaAnnouncement> {
     let mut new_items = current_media_cache
         .iter()
@@ -5268,77 +6503,6 @@ fn build_new_media_announcement(
         absolute_path: details.absolute_path.clone(),
         additional_count: new_items.len().saturating_sub(1),
     })
-}
-
-fn apply_background_result(app: &mut Librapix, result: BackgroundWorkResult) {
-    let previous_media_ids = app
-        .media_cache
-        .keys()
-        .copied()
-        .collect::<std::collections::HashSet<_>>();
-    let announcement = if matches!(result.reason, BackgroundWorkReason::FilesystemWatch) {
-        build_new_media_announcement(app.i18n, &previous_media_ids, &result.media_cache)
-    } else {
-        None
-    };
-
-    app.state.apply(AppMessage::ReplaceLibraryRoots);
-    app.state.replace_library_roots(result.roots);
-
-    if let Some(summary) = result.indexing_summary {
-        app.state.apply(AppMessage::RecordIndexingSummary);
-        app.state.record_indexing_summary(summary);
-    }
-
-    app.thumbnail_status = result.thumbnail_status;
-    app.indexing_status = result.indexing_status;
-
-    app.state.apply(AppMessage::ReplaceSearchPreview);
-    app.state
-        .replace_search_preview(result.search_preview_lines);
-    app.search_items = result.search_items;
-
-    app.state.apply(AppMessage::ReplaceGalleryPreview);
-    app.state
-        .replace_gallery_preview(result.gallery_preview_lines);
-    app.gallery_items = result.gallery_items;
-
-    app.state.apply(AppMessage::ReplaceTimelinePreview);
-    app.state
-        .replace_timeline_preview(result.timeline_preview_lines);
-    app.timeline_items = result.timeline_items;
-    app.timeline_anchors = result.timeline_anchors;
-    sync_timeline_scrub_selection(app, app.timeline_scrub_value);
-
-    app.media_cache = result.media_cache;
-    app.available_filter_tags = result.available_filter_tags;
-    if app.filter_tag.as_ref().is_some_and(|tag| {
-        !app.available_filter_tags
-            .iter()
-            .any(|existing| existing.eq_ignore_ascii_case(tag))
-    }) {
-        app.filter_tag = None;
-    }
-    app.browse_status = result.browse_status;
-    app.ignore_rules = result.ignore_rules;
-    if matches!(result.mode, BackgroundWorkMode::IndexAndProject)
-        && app.state.search_query.trim().is_empty()
-    {
-        app.search_items.clear();
-    }
-    if let Some(announcement) = announcement {
-        app.new_media_announcement = Some(announcement);
-    }
-    if app.library_stats_dialog_open
-        && let Some(root_id) = app.library_stats_root_id
-    {
-        app.library_stats_record = with_storage(&app.runtime, |storage| {
-            storage.get_source_root_statistics(root_id)
-        })
-        .ok()
-        .flatten();
-    }
-    app.activity_status.clear();
 }
 
 fn with_storage<T>(
@@ -5610,6 +6774,112 @@ mod tests {
         assert_eq!(
             projection_loading_key("", Route::Gallery),
             TextKey::LoadingGalleryLabel
+        );
+    }
+
+    #[test]
+    fn ensure_valid_library_filter_resets_missing_root() {
+        let mut app = Librapix::default();
+        app.state.replace_library_roots(vec![LibraryRootView {
+            id: 7,
+            normalized_path: PathBuf::from("/tmp/librapix-root-7"),
+            lifecycle: RootLifecycle::Active,
+            display_name: Some("Root 7".to_owned()),
+        }]);
+        app.filter_source_root_id = Some(999);
+
+        ensure_valid_library_filter(&mut app);
+
+        assert_eq!(app.filter_source_root_id, None);
+        assert!(app.root_status.contains("Showing all libraries"));
+    }
+
+    #[test]
+    fn collect_visible_media_ids_prefers_search_then_route_and_dedupes() {
+        let mut app = Librapix::default();
+        app.state.search_query = "boss".to_owned();
+        app.state.active_route = Route::Gallery;
+
+        app.search_items = vec![
+            BrowseItem {
+                media_id: 10,
+                title: "a".to_owned(),
+                thumbnail_path: None,
+                media_kind: "image".to_owned(),
+                metadata_line: String::new(),
+                is_group_header: false,
+                line: String::new(),
+                aspect_ratio: 1.0,
+                group_image_count: None,
+                group_video_count: None,
+            },
+            BrowseItem {
+                media_id: 11,
+                title: "b".to_owned(),
+                thumbnail_path: None,
+                media_kind: "image".to_owned(),
+                metadata_line: String::new(),
+                is_group_header: false,
+                line: String::new(),
+                aspect_ratio: 1.0,
+                group_image_count: None,
+                group_video_count: None,
+            },
+        ];
+        app.gallery_items = vec![
+            BrowseItem {
+                media_id: 11,
+                title: "dup".to_owned(),
+                thumbnail_path: None,
+                media_kind: "image".to_owned(),
+                metadata_line: String::new(),
+                is_group_header: false,
+                line: String::new(),
+                aspect_ratio: 1.0,
+                group_image_count: None,
+                group_video_count: None,
+            },
+            BrowseItem {
+                media_id: 12,
+                title: "c".to_owned(),
+                thumbnail_path: None,
+                media_kind: "video".to_owned(),
+                metadata_line: String::new(),
+                is_group_header: false,
+                line: String::new(),
+                aspect_ratio: 1.0,
+                group_image_count: None,
+                group_video_count: None,
+            },
+        ];
+
+        let visible = collect_visible_media_ids_for_thumbnailing(&app);
+        assert_eq!(visible, vec![10, 11, 12]);
+    }
+
+    #[test]
+    fn thumbnail_retry_delay_uses_bounded_backoff() {
+        assert_eq!(thumbnail_retry_delay_ms(1), 1_200);
+        assert_eq!(thumbnail_retry_delay_ms(2), 2_400);
+        assert_eq!(thumbnail_retry_delay_ms(3), 4_800);
+        assert_eq!(thumbnail_retry_delay_ms(6), 19_200);
+    }
+
+    #[test]
+    fn projection_pending_reason_prefers_filesystem_watch() {
+        let mut app = Librapix::default();
+        app.background.reconcile_in_flight = true;
+
+        let _ = request_projection_refresh(&mut app, BackgroundWorkReason::UserOrSystem);
+        assert_eq!(
+            app.background.pending_projection_reason,
+            BackgroundWorkReason::UserOrSystem
+        );
+
+        let _ = request_projection_refresh(&mut app, BackgroundWorkReason::FilesystemWatch);
+        assert_eq!(
+            app.background.pending_projection_reason,
+            BackgroundWorkReason::FilesystemWatch
         );
     }
 }

@@ -80,6 +80,11 @@ All notable changes to this project are documented in this file.
 - Fixed startup responsiveness regression after embedded-asset migration by caching image/SVG handles in static lazy storage instead of rebuilding handles in render paths.
 - New-file detected dialog now uses the same content-sized modal behavior as other dialogs, removing extra bottom gap below actions.
 
+### Fixed
+- Corrected staged-runtime activity state transitions so completed reconcile/projection/thumbnail flows reliably return to `Ready` instead of staying stuck on stale busy labels (for example `Refreshing gallery`).
+- Fixed reconcile-to-projection handoff to clear reconcile in-flight state before starting projection, preventing dead-end pending projection states.
+- Fixed stale/superseded thumbnail batch completion handling to release the thumbnail in-flight lock and resume current-generation queued thumbnail work.
+
 ### Added
 - Branding integration: blue logo in app header, GitHub link button, asset-based icons throughout UI.
 - `assets` module for centralized asset path resolution.

@@ -32,6 +32,24 @@
 - Prevention guidance
   - Validate filter state after root mutations and preserve explicit “All means all roots” semantics.
 
+## Activity status stays stuck on "Refreshing gallery" after background work
+
+- Symptoms
+  - Header activity can remain busy on `Refreshing gallery` (or another stage label) even after indexing/projection/thumbnail work has already settled.
+  - UI appears idle, but status never returns to `Ready`.
+- Affected area
+  - Staged runtime coordinator transitions (`scan -> projection` handoff and thumbnail generation lock handling).
+- Confirmed cause
+  - Reconcile completion could queue projection without clearing `reconcile_in_flight`, leaving projection effectively pending forever.
+  - Superseded thumbnail batch results were ignored without releasing `thumbnail_in_flight`, blocking the current thumbnail queue from resuming.
+- Resolution
+  - Reconcile completion now clears reconcile in-flight state before starting projection refresh.
+  - Stale thumbnail batch completions now release the in-flight thumbnail lock and immediately resume the current queue when items are pending.
+  - Final idle transition now requires no reconcile/projection/thumbnail work in-flight and no queued thumbnail items.
+- Prevention guidance
+  - Treat every state-machine early return path as a transition point: in-flight flags must be cleared or handed off explicitly.
+  - Keep stale-generation result handlers responsible for lock cleanup where cancellation is cooperative rather than preemptive.
+
 ## Update chip stays on "Updates" and does not show release state
 
 - Symptoms

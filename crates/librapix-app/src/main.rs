@@ -6143,7 +6143,14 @@ fn apply_scan_job_result(app: &mut Librapix, result: ScanJobResult) -> Task<Mess
         || app.background.reconcile_force_projection
         || app.background.pending_projection
     {
-        return request_projection_refresh(app, reason);
+        let projection_reason = if app.background.pending_projection {
+            merge_work_reason(app.background.pending_projection_reason, reason)
+        } else {
+            reason
+        };
+        app.background.reconcile_in_flight = false;
+        app.background.pending_projection = false;
+        return request_projection_refresh(app, projection_reason);
     }
 
     let thumbnail_task = request_post_projection_thumbnail_work(app);
@@ -6235,7 +6242,15 @@ fn apply_projection_job_result(app: &mut Librapix, result: ProjectionJobResult) 
 
 fn apply_thumbnail_batch_result(app: &mut Librapix, result: ThumbnailBatchResult) -> Task<Message> {
     if result.generation != app.background.thumbnail_generation {
-        return Task::none();
+        // A superseded batch completed after a newer generation was requested.
+        // Release the in-flight lock and continue the current generation queue.
+        app.background.thumbnail_in_flight = false;
+        app.activity_progress.queue_depth = app.background.thumbnail_queue.len();
+        let next_batch = run_next_thumbnail_batch_if_idle(app);
+        if app.background.thumbnail_in_flight {
+            return next_batch;
+        }
+        return finalize_background_flow(app);
     }
 
     app.background.thumbnail_in_flight = false;
@@ -6307,9 +6322,9 @@ fn apply_thumbnail_batch_result(app: &mut Librapix, result: ThumbnailBatchResult
     } else {
         if app.background.reconcile_in_flight {
             app.background.reconcile_in_flight = false;
+        }
+        if !app.background.projection_in_flight {
             tasks.push(finalize_background_flow(app));
-        } else if !app.background.projection_in_flight {
-            set_activity_ready(app);
         }
     }
 
@@ -6371,7 +6386,11 @@ fn finalize_background_flow(app: &mut Librapix) -> Task<Message> {
         app.background.pending_projection = false;
         return request_projection_refresh(app, reason);
     }
-    if !app.background.thumbnail_in_flight && !app.background.projection_in_flight {
+    if !app.background.reconcile_in_flight
+        && !app.background.thumbnail_in_flight
+        && !app.background.projection_in_flight
+        && app.background.thumbnail_queue.is_empty()
+    {
         set_activity_ready(app);
     }
     Task::none()
@@ -6880,6 +6899,88 @@ mod tests {
         assert_eq!(
             app.background.pending_projection_reason,
             BackgroundWorkReason::FilesystemWatch
+        );
+    }
+
+    #[test]
+    fn scan_result_starts_projection_and_clears_reconcile_handoff() {
+        let mut app = Librapix::default();
+        app.background.reconcile_generation = 5;
+        app.background.reconcile_in_flight = true;
+        app.background.pending_projection = true;
+        app.background.pending_projection_reason = BackgroundWorkReason::UserOrSystem;
+
+        let result = ScanJobResult {
+            generation: 5,
+            reason: BackgroundWorkReason::FilesystemWatch,
+            indexing_status: "done".to_owned(),
+            has_media_changes: true,
+            ..Default::default()
+        };
+
+        let _ = apply_scan_job_result(&mut app, result);
+
+        assert!(!app.background.reconcile_in_flight);
+        assert!(app.background.projection_in_flight);
+        assert!(!app.background.pending_projection);
+        assert_eq!(
+            app.background.pending_projection_reason,
+            BackgroundWorkReason::FilesystemWatch
+        );
+    }
+
+    #[test]
+    fn stale_thumbnail_completion_releases_lock_and_resumes_queue() {
+        let mut app = Librapix::default();
+        let media_id = 42;
+        app.background.thumbnail_generation = 9;
+        app.background.thumbnail_in_flight = true;
+        app.background.thumbnail_total = 1;
+        app.background.thumbnail_queue.push_back(ThumbnailWorkItem {
+            generation: 9,
+            media_id,
+            absolute_path: PathBuf::from("/tmp/current.png"),
+            media_kind: "image".to_owned(),
+            file_size_bytes: 10,
+            modified_unix_seconds: Some(123),
+            attempt: 0,
+        });
+        app.background.thumbnail_queued_ids.insert(media_id);
+        app.thumbnail_states
+            .insert(media_id, ThumbnailState::Queued { attempt: 0 });
+
+        let stale = ThumbnailBatchResult {
+            generation: 8,
+            ..Default::default()
+        };
+
+        let _ = apply_thumbnail_batch_result(&mut app, stale);
+
+        assert!(app.background.thumbnail_in_flight);
+        assert!(app.background.thumbnail_queue.is_empty());
+        assert!(matches!(
+            app.thumbnail_states.get(&media_id),
+            Some(ThumbnailState::Generating { attempt: 0 })
+        ));
+    }
+
+    #[test]
+    fn finalize_background_flow_keeps_busy_while_reconcile_running() {
+        let mut app = Librapix::default();
+        set_activity_stage(
+            &mut app,
+            TextKey::StageRefreshingGalleryLabel,
+            String::new(),
+            true,
+        );
+        app.background.reconcile_in_flight = true;
+
+        let _ = finalize_background_flow(&mut app);
+
+        assert!(app.activity_progress.busy);
+        assert_eq!(
+            app.activity_status,
+            app.i18n.text(TextKey::StageRefreshingGalleryLabel)
         );
     }
 }

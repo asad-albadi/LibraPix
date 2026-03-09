@@ -10,8 +10,8 @@
 - [x] docs reconciliation
 - [x] verification loop (`fmt`, `check`, `clippy`, `test`)
 - [x] smoke run (`cargo run -p librapix-app`)
-- [ ] clean working tree
-- [ ] commit creation
+- [x] clean working tree
+- [x] commit creation
 
 Notes:
 - Smoke run validated launch/build/runtime start in the current environment; interactive GUI walkthrough remains a manual check on a desktop session.

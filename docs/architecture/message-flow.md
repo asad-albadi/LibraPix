@@ -91,7 +91,7 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
     - Phase A: `start_snapshot_hydrate` loads persisted browse snapshot payload (`projection_snapshots`) plus roots/ignore rules for immediate render.
     - Phase B: queued reconcile (`request_reconcile`) runs scan/index/projection/thumbnails in background after hydrate is applied.
   - Startup restore also schedules a non-blocking GitHub latest-release check task.
-  - UI remains interactive while background work proceeds; activity status shown in header.
+  - UI remains interactive while background work proceeds; activity status shown in the sidebar runtime panel.
   - Snapshot and reconcile completions are generation-guarded; stale completions are ignored.
   - Snapshot parse/version failures fall back to empty snapshot hydration and continue with reconcile.
 - Release update check flow

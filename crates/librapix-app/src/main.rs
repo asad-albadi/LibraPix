@@ -113,6 +113,7 @@ enum Message {
     OpenGitHub,
     UpdateChipPressed,
     UpdateCheckTick,
+    ActivityAnimationTick,
     UpdateCheckCompleted(UpdateCheckTaskResult),
     ToggleFilterDialog,
     OpenSettings,
@@ -162,6 +163,13 @@ struct ActivityProgressState {
     indeterminate: bool,
     started_at: Option<Instant>,
     last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ActivityIndicatorMode {
+    Idle,
+    Determinate { total: usize, done: usize },
+    Indeterminate,
 }
 
 #[derive(Debug, Clone)]
@@ -403,6 +411,7 @@ struct Librapix {
     last_click_time: Option<Instant>,
     activity_status: String,
     activity_progress: ActivityProgressState,
+    activity_animation_frame: u8,
     filter_media_kind: Option<String>,
     filter_extension: Option<String>,
     filter_tag: Option<String>,
@@ -526,6 +535,7 @@ const GITHUB_LATEST_RELEASE_API_URL: &str =
     "https://api.github.com/repos/asad-albadi/LibraPix/releases/latest";
 const GITHUB_RELEASES_PAGE_URL: &str = "https://github.com/asad-albadi/LibraPix/releases";
 const UPDATE_CHECK_TICK_INTERVAL: Duration = Duration::from_secs(60);
+const ACTIVITY_ANIMATION_INTERVAL: Duration = Duration::from_millis(140);
 const AUTO_UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 const MANUAL_UPDATE_CHECK_COOLDOWN: Duration = Duration::from_secs(5 * 60);
 const PROJECTION_SNAPSHOT_KEY: &str = "default";
@@ -579,6 +589,7 @@ impl Default for Librapix {
             last_click_time: None,
             activity_status: String::new(),
             activity_progress: ActivityProgressState::default(),
+            activity_animation_frame: 0,
             filter_media_kind: None,
             filter_extension: None,
             filter_tag: None,
@@ -641,6 +652,14 @@ struct WatchSubscriptionConfig {
 fn subscription(app: &Librapix) -> Subscription<Message> {
     let keyboard_subscription = keyboard::listen().map(Message::KeyboardEvent);
     let update_tick_subscription = Subscription::run(update_check_tick_stream);
+    let activity_animation_subscription = if matches!(
+        activity_indicator_mode(&app.activity_progress),
+        ActivityIndicatorMode::Indeterminate
+    ) {
+        Subscription::run(activity_animation_tick_stream)
+    } else {
+        Subscription::none()
+    };
 
     let roots = app
         .state
@@ -650,15 +669,18 @@ fn subscription(app: &Librapix) -> Subscription<Message> {
         .map(|root| root.normalized_path.clone())
         .collect::<Vec<_>>();
 
-    if roots.is_empty() {
-        Subscription::batch(vec![keyboard_subscription, update_tick_subscription])
-    } else {
-        Subscription::batch(vec![
-            keyboard_subscription,
-            update_tick_subscription,
-            Subscription::run_with(WatchSubscriptionConfig { roots }, watch_filesystem),
-        ])
+    let mut subscriptions = vec![
+        keyboard_subscription,
+        update_tick_subscription,
+        activity_animation_subscription,
+    ];
+    if !roots.is_empty() {
+        subscriptions.push(Subscription::run_with(
+            WatchSubscriptionConfig { roots },
+            watch_filesystem,
+        ));
     }
+    Subscription::batch(subscriptions)
 }
 
 fn update_check_tick_stream() -> impl iced::futures::Stream<Item = Message> + use<> {
@@ -669,6 +691,18 @@ fn update_check_tick_stream() -> impl iced::futures::Stream<Item = Message> + us
         loop {
             std::thread::sleep(UPDATE_CHECK_TICK_INTERVAL);
             let _ = output.send(Message::UpdateCheckTick).await;
+        }
+    })
+}
+
+fn activity_animation_tick_stream() -> impl iced::futures::Stream<Item = Message> + use<> {
+    use iced::futures::sink::SinkExt;
+    use iced::stream;
+
+    stream::channel(1, async move |mut output| {
+        loop {
+            std::thread::sleep(ACTIVITY_ANIMATION_INTERVAL);
+            let _ = output.send(Message::ActivityAnimationTick).await;
         }
     })
 }
@@ -788,6 +822,7 @@ fn message_event_label(msg: &Message) -> String {
         Message::OpenGitHub => "OpenGitHub".into(),
         Message::UpdateChipPressed => "UpdateChipPressed".into(),
         Message::UpdateCheckTick => "UpdateCheckTick".into(),
+        Message::ActivityAnimationTick => "ActivityAnimationTick".into(),
         Message::UpdateCheckCompleted(result) => {
             format!("UpdateCheckCompleted({:?})", result.trigger)
         }
@@ -1143,6 +1178,9 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
                 return start_update_check(app, UpdateCheckTrigger::Automatic);
             }
         }
+        Message::ActivityAnimationTick => {
+            app.activity_animation_frame = app.activity_animation_frame.wrapping_add(1);
+        }
         Message::UpdateCheckCompleted(result) => {
             apply_update_check_result(app, result);
         }
@@ -1477,7 +1515,6 @@ fn view(app: &Librapix) -> Element<'_, Message> {
             .align_y(iced::Alignment::Center),
             Space::new().width(Length::Fill),
             update_chip,
-            render_activity_status(app),
             settings_btn,
             about_btn,
             github_btn,
@@ -1599,15 +1636,28 @@ fn view(app: &Librapix) -> Element<'_, Message> {
     ]
     .spacing(SPACE_SM);
 
+    let sidebar_content = scrollable(
+        column![nav_section, h_divider(), library_section]
+            .spacing(SPACE_LG)
+            .padding(SPACE_LG as u16),
+    )
+    .height(Length::Fill);
+    let sidebar_status = container(
+        column![
+            section_heading(app.i18n.text(TextKey::IndexingSectionLabel)),
+            render_activity_status(app),
+        ]
+        .spacing(SPACE_XS),
+    )
+    .width(Length::Fill)
+    .padding([SPACE_SM as u16, SPACE_MD as u16]);
     let sidebar = container(
-        scrollable(
-            column![nav_section, h_divider(), library_section,]
-                .spacing(SPACE_LG)
-                .padding(SPACE_LG as u16),
-        )
-        .height(Length::Fill),
+        column![sidebar_content, h_divider(), sidebar_status]
+            .height(Length::Fill)
+            .spacing(SPACE_XS),
     )
     .width(Length::Fixed(SIDEBAR_WIDTH))
+    .height(Length::Fill)
     .style(sidebar_style);
 
     // ── Media pane ──
@@ -1716,22 +1766,20 @@ fn view(app: &Librapix) -> Element<'_, Message> {
 
 fn render_activity_status(app: &Librapix) -> Element<'_, Message> {
     let progress = &app.activity_progress;
-    if !progress.busy {
-        return text(app.activity_status.clone())
-            .size(FONT_CAPTION)
-            .color(ACCENT)
-            .into();
-    }
-
-    let progress_line = if let Some(total) = progress.items_total {
-        format!(
+    let indicator_mode = activity_indicator_mode(progress);
+    let progress_line = match indicator_mode {
+        ActivityIndicatorMode::Determinate { total, done } => format!(
             "{}: {} / {}",
             app.i18n.text(TextKey::ProgressItemsLabel),
-            progress.items_done,
+            done,
             total
-        )
-    } else {
-        format!("{}: --", app.i18n.text(TextKey::ProgressItemsLabel))
+        ),
+        ActivityIndicatorMode::Indeterminate => {
+            format!("{}: --", app.i18n.text(TextKey::ProgressItemsLabel))
+        }
+        ActivityIndicatorMode::Idle => {
+            format!("{}: 0 / 0", app.i18n.text(TextKey::ProgressItemsLabel))
+        }
     };
     let queue_line = format!(
         "{}: {}",
@@ -1746,26 +1794,61 @@ fn render_activity_status(app: &Librapix) -> Element<'_, Message> {
             total
         )
     });
-    let bar: Element<'_, Message> = if let Some(total) = progress.items_total {
-        let capped_total = total.max(1) as f32;
-        let done = progress.items_done.min(total) as f32;
-        container(progress_bar(0.0..=capped_total, done))
-            .height(Length::Fixed(4.0))
-            .into()
-    } else {
-        container(progress_bar(
-            0.0..=1.0,
-            if progress.indeterminate { 0.35 } else { 0.0 },
-        ))
-        .height(Length::Fixed(4.0))
-        .into()
-    };
+    let (indicator, stage_label): (Element<'_, Message>, Element<'_, Message>) =
+        match indicator_mode {
+            ActivityIndicatorMode::Determinate { total, done } => {
+                let capped_total = total.max(1) as f32;
+                let done = done.min(total) as f32;
+                (
+                    container(progress_bar(0.0..=capped_total, done))
+                        .height(Length::Fixed(4.0))
+                        .into(),
+                    text(progress.stage_text.clone())
+                        .size(FONT_CAPTION)
+                        .color(ACCENT)
+                        .into(),
+                )
+            }
+            ActivityIndicatorMode::Indeterminate => {
+                let spinner = activity_spinner_frame(app.activity_animation_frame);
+                (
+                    row![
+                        text(spinner).size(FONT_BODY).color(ACCENT),
+                        text(indeterminate_activity_label(
+                            app.i18n.text(TextKey::ActivityWorkingLabel),
+                            app.activity_animation_frame,
+                        ))
+                        .size(FONT_CAPTION)
+                        .color(TEXT_SECONDARY),
+                    ]
+                    .spacing(SPACE_XS)
+                    .align_y(iced::Alignment::Center)
+                    .into(),
+                    text(progress.stage_text.clone())
+                        .size(FONT_CAPTION)
+                        .color(ACCENT)
+                        .into(),
+                )
+            }
+            ActivityIndicatorMode::Idle => {
+                return container(
+                    row![
+                        text("\u{25CF}").size(FONT_CAPTION).color(SUCCESS_COLOR),
+                        text(app.activity_status.clone())
+                            .size(FONT_CAPTION)
+                            .color(TEXT_SECONDARY),
+                    ]
+                    .spacing(SPACE_XS)
+                    .align_y(iced::Alignment::Center),
+                )
+                .width(Length::Fill)
+                .into();
+            }
+        };
 
     let mut lines = column![
-        text(progress.stage_text.clone())
-            .size(FONT_CAPTION)
-            .color(ACCENT),
-        bar,
+        stage_label,
+        indicator,
         text(progress_line).size(FONT_CAPTION).color(TEXT_TERTIARY),
     ]
     .spacing(SPACE_2XS);
@@ -1792,7 +1875,30 @@ fn render_activity_status(app: &Librapix) -> Element<'_, Message> {
         );
     }
 
-    container(lines).width(Length::Fixed(220.0)).into()
+    container(lines).width(Length::Fill).into()
+}
+
+fn activity_indicator_mode(progress: &ActivityProgressState) -> ActivityIndicatorMode {
+    if !progress.busy {
+        return ActivityIndicatorMode::Idle;
+    }
+    if let Some(total) = progress.items_total {
+        return ActivityIndicatorMode::Determinate {
+            total,
+            done: progress.items_done.min(total),
+        };
+    }
+    ActivityIndicatorMode::Indeterminate
+}
+
+fn activity_spinner_frame(frame: u8) -> &'static str {
+    const FRAMES: [&str; 4] = ["\u{25D0}", "\u{25D3}", "\u{25D1}", "\u{25D2}"];
+    FRAMES[(frame as usize) % FRAMES.len()]
+}
+
+fn indeterminate_activity_label(base_label: &str, frame: u8) -> String {
+    let dots = (frame as usize % 3) + 1;
+    format!("{base_label}{}", ".".repeat(dots))
 }
 
 fn render_media_panel(app: &Librapix) -> (Element<'_, Message>, Element<'_, Message>) {
@@ -5072,6 +5178,9 @@ fn set_activity_stage(
     app.activity_progress.detail_text = detail_text.into();
     app.activity_progress.indeterminate = indeterminate;
     app.activity_progress.busy = true;
+    if indeterminate {
+        app.activity_animation_frame = 0;
+    }
     app.activity_progress
         .started_at
         .get_or_insert_with(Instant::now);
@@ -5090,6 +5199,7 @@ fn set_activity_ready(app: &mut Librapix) {
     app.activity_progress.busy = false;
     app.activity_progress.started_at = None;
     app.activity_progress.last_error = None;
+    app.activity_animation_frame = 0;
 }
 
 fn projection_stage_key(app: &Librapix) -> TextKey {
@@ -6937,6 +7047,43 @@ mod tests {
         assert_eq!(thumbnail_retry_delay_ms(2), 2_400);
         assert_eq!(thumbnail_retry_delay_ms(3), 4_800);
         assert_eq!(thumbnail_retry_delay_ms(6), 19_200);
+    }
+
+    #[test]
+    fn activity_indicator_mode_is_idle_when_not_busy() {
+        let progress = ActivityProgressState::default();
+        assert_eq!(
+            activity_indicator_mode(&progress),
+            ActivityIndicatorMode::Idle
+        );
+    }
+
+    #[test]
+    fn activity_indicator_mode_is_determinate_when_total_known() {
+        let progress = ActivityProgressState {
+            busy: true,
+            items_done: 7,
+            items_total: Some(20),
+            ..ActivityProgressState::default()
+        };
+        assert_eq!(
+            activity_indicator_mode(&progress),
+            ActivityIndicatorMode::Determinate { total: 20, done: 7 }
+        );
+    }
+
+    #[test]
+    fn activity_indicator_mode_is_indeterminate_when_total_unknown() {
+        let progress = ActivityProgressState {
+            busy: true,
+            indeterminate: true,
+            items_total: None,
+            ..ActivityProgressState::default()
+        };
+        assert_eq!(
+            activity_indicator_mode(&progress),
+            ActivityIndicatorMode::Indeterminate
+        );
     }
 
     #[test]

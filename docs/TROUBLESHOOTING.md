@@ -461,7 +461,7 @@
   - `RunSearchQuery`, `RunGalleryProjection`, `RunTimelineProjection`, and filter-change handlers previously executed read-model hydration + projection/search + thumbnail resolution synchronously in the UI update path.
 - Resolution
   - Projection and search refresh now run through background work mode (`Task::perform`) instead of synchronous update execution.
-  - Header activity status now reports projection/search loading while background work runs.
+  - Sidebar runtime activity status now reports projection/search loading while background work runs.
 - Prevention guidance
   - Treat large read-model projection/search workloads as background tasks, not immediate update-path work.
   - Keep update handlers limited to state transitions and task scheduling.

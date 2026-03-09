@@ -35,12 +35,13 @@ All notable changes to this project are documented in this file.
 - Removed `packaging/windows/` scripts and packaging README from the repository.
 
 ### Changed
+- Moved runtime activity/progress status panel from header into a dedicated bottom section of the left sidebar to keep header controls focused and reduce header clutter.
 - Filesystem watcher now emits deduplicated event batches immediately; coalescing is coordinated in runtime state, removing tail-event drops from time-only debounce behavior.
 - Reconcile scan stage now carries visible media IDs and returns targeted thumbnail candidates even when projection rebuild is skipped (improves startup snapshot thumbnail recovery).
 - Projection apply now reconciles selected-media identity against refreshed projected cache to prevent stale details state.
 - Add-library flow now preserves explicit “All libraries” semantics by resetting root filter only when an active filter would hide the newly added library.
 - Storage batched path/ID read-model lookup APIs are now chunked under SQLite parameter limits for large incremental updates.
-- Activity header progress now includes library counters and last-error context while background work is in progress.
+- Activity runtime progress now includes library counters and last-error context while background work is in progress.
 - Reworked background runtime flow in `librapix-app` from a single monolithic `BackgroundWorkComplete` replacement to staged jobs (`snapshot hydrate`, `scan/index`, `projection refresh`, `thumbnail batch`) with explicit message boundaries.
 - Startup restore now runs in two phases:
   - fast snapshot hydration from persisted projection snapshot data
@@ -81,6 +82,7 @@ All notable changes to this project are documented in this file.
 - New-file detected dialog now uses the same content-sized modal behavior as other dialogs, removing extra bottom gap below actions.
 
 ### Fixed
+- Fixed staged-runtime indeterminate progress rendering to use an animated activity indicator instead of a static half-filled bar.
 - Corrected staged-runtime activity state transitions so completed reconcile/projection/thumbnail flows reliably return to `Ready` instead of staying stuck on stale busy labels (for example `Refreshing gallery`).
 - Fixed reconcile-to-projection handoff to clear reconcile in-flight state before starting projection, preventing dead-end pending projection states.
 - Fixed stale/superseded thumbnail batch completion handling to release the thumbnail in-flight lock and resume current-generation queued thumbnail work.

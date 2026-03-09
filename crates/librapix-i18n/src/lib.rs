@@ -120,6 +120,7 @@ pub enum TextKey {
     ProgressItemsLabel,
     ProgressRootsLabel,
     ProgressErrorLabel,
+    ActivityWorkingLabel,
     LibraryFilterAdjustedLabel,
     LibraryFilterResetUnavailableLabel,
     ThumbnailLoadingLabel,
@@ -338,6 +339,7 @@ fn en_us(key: TextKey) -> &'static str {
         TextKey::ProgressItemsLabel => "Items",
         TextKey::ProgressRootsLabel => "Libraries",
         TextKey::ProgressErrorLabel => "Last error",
+        TextKey::ActivityWorkingLabel => "Working",
         TextKey::LibraryFilterAdjustedLabel => {
             "Showing all libraries so the newly added library is visible."
         }

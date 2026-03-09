@@ -17,6 +17,7 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
 - Add root (library dialog, add mode)
   - Browse-first picker (with optional manual path input) captures path in dialog state.
   - Save normalizes path, upserts source root, applies display name, and syncs root-level tags.
+  - If a library filter is active and would hide the newly added root, the filter is reset to `All` (no root predicate) so new files are visible immediately.
   - Save can keep dialog open for batch add (`Save + Add Another`) or close after commit.
 - Edit root (library dialog, edit mode)
   - Explicit `Edit` action opens dialog with current path/display-name/tags preloaded.
@@ -48,7 +49,7 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
   - App schedules projection-only background work.
   - Worker loads read-model rows, delegates grouping to `librapix-projections`, and applies kind/extension/tag filters.
   - Worker derives `TimelineAnchor` metadata from timeline buckets (`build_timeline_anchors`).
-  - UI renders selectable timeline items grouped by route panel when `BackgroundWorkComplete` is applied.
+  - UI renders selectable timeline items grouped by route panel when `ProjectionJobComplete` is applied.
 - Timeline scrubber interaction
   - Timeline pane owns a stable scrollable `Id` (`media-pane-scrollable`).
   - Timeline/gallery media scrollable uses embedded vertical scrollbar spacing so scrollbar gutter is outside card content.
@@ -60,10 +61,11 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
 - Run gallery projection baseline
   - App schedules projection-only background work.
   - Worker loads read-model rows, delegates filtering/sorting to `librapix-projections`, and applies `GalleryQuery`.
-  - UI renders selectable gallery items by route panel when `BackgroundWorkComplete` is applied.
+  - UI renders selectable gallery items by route panel when `ProjectionJobComplete` is applied.
 - Direct media selection
   - Selection is explicit app state (`selected_media_id`).
   - Selecting from search/gallery/timeline loads details and enables actions/tags.
+  - Projection apply reconciles selection identity: if selected media still exists in projected cache it remains selected; if not, selection is cleared to avoid stale details.
 - Load media details
   - UI provides selected media id.
   - App resolves media details from storage read-model lookup.
@@ -85,10 +87,13 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
   - Ignored-only subscription prevents conflicts with focused text input widgets.
 - Startup restore
   - `Task::done(Message::StartupRestore)` fires after the first render.
-  - If roots exist, spawns background work via `Task::perform` to run indexing, thumbnail generation, and gallery/timeline projections on a background thread.
+  - Startup now runs in two phases:
+    - Phase A: `start_snapshot_hydrate` loads persisted browse snapshot payload (`projection_snapshots`) plus roots/ignore rules for immediate render.
+    - Phase B: queued reconcile (`request_reconcile`) runs scan/index/projection/thumbnails in background after hydrate is applied.
   - Startup restore also schedules a non-blocking GitHub latest-release check task.
   - UI remains interactive while background work proceeds; activity status shown in header.
-  - On completion, `BackgroundWorkComplete` message applies all results to app state atomically.
+  - Snapshot and reconcile completions are generation-guarded; stale completions are ignored.
+  - Snapshot parse/version failures fall back to empty snapshot hydration and continue with reconcile.
 - Release update check flow
   - State is explicit in app orchestration: `Unknown`, `Checking`, `UpToDate`, `UpdateAvailable { version, url }`, `Failed`.
   - Header chip click emits `UpdateChipPressed`.
@@ -113,14 +118,19 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
   - New files can trigger a dismissible in-app modal dialog with preview/metadata and quick actions.
 
 - Background work pattern
-  - Heavy operations (indexing, scanning, thumbnail generation, projections, search hydration) are encapsulated in `do_background_work`.
-  - `spawn_background_work` captures current app inputs in `BackgroundWorkInput` and returns a `Task::perform` that runs the work off the UI thread.
-  - Work mode is explicit:
-    - `IndexAndProject`: indexing + thumbnails + projections/search
-    - `ProjectOnly`: projections/search refresh without filesystem scan/index writes
-  - `BackgroundWorkComplete` handler applies all returned state atomically.
-  - Multiple handlers share this pattern: `StartupRestore`, `FilesystemChanged`, `RunIndexing`, `ApplyMinFileSize`, library-dialog save operations, manual route refresh, search run, and filter changes.
-  - Release checks follow the same non-blocking task model (`Task::perform`) through `start_update_check` -> `UpdateCheckCompleted`.
+  - Heavy operations are staged and typed:
+    - `SnapshotHydrate` (`HydrateSnapshotComplete`)
+    - `ScanRootsIncremental` (`ScanJobComplete`)
+    - `RefreshProjection` (`ProjectionJobComplete`)
+    - `GenerateThumbnailBatch` (`ThumbnailBatchComplete`)
+  - `BackgroundCoordinator` tracks in-flight flags, pending reruns, thumbnail queue state, and per-family generations.
+  - Every stage completion validates generation before applying state, preventing stale overwrite races.
+  - Repeated triggers are coalesced:
+    - watcher bursts merge through pending reconcile + deduped pending path set
+    - rapid projection/filter/search triggers set `pending_projection` (with reason merge) and supersede older completions
+  - Projection refresh persists default browse snapshot payloads for subsequent fast startup hydration.
+  - Scan stage now captures visible-media IDs and schedules targeted thumbnail work even when projection rebuild is skipped.
+  - Release checks continue to use non-blocking `Task::perform` (`start_update_check` -> `UpdateCheckCompleted`).
 
 ## Rules
 

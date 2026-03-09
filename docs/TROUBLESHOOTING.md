@@ -1,5 +1,37 @@
 # Troubleshooting
 
+## Watcher refresh misses the last file event in a burst
+
+- Symptoms
+  - New screenshots occasionally do not appear until a later manual refresh/restart.
+  - Filesystem watcher appears active, but no reconcile starts for the last event burst.
+- Affected area
+  - Filesystem watcher debounce and `FilesystemChanged` message emission.
+- Confirmed cause
+  - Time-only debounce logic emitted only when a new event arrived after the debounce window.
+  - If the burst stopped before that final trigger, pending paths were never flushed.
+- Resolution
+  - Watcher now emits deduplicated event-path batches immediately per relevant notify event.
+  - Coalescing is handled in app coordinator (`pending_reconcile` + pending watch-path set) instead of dropping tail events.
+- Prevention guidance
+  - Avoid debounce designs that require a final extra event to flush pending state.
+  - Keep coalescing in explicit runtime coordinator state, not in lossy edge-triggered watcher code.
+
+## Newly added library appears hidden after add flow
+
+- Symptoms
+  - Add-library succeeds and stats update, but browse remains scoped to older root filter.
+  - New library files seem absent until filter is manually reset or app restarted.
+- Affected area
+  - Add-library post-save filter state.
+- Confirmed cause
+  - Root filter could remain set to a different library, excluding the newly added root.
+- Resolution
+  - Add-library now resets root filter to `All` when the active filter would hide the new root.
+  - UI status text explains the filter adjustment.
+- Prevention guidance
+  - Validate filter state after root mutations and preserve explicit “All means all roots” semantics.
+
 ## Update chip stays on "Updates" and does not show release state
 
 - Symptoms

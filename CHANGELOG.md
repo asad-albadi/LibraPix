@@ -6,6 +6,8 @@ All notable changes to this project are documented in this file.
 
 ### Docs
 - Added `docs/AGENT_KNOWLEDGE_BASE.md` as a single comprehensive, code-verified project knowledge base for future engineering agents, and linked it from `docs/README.md`.
+- Reconciled staged-runtime architecture docs with implemented behavior (message flow, indexing, thumbnails, storage), added alias docs (`docs/message-flow.md`, `docs/storage.md`), added ADR `0021`, and added staged-runtime follow-up checklist.
+- Added troubleshooting entries for watcher-tail event loss and add-library filter visibility pitfalls.
 
 ### Added
 - GitHub release update-check flow in `librapix-app` using GitHub latest-release endpoint (`/releases/latest`) with explicit state model: `Unknown`, `Checking`, `UpToDate`, `UpdateAvailable { version, url }`, `Failed`.
@@ -33,6 +35,21 @@ All notable changes to this project are documented in this file.
 - Removed `packaging/windows/` scripts and packaging README from the repository.
 
 ### Changed
+- Filesystem watcher now emits deduplicated event batches immediately; coalescing is coordinated in runtime state, removing tail-event drops from time-only debounce behavior.
+- Reconcile scan stage now carries visible media IDs and returns targeted thumbnail candidates even when projection rebuild is skipped (improves startup snapshot thumbnail recovery).
+- Projection apply now reconciles selected-media identity against refreshed projected cache to prevent stale details state.
+- Add-library flow now preserves explicit “All libraries” semantics by resetting root filter only when an active filter would hide the newly added library.
+- Storage batched path/ID read-model lookup APIs are now chunked under SQLite parameter limits for large incremental updates.
+- Activity header progress now includes library counters and last-error context while background work is in progress.
+- Reworked background runtime flow in `librapix-app` from a single monolithic `BackgroundWorkComplete` replacement to staged jobs (`snapshot hydrate`, `scan/index`, `projection refresh`, `thumbnail batch`) with explicit message boundaries.
+- Startup restore now runs in two phases:
+  - fast snapshot hydration from persisted projection snapshot data
+  - deferred reconcile scan/projection pass after UI is already browse-ready
+- Added generation-based stale result guards and in-flight/pending coalescing for reconcile/projection/thumbnail work to prevent older completions from overwriting newer UI state.
+- Filesystem watcher updates now carry deduplicated path batches and feed a coalesced reconcile request path.
+- Thumbnail pipeline moved off the UI path: browse/detail thumbnail resolution now checks existing cache paths only, while generation runs in background thumbnail batches.
+- Added structured activity/progress state in header (stage label, progress bar, done/total, queue depth) for indexing/projection/thumbnail runtime visibility.
+- Projection refresh now persists default browse snapshot payloads after successful projection runs for fast startup hydration.
 - About dialog now shows the current app version from package metadata.
 - Header now includes an update-status chip (`Checking...`, `Up to date`, `New release`) with subtle fallback behavior on failed checks.
 - Startup restore flow now batches background indexing/projection restore with update-check scheduling while keeping UI responsive.
@@ -193,6 +210,13 @@ All notable changes to this project are documented in this file.
 - i18n keys for auto-tag UI labels.
 
 ### Fixed
+- Fixed watcher coalescing gap where the final filesystem event in a burst could be dropped before reconcile scheduling.
+- Fixed stale/invalid root filter persistence after root set changes by resetting to `All` when the selected filter root is no longer available.
+- Fixed thumbnail retry gaps for snapshot-hydrated startup by feeding visible media IDs through scan-stage thumbnail candidate derivation.
+- Fixed stale-overwrite race where older background completions could replace fresher UI state after newer refreshes.
+- Fixed add-library visibility gap by switching library filter to the newly added root and triggering reconcile through generation-guarded staged background flow.
+- Fixed startup always-running full restore behavior by hydrating persisted browse snapshot first instead of forcing immediate full projection rebuild before render.
+- Fixed placeholder-only thumbnail stalls by introducing per-item thumbnail states (`Missing`, `Queued`, `Generating`, `Ready`, `Failed`) and retry scheduling for retryable failures.
 - Media-pane vertical scrollbar no longer overlays gallery/timeline cards; it now uses embedded scrollbar spacing so content width reserves a dedicated scrollbar gutter.
 - Timeline scrubber no longer snaps sideways on first click; scrub mode now keeps slider lane width stable and positions the date chip from the continuous scrub value.
 - Windows `Copy File` now writes an actual Explorer-compatible file-drop clipboard payload (native `CF_HDROP` via Win32 `SetClipboardData`) instead of PowerShell-based clipboard indirection.

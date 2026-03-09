@@ -1,62 +1,49 @@
 # Indexing Architecture
 
-Indexing is a dedicated subsystem (`librapix-indexer`) isolated from UI rendering.
+Indexing is a dedicated subsystem (`librapix-indexer`) isolated from rendering.
 
-## Baseline decisions
+## Core behavior
 
-- Indexing reads source media metadata in read-only mode.
-- Ignore rules are applied before metadata extraction.
-- Index data is stored in Librapix-managed storage only.
-- Indexing events are consumed by search and presentation layers through explicit application flow.
-- Missing source files are expected operationally and must be handled as state transitions, not destructive actions.
+- Indexing is read-only with respect to source media files.
+- Ignore rules are centralized (`IgnoreEngine`) and applied before metadata extraction.
+- Min-size filtering remains part of scan options (`ScanOptions.min_file_size_bytes`).
+- Recursive traversal has no depth cap (`walkdir`).
+- Incremental change detection compares `absolute_path + file_size_bytes + modified_unix_seconds`.
+- Non-seen files under scanned roots are marked `missing` in Librapix storage.
 
-## Baseline components
+## Staged runtime integration
 
-- Source root selection from storage (`active` lifecycle roots only; registered/edited via unified library dialog)
-- Ignore matcher via centralized `IgnoreEngine` and glob rules
-- Size-based exclusion via `ScanOptions.min_file_size_bytes` (skips files below threshold)
-- Filesystem traversal with recursive walk
-- Media-kind detection by supported extension set
-- Candidate writer to app-managed `indexed_media` table
-- Missing-root reconciliation delegated to storage lifecycle updates
-- Metadata extraction stage:
-  - file size and modified timestamp
-  - image dimensions when available
-  - extraction status (`ok` / `partial` / `unreadable`)
-- Incremental strategy:
-  - compare by `absolute_path + file_size_bytes + modified_unix_seconds`
-  - classify `new`, `changed`, `unchanged`
-  - re-extract dimensions for unchanged images with missing width/height
-  - mark non-seen files under scanned roots as `missing`
+Indexing now runs as one stage of the staged background runtime:
 
-## Baseline pipeline
+1. `HydrateSnapshot`
+2. `ScanRootsIncremental`
+3. `RefreshProjection` (conditional)
+4. `GenerateThumbnailBatch` (queued/coalesced)
 
-1. Reconcile source-root availability.
-2. Load eligible roots.
-3. Load enabled ignore rules.
-4. Scan filesystem and filter ignored entries.
-5. Exclude files below configured minimum size (if set).
-6. Detect incremental change class (`new` / `changed` / `unchanged`).
-6. Extract baseline metadata for new/changed entries.
-7. Persist/upsert candidates and mark missing files for scanned roots.
-8. Ensure media-kind tags are attached (`kind:image`, `kind:video`).
-9. Ensure root-level auto-tags (configured in library dialog) exist in the tags table and apply them to media under their root.
-10. Refresh persisted `source_root_statistics` for scanned roots (totals/counts/date bounds + last-indexed timestamp).
-11. Query read-model rows for verification or downstream browsing/search surfaces.
+`ScanRootsIncremental` (`do_scan_job`) performs:
 
-## Execution model
+1. Root availability reconciliation.
+2. Ignore-rule loading.
+3. Eligible-root scan via `scan_roots`.
+4. Incremental writes via `apply_incremental_index`.
+5. Tag maintenance (`ensure_media_kind_tags_attached`, root auto-tags).
+6. Maintained statistics refresh (`refresh_source_root_statistics`).
+7. Thumbnail candidate derivation:
+   - changed/new media rows
+   - currently visible media IDs (for startup snapshot and active UI recovery)
 
-Indexing runs as background work via `Task::perform`, keeping the UI thread responsive.
-The `do_background_work` function opens its own `Storage` connection and runs the full pipeline (scan, index, thumbnails, projections) off the main thread.
-Results are applied atomically to app state via `BackgroundWorkComplete`.
-The same worker also supports projection-only refresh mode (no filesystem scan/index writes) for search/filter/manual refresh so large read-model work does not block UI updates.
-When triggered by filesystem watch events, app orchestration compares previous/current media ids to surface new-file modal announcements (preview + metadata + actions) without mutating source files.
+## Correctness and responsiveness guarantees
 
-## Query limits
+- Indexing runs on background tasks (`Task::perform`) and never in widgets.
+- Results are generation-guarded when applied; stale completions are ignored.
+- Filesystem watcher bursts are coalesced into pending reconcile requests.
+- Projection refresh is conditional:
+  - runs when media changed
+  - runs when projection is missing/stale/explicitly requested
+  - otherwise skipped to avoid unnecessary full projection rebuilds
 
-Indexing-side projection/thumbnail/search hydration now uses `list_all_media_read_models()` (no SQL `LIMIT`)
-to avoid silently truncating aggregate multi-root/media-kind browse behavior.
+## Query cardinality policy
 
-Bounded APIs (`list_media_read_models(limit, offset)`) remain available for explicit pagination call sites.
-
-No indexing logic should be embedded inside view widgets.
+- Aggregation-critical paths use unbounded read-model APIs (no hidden result cap).
+- Large ID/path batched lookups are chunked under SQLite parameter limits for scale safety.
+- Bounded APIs (`limit/offset`) remain available for explicitly paginated call sites only.

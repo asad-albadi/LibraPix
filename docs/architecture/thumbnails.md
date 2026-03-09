@@ -27,7 +27,30 @@ Thumbnail generation is an app-owned, non-destructive cache subsystem.
 - For videos: runs `ffmpeg -ss 00:00:01 -frames:v 1 -vf scale=<max>:<max>:force_original_aspect_ratio=decrease` to extract a representative frame.
 - Gallery thumbnails default to 400px max edge; detail previews default to 800px max edge.
 - Detail-size thumbnails are also reused by the in-app new-file modal dialog preview.
-- Failures are counted for status output but do not abort full indexing flow.
+- Failures are tracked per item and do not abort the full pipeline.
+
+## Runtime state model
+
+The app tracks per-media thumbnail state:
+
+- `Missing`
+- `Queued { attempt }`
+- `Generating { attempt }`
+- `Ready(path)`
+- `Failed { retryable, last_error, attempt }`
+
+This state powers card placeholders, retry messaging, and queue orchestration.
+
+## Scheduling model
+
+- Thumbnail generation is never done synchronously in browse-card rendering.
+- Scheduling is split:
+  - changed/new media from scan stage
+  - visible media prioritization from active projections
+  - selected-media opportunistic enqueue
+- Work is processed in bounded batches (`THUMBNAIL_BATCH_SIZE`) with in-flight coordination.
+- Retryable failures are re-enqueued with bounded retry attempts and backoff delay.
+- Non-retryable failures remain in `Failed` and are not repeatedly enqueued automatically.
 
 ## Video thumbnail requirements
 
@@ -40,3 +63,4 @@ Thumbnail generation is an app-owned, non-destructive cache subsystem.
 
 - Thumbnail files are app-managed cache data.
 - Rebuilding is safe because thumbnails are derived data.
+- Source media files are never mutated.

@@ -9,6 +9,8 @@ This repository is documentation-driven. Architecture and operational decisions 
 - `docs/branding.md`: branding assets, logo variants, and icon usage.
 - `docs/DEPENDENCIES.md`: major dependency decisions and official documentation references.
 - `docs/TROUBLESHOOTING.md`: recurring issues, causes, and resolutions.
+- `docs/message-flow.md`: alias entrypoint to current message-flow architecture doc.
+- `docs/storage.md`: alias entrypoint to current storage architecture doc.
 
 ## Architecture
 
@@ -57,6 +59,7 @@ This repository is documentation-driven. Architecture and operational decisions 
 - `docs/roadmap/library-statistics-checklist.md`
 - `docs/roadmap/tag-ignore-chip-interaction-checklist.md`
 - `docs/roadmap/github-release-update-checker-checklist.md`
+- `docs/roadmap/staged-runtime-followup-checklist.md`
 
 ## ADRs
 
@@ -80,3 +83,4 @@ This repository is documentation-driven. Architecture and operational decisions 
 - `docs/adrs/0018-timeline-scrubber-anchor-navigation.md`
 - `docs/adrs/0019-windows-signing-and-publisher-baseline.md`
 - `docs/adrs/0020-chip-based-tag-ignore-interactions.md`
+- `docs/adrs/0021-staged-runtime-coordination-and-snapshot-hydration.md`

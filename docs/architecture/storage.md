@@ -67,6 +67,12 @@ SQLite is the primary persistent store for Librapix-owned metadata.
     - `oldest_modified_unix_seconds`
     - `newest_modified_unix_seconds`
     - `last_indexed_unix_seconds`
+- `projection_snapshots` (migration `0009`)
+  - persisted browse-ready projection snapshot payloads used for fast startup hydration:
+    - `snapshot_key`
+    - `payload_json`
+    - `updated_unix_seconds`
+    - `updated_at`
 
 This schema is intentionally minimal to avoid overbuilding before indexing and search are implemented.
 
@@ -83,11 +89,14 @@ This schema is intentionally minimal to avoid overbuilding before indexing and s
   - paginated list of non-missing indexed media
   - search by path/tag text filter
   - media-by-id lookup for details/action orchestration
+  - batched lookup by media IDs (`list_media_read_models_by_ids`) for targeted thumbnail scheduling
+  - batched lookup by absolute paths (`list_media_read_models_by_paths`) for changed-file reconciliation
 - App orchestration derives the tag-filter chip list from read-model tag joins (excluding internal `kind:*` tags).
 - App-level top media stats (`Total`, `Images`, `Videos`) are derived from the current projected browse/search result set, not from stale persisted counters.
 - Large browse/search refreshes read this query surface from background tasks (`Task::perform`) so SQLite reads/projection hydration do not block the UI thread.
 - This read layer is UI-agnostic and replaceable by richer search subsystems later.
 - Library statistics dialog reads maintained rows from `source_root_statistics` via `get_source_root_statistics(root_id)` and does not run expensive aggregation on dialog open.
+- Batched ID/path APIs chunk inputs under SQLite parameter limits to avoid failures on large incremental scans.
 
 ## Library statistics maintenance
 
@@ -141,3 +150,5 @@ This schema is intentionally minimal to avoid overbuilding before indexing and s
 - Source media directories are never used as cache locations.
 - Path overrides are possible through config, but ownership remains app-side only.
 - Thumbnail cache file naming uses deterministic derived keys from source path + size + modified timestamp.
+- Projection snapshot payloads are app-owned and persisted only in Librapix storage (never in source media folders).
+- Snapshot hydration is tolerant of missing/invalid/version-mismatched payloads: app falls back to reconcile without blocking startup.

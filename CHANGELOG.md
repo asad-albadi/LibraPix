@@ -4,6 +4,9 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Docs
+- Added `docs/AGENT_KNOWLEDGE_BASE.md` as a single comprehensive, code-verified project knowledge base for future engineering agents, and linked it from `docs/README.md`.
+
 ### Added
 - GitHub release update-check flow in `librapix-app` using GitHub latest-release endpoint (`/releases/latest`) with explicit state model: `Unknown`, `Checking`, `UpToDate`, `UpdateAvailable { version, url }`, `Failed`.
 - Header update-status chip with click behavior:

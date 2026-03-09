@@ -5,6 +5,7 @@ This repository is documentation-driven. Architecture and operational decisions 
 ## Core
 
 - `docs/REPOSITORY_RULES.md`: repository-wide engineering rules.
+- `docs/AGENT_KNOWLEDGE_BASE.md`: single-file comprehensive system knowledge for AI agents.
 - `docs/branding.md`: branding assets, logo variants, and icon usage.
 - `docs/DEPENDENCIES.md`: major dependency decisions and official documentation references.
 - `docs/TROUBLESHOOTING.md`: recurring issues, causes, and resolutions.

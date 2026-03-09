@@ -88,7 +88,7 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
 - Startup restore
   - `Task::done(Message::StartupRestore)` fires after the first render.
   - Startup now runs in two phases:
-    - Phase A: `start_snapshot_hydrate` loads persisted browse snapshot payload (`projection_snapshots`) plus roots/ignore rules for immediate render.
+    - Phase A: `start_snapshot_hydrate` loads persisted browse snapshot payload (`projection_snapshots`) plus roots/ignore rules, then applies large snapshot browse lists in bounded chunks (`SnapshotApplyTick`) so startup rendering remains responsive on large libraries.
     - Phase B: startup reconcile is kicked off after hydrate delay (`StartupReconcileKickoff`) using coordinator due-time state + timer subscription, so the first usable UI frame is not blocked by immediate scan pressure.
       - If snapshot payload is missing/empty, projection is bootstrapped first, then reconcile runs from pending state.
   - Startup restore also schedules a non-blocking GitHub latest-release check task.
@@ -120,7 +120,7 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
 
 - Background work pattern
   - Heavy operations are staged and typed:
-    - `SnapshotHydrate` (`HydrateSnapshotComplete`)
+    - `SnapshotHydrate` (`HydrateSnapshotComplete`) + chunked snapshot materialization (`SnapshotApplyTick`)
     - `ScanRootsIncremental` (`ScanJobComplete`)
     - `RefreshProjection` (`ProjectionJobComplete`)
     - `GenerateThumbnailBatch` (`ThumbnailBatchComplete`)

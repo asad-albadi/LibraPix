@@ -7,7 +7,7 @@ This file exists as a stable alias for message-flow architecture documentation.
 
 Key current behavior:
 
-- Startup is two-phase (`HydrateSnapshot` then delayed `StartupReconcileKickoff`).
+- Startup is two-phase (`HydrateSnapshot` + chunked `SnapshotApplyTick`, then delayed `StartupReconcileKickoff`).
 - If hydrate has no persisted browse snapshot, projection bootstraps first and reconcile follows from pending state.
 - Background work is staged (`ScanJobComplete`, `ProjectionJobComplete`, `ThumbnailBatchComplete`), not a single monolithic completion.
 - Generation guards prevent stale stage completions from overwriting newer UI state.

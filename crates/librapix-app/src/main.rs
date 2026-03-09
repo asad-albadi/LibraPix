@@ -103,6 +103,7 @@ enum Message {
     MediaViewportChanged { absolute_y: f32, max_y: f32 },
     KeyboardEvent(keyboard::Event),
     HydrateSnapshotComplete(Box<SnapshotHydrateResult>),
+    SnapshotApplyTick,
     ScanJobComplete(Box<ScanJobResult>),
     ProjectionJobComplete(Box<ProjectionJobResult>),
     ThumbnailBatchComplete(Box<ThumbnailBatchResult>),
@@ -235,6 +236,19 @@ struct SnapshotHydrateResult {
 }
 
 #[derive(Debug, Clone)]
+struct PendingSnapshotApply {
+    generation: u64,
+    gallery_total: usize,
+    timeline_total: usize,
+    gallery_loaded: usize,
+    timeline_loaded: usize,
+    gallery_iter: std::vec::IntoIter<BrowseItem>,
+    timeline_iter: std::vec::IntoIter<BrowseItem>,
+    timeline_anchors: Vec<TimelineAnchor>,
+    available_filter_tags: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
 struct ScanJobInput {
     generation: u64,
     reason: BackgroundWorkReason,
@@ -317,6 +331,7 @@ struct BackgroundCoordinator {
     reconcile_generation: u64,
     projection_generation: u64,
     thumbnail_generation: u64,
+    snapshot_apply: Option<PendingSnapshotApply>,
     snapshot_loaded: bool,
     startup_reconcile_queued: bool,
     startup_reconcile_due_at: Option<Instant>,
@@ -551,6 +566,8 @@ const PROJECTION_SNAPSHOT_KEY: &str = "default";
 const PROJECTION_SNAPSHOT_VERSION: u32 = 1;
 const STARTUP_RECONCILE_DELAY_MS: u64 = 550;
 const STARTUP_RECONCILE_TICK_INTERVAL: Duration = Duration::from_millis(120);
+const SNAPSHOT_APPLY_TICK_INTERVAL: Duration = Duration::from_millis(12);
+const SNAPSHOT_APPLY_CHUNK_SIZE: usize = 240;
 const THUMBNAIL_BATCH_SIZE: usize = 32;
 const THUMBNAIL_MAX_RETRY_ATTEMPTS: u8 = 5;
 const THUMBNAIL_RETRY_DELAY_MS: u64 = 1200;
@@ -680,6 +697,11 @@ fn subscription(app: &Librapix) -> Subscription<Message> {
     } else {
         Subscription::none()
     };
+    let snapshot_apply_subscription = if app.background.snapshot_apply.is_some() {
+        time::every(SNAPSHOT_APPLY_TICK_INTERVAL).map(|_| Message::SnapshotApplyTick)
+    } else {
+        Subscription::none()
+    };
     let thumbnail_retry_subscription = if !app.background.thumbnail_retry_queue.is_empty() {
         time::every(THUMBNAIL_RETRY_TICK_INTERVAL).map(|_| Message::ThumbnailRetryTick)
     } else {
@@ -699,6 +721,7 @@ fn subscription(app: &Librapix) -> Subscription<Message> {
         update_tick_subscription,
         activity_animation_subscription,
         startup_reconcile_subscription,
+        snapshot_apply_subscription,
         thumbnail_retry_subscription,
     ];
     if !roots.is_empty() {
@@ -815,6 +838,7 @@ fn message_event_label(msg: &Message) -> String {
         }
         Message::KeyboardEvent(_) => "KeyboardEvent".into(),
         Message::HydrateSnapshotComplete(_) => "HydrateSnapshotComplete".into(),
+        Message::SnapshotApplyTick => "SnapshotApplyTick".into(),
         Message::ScanJobComplete(_) => "ScanJobComplete".into(),
         Message::ProjectionJobComplete(_) => "ProjectionJobComplete".into(),
         Message::ThumbnailBatchComplete(_) => "ThumbnailBatchComplete".into(),
@@ -1132,9 +1156,10 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
             }
         }
         Message::HydrateSnapshotComplete(result) => {
-            let task = apply_snapshot_hydrate_result(app, *result);
-            refresh_diagnostics(app);
-            return task;
+            return apply_snapshot_hydrate_result(app, *result);
+        }
+        Message::SnapshotApplyTick => {
+            return apply_snapshot_chunk(app);
         }
         Message::ScanJobComplete(result) => {
             return apply_scan_job_result(app, *result);
@@ -5446,6 +5471,7 @@ fn apply_snapshot_hydrate_result(
         return Task::none();
     }
 
+    app.background.snapshot_apply = None;
     app.state.apply(AppMessage::ReplaceLibraryRoots);
     app.state.replace_library_roots(result.roots);
     ensure_valid_library_filter(app);
@@ -5454,33 +5480,126 @@ fn apply_snapshot_hydrate_result(
     app.activity_progress.last_error = result.snapshot_error;
 
     if let Some(snapshot) = result.snapshot {
-        app.gallery_items = snapshot.gallery_items;
-        app.timeline_items = snapshot.timeline_items;
-        app.timeline_anchors = snapshot
-            .timeline_anchors
-            .into_iter()
-            .map(|anchor| TimelineAnchor {
-                group_index: anchor.group_index,
-                label: anchor.label,
-                year: anchor.year,
-                month: anchor.month,
-                day: anchor.day,
-                item_count: anchor.item_count,
-                normalized_position: anchor.normalized_position,
-            })
-            .collect();
-        app.available_filter_tags = snapshot.available_filter_tags;
-        app.state.apply(AppMessage::ReplaceGalleryPreview);
-        app.state
-            .replace_gallery_preview(collect_preview_lines(&app.gallery_items));
-        app.state.apply(AppMessage::ReplaceTimelinePreview);
-        app.state
-            .replace_timeline_preview(collect_preview_lines(&app.timeline_items));
+        return begin_snapshot_apply(app, result.generation, snapshot);
+    }
+    continue_startup_after_snapshot_hydrate(app)
+}
+
+fn begin_snapshot_apply(
+    app: &mut Librapix,
+    generation: u64,
+    snapshot: PersistedProjectionSnapshot,
+) -> Task<Message> {
+    let gallery_total = snapshot.gallery_items.len();
+    let timeline_total = snapshot.timeline_items.len();
+    let total_items = gallery_total + timeline_total;
+
+    app.gallery_items.clear();
+    app.timeline_items.clear();
+    app.timeline_anchors.clear();
+    app.search_items.clear();
+    app.available_filter_tags.clear();
+    app.state.apply(AppMessage::ReplaceGalleryPreview);
+    app.state.replace_gallery_preview(Vec::new());
+    app.state.apply(AppMessage::ReplaceTimelinePreview);
+    app.state.replace_timeline_preview(Vec::new());
+
+    set_activity_stage(
+        app,
+        TextKey::StageLoadingSnapshotLabel,
+        String::new(),
+        false,
+    );
+    app.activity_progress.items_total = Some(total_items);
+    app.activity_progress.items_done = 0;
+    app.activity_progress.queue_depth = 0;
+
+    let timeline_anchors = snapshot
+        .timeline_anchors
+        .into_iter()
+        .map(|anchor| TimelineAnchor {
+            group_index: anchor.group_index,
+            label: anchor.label,
+            year: anchor.year,
+            month: anchor.month,
+            day: anchor.day,
+            item_count: anchor.item_count,
+            normalized_position: anchor.normalized_position,
+        })
+        .collect();
+
+    app.background.snapshot_apply = Some(PendingSnapshotApply {
+        generation,
+        gallery_total,
+        timeline_total,
+        gallery_loaded: 0,
+        timeline_loaded: 0,
+        gallery_iter: snapshot.gallery_items.into_iter(),
+        timeline_iter: snapshot.timeline_items.into_iter(),
+        timeline_anchors,
+        available_filter_tags: snapshot.available_filter_tags,
+    });
+
+    Task::done(Message::SnapshotApplyTick)
+}
+
+fn apply_snapshot_chunk(app: &mut Librapix) -> Task<Message> {
+    let Some(mut pending) = app.background.snapshot_apply.take() else {
+        return Task::none();
+    };
+    if pending.generation != app.background.snapshot_generation {
+        return Task::none();
     }
 
-    if !app.background.reconcile_in_flight && !app.background.projection_in_flight {
-        set_activity_ready(app);
+    for _ in 0..SNAPSHOT_APPLY_CHUNK_SIZE {
+        let Some(item) = pending.gallery_iter.next() else {
+            break;
+        };
+        app.gallery_items.push(item);
+        pending.gallery_loaded = pending.gallery_loaded.saturating_add(1);
     }
+    for _ in 0..SNAPSHOT_APPLY_CHUNK_SIZE {
+        let Some(item) = pending.timeline_iter.next() else {
+            break;
+        };
+        app.timeline_items.push(item);
+        pending.timeline_loaded = pending.timeline_loaded.saturating_add(1);
+    }
+
+    let total = pending.gallery_total.saturating_add(pending.timeline_total);
+    let done = pending
+        .gallery_loaded
+        .saturating_add(pending.timeline_loaded);
+    app.activity_progress.items_total = Some(total);
+    app.activity_progress.items_done = done;
+    app.activity_progress.queue_depth = 0;
+
+    if done < total {
+        app.background.snapshot_apply = Some(pending);
+        return Task::none();
+    }
+
+    app.timeline_anchors = pending.timeline_anchors;
+    app.available_filter_tags = pending.available_filter_tags;
+    sync_timeline_scrub_selection(app, app.timeline_scrub_value);
+    app.state.apply(AppMessage::ReplaceGalleryPreview);
+    app.state
+        .replace_gallery_preview(collect_preview_lines(&app.gallery_items));
+    app.state.apply(AppMessage::ReplaceTimelinePreview);
+    app.state
+        .replace_timeline_preview(collect_preview_lines(&app.timeline_items));
+
+    continue_startup_after_snapshot_hydrate(app)
+}
+
+fn continue_startup_after_snapshot_hydrate(app: &mut Librapix) -> Task<Message> {
+    if app.background.pending_reconcile {
+        let reason = app.background.pending_reconcile_reason;
+        app.background.pending_reconcile = false;
+        app.background.startup_reconcile_queued = false;
+        return request_reconcile(app, reason);
+    }
+
     if app.background.startup_reconcile_queued {
         app.background.startup_reconcile_queued = false;
         if app.gallery_items.is_empty() && app.timeline_items.is_empty() {
@@ -5490,10 +5609,33 @@ fn apply_snapshot_hydrate_result(
         }
         return schedule_startup_reconcile(app);
     }
+
+    if app.background.pending_projection {
+        let reason = app.background.pending_projection_reason;
+        app.background.pending_projection = false;
+        return request_projection_refresh(app, reason);
+    }
+
+    if !app.background.reconcile_in_flight
+        && !app.background.projection_in_flight
+        && app.background.snapshot_apply.is_none()
+    {
+        set_activity_ready(app);
+    }
     Task::none()
 }
 
 fn request_reconcile(app: &mut Librapix, reason: BackgroundWorkReason) -> Task<Message> {
+    if app.background.snapshot_apply.is_some() {
+        let was_pending = app.background.pending_reconcile;
+        app.background.pending_reconcile = true;
+        app.background.pending_reconcile_reason = if was_pending {
+            merge_work_reason(app.background.pending_reconcile_reason, reason)
+        } else {
+            reason
+        };
+        return Task::none();
+    }
     if app.background.reconcile_in_flight
         || app.background.projection_in_flight
         || app.background.thumbnail_in_flight
@@ -5745,6 +5887,15 @@ fn do_scan_job(input: ScanJobInput) -> ScanJobResult {
 }
 
 fn request_projection_refresh(app: &mut Librapix, reason: BackgroundWorkReason) -> Task<Message> {
+    if app.background.snapshot_apply.is_some() {
+        app.background.pending_projection_reason = if app.background.pending_projection {
+            merge_work_reason(app.background.pending_projection_reason, reason)
+        } else {
+            reason
+        };
+        app.background.pending_projection = true;
+        return Task::none();
+    }
     if app.background.reconcile_in_flight {
         app.background.pending_projection_reason = if app.background.pending_projection {
             merge_work_reason(app.background.pending_projection_reason, reason)
@@ -6719,6 +6870,9 @@ fn refresh_thumbnail_states_from_items(app: &mut Librapix) {
 }
 
 fn finalize_background_flow(app: &mut Librapix) -> Task<Message> {
+    if app.background.snapshot_apply.is_some() {
+        return Task::none();
+    }
     if app.background.pending_reconcile {
         let reason = app.background.pending_reconcile_reason;
         app.background.pending_reconcile = false;
@@ -7549,6 +7703,109 @@ mod tests {
         assert!(app.background.projection_in_flight);
         assert!(app.background.pending_reconcile);
         assert!(!app.background.reconcile_in_flight);
+    }
+
+    #[test]
+    fn startup_hydrate_with_snapshot_applies_in_chunks() {
+        let mut app = Librapix::default();
+        app.background.snapshot_generation = 9;
+        app.background.startup_reconcile_queued = true;
+        app.state.replace_library_roots(vec![LibraryRootView {
+            id: 5,
+            normalized_path: PathBuf::from("/tmp/library"),
+            lifecycle: RootLifecycle::Active,
+            display_name: Some("Main".to_owned()),
+        }]);
+
+        let make_item = |id: i64| BrowseItem {
+            media_id: id,
+            title: format!("shot-{id}.png"),
+            thumbnail_path: None,
+            media_kind: "image".to_owned(),
+            metadata_line: "Image".to_owned(),
+            is_group_header: false,
+            line: format!("line-{id}"),
+            aspect_ratio: 1.25,
+            group_image_count: None,
+            group_video_count: None,
+        };
+        let gallery_count = SNAPSHOT_APPLY_CHUNK_SIZE + 7;
+        let timeline_count = SNAPSHOT_APPLY_CHUNK_SIZE + 3;
+        let snapshot = PersistedProjectionSnapshot {
+            version: PROJECTION_SNAPSHOT_VERSION,
+            gallery_items: (0..gallery_count)
+                .map(|index| make_item(index as i64 + 1))
+                .collect(),
+            timeline_items: (0..timeline_count)
+                .map(|index| make_item(index as i64 + 10_000))
+                .collect(),
+            timeline_anchors: vec![PersistedTimelineAnchor {
+                group_index: 0,
+                label: "Today".to_owned(),
+                year: Some(2026),
+                month: Some(3),
+                day: Some(10),
+                item_count: timeline_count,
+                normalized_position: 0.0,
+            }],
+            available_filter_tags: vec!["kind:image".to_owned()],
+            updated_unix_seconds: 0,
+        };
+        let roots = app.state.library_roots.clone();
+
+        let _ = apply_snapshot_hydrate_result(
+            &mut app,
+            SnapshotHydrateResult {
+                generation: 9,
+                roots,
+                ignore_rules: Vec::new(),
+                snapshot: Some(snapshot),
+                snapshot_error: None,
+            },
+        );
+
+        assert!(app.background.snapshot_apply.is_some());
+        assert!(app.gallery_items.is_empty());
+        assert!(app.background.startup_reconcile_due_at.is_none());
+
+        let _ = apply_snapshot_chunk(&mut app);
+        assert!(!app.gallery_items.is_empty());
+        assert!(app.background.snapshot_apply.is_some());
+
+        while app.background.snapshot_apply.is_some() {
+            let _ = apply_snapshot_chunk(&mut app);
+        }
+
+        assert_eq!(app.gallery_items.len(), gallery_count);
+        assert_eq!(app.timeline_items.len(), timeline_count);
+        assert_eq!(app.timeline_anchors.len(), 1);
+        assert_eq!(app.available_filter_tags, vec!["kind:image".to_owned()]);
+        assert!(app.background.startup_reconcile_due_at.is_some());
+    }
+
+    #[test]
+    fn request_reconcile_defers_while_snapshot_apply_is_pending() {
+        let mut app = Librapix::default();
+        app.background.snapshot_apply = Some(PendingSnapshotApply {
+            generation: 3,
+            gallery_total: 1,
+            timeline_total: 0,
+            gallery_loaded: 0,
+            timeline_loaded: 0,
+            gallery_iter: Vec::<BrowseItem>::new().into_iter(),
+            timeline_iter: Vec::<BrowseItem>::new().into_iter(),
+            timeline_anchors: Vec::new(),
+            available_filter_tags: Vec::new(),
+        });
+
+        let _ = request_reconcile(&mut app, BackgroundWorkReason::FilesystemWatch);
+
+        assert!(!app.background.reconcile_in_flight);
+        assert!(app.background.pending_reconcile);
+        assert_eq!(
+            app.background.pending_reconcile_reason,
+            BackgroundWorkReason::FilesystemWatch
+        );
     }
 
     #[test]

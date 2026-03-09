@@ -41,17 +41,18 @@
   - Startup bootstrap + snapshot-hydrate apply path.
 - Confirmed cause
   - Startup bootstrap performed synchronous root availability filesystem checks before UI startup.
-  - Snapshot apply/materialization cloned large preview-line vectors on the UI update path.
+  - Snapshot hydrate applied large persisted gallery/timeline vectors in a single UI update/render burst.
   - Startup reconcile launched immediately after hydrate, increasing first-load contention.
   - Runtime timer streams used blocking `std::thread::sleep` loops, which could starve worker execution on some environments during startup.
 - Resolution
   - Removed synchronous root-availability reconciliation from startup bootstrap.
   - Capped preview-line materialization to bounded samples instead of full all-item cloning.
+  - Snapshot apply now runs in bounded timed chunks (`SnapshotApplyTick`) before reconcile kickoff, with truthful determinate progress (`items_done/items_total`) during hydrate.
   - Startup now schedules reconcile kickoff after hydrate delay; if snapshot data is missing, projection is bootstrapped first and reconcile follows.
   - Replaced blocking timer streams with `iced::time::every` subscriptions and coordinator due-time state so startup progress/update ticks stay non-blocking.
 - Prevention guidance
   - Keep startup phase-A hydrate free of filesystem traversal/checks.
-  - Avoid unbounded UI-thread materialization from large read models.
+  - Avoid one-shot UI-thread materialization from large persisted read models; chunk or lazy-apply startup snapshots.
   - Sequence startup work as hydrate-first, reconcile-after.
 
 ## New screenshot thumbnail appears only after a later filesystem event
@@ -480,20 +481,21 @@
 ## App freezes or shows "Not Responding" on startup (Windows)
 
 - Symptoms
-  - App window appears but becomes unresponsive ("Not Responding") for seconds to minutes while indexing runs.
+  - App window appears but becomes unresponsive ("Not Responding") for seconds to minutes while `Loading library snapshot` is shown.
   - Especially noticeable with large libraries or multiple roots containing thousands of images.
 - Affected area
-  - Startup restore path, indexing, thumbnail generation, projection builds.
+  - Startup snapshot hydrate apply path in `librapix-app`.
 - Confirmed cause
-  - `StartupRestore` handler called `run_indexing`, `run_gallery_projection`, and `run_timeline_projection` synchronously inside the `update` function, blocking the UI thread for the entire duration of filesystem scanning, SQLite writes, thumbnail generation, and projection computation.
+  - Persisted snapshot payloads with very large gallery/timeline vectors were previously applied in one shot after `HydrateSnapshotComplete`, causing a large UI-thread materialization/render burst.
+  - Startup hydrate completion also triggered a synchronous diagnostics refresh query against storage, which amplified UI-thread stall on very large databases.
 - Resolution
-  - All heavyweight startup work now runs via `Task::perform` on a background thread.
-  - The UI renders immediately with persisted state, and background work results are applied asynchronously via `BackgroundWorkComplete` message.
-  - `FilesystemChanged`, `RunIndexing`, `ApplyMinFileSize`, `AddRoot`, and auto-tag operations also use the async path.
+  - Startup snapshot apply is now chunked via `SnapshotApplyTick` timer-driven batches so large snapshots do not monopolize the UI thread.
+  - Reconcile/projection kickoff is deferred until chunked snapshot apply settles.
+  - Startup hydrate no longer performs synchronous diagnostics refresh in the hydrate completion path.
 - Prevention guidance
-  - Never perform blocking I/O (filesystem, SQLite, thumbnail generation) inside the `update` function.
-  - Use `Task::perform` for any work that takes more than a few milliseconds.
-  - Keep the click/update path free of synchronous heavy operations.
+  - Keep startup hydrate apply bounded/chunked for large persisted read models.
+  - Avoid synchronous storage queries in startup-completion UI handlers.
+  - Keep update-path work focused on state transitions and task scheduling.
 
 ## App stalls during refresh/search/filter on large libraries
 

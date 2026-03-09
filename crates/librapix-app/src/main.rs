@@ -167,18 +167,23 @@ struct ActivityProgressState {
 #[derive(Debug, Clone)]
 enum ThumbnailState {
     Missing,
-    Queued {
-        attempt: u8,
-    },
-    Generating {
-        attempt: u8,
-    },
+    Queued,
+    Generating,
     Ready(PathBuf),
-    Failed {
-        retryable: bool,
-        last_error: String,
-        attempt: u8,
-    },
+    Failed { retryable: bool, last_error: String },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ThumbnailPresentationState {
+    Ready,
+    Loading,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ThumbnailPresentation {
+    resolved_path: Option<PathBuf>,
+    state: ThumbnailPresentationState,
 }
 
 #[derive(Debug, Clone)]
@@ -1967,65 +1972,31 @@ fn render_media_card<'a>(
     selected: bool,
     height: f32,
 ) -> Element<'a, Message> {
-    let resolved_thumb = match app.thumbnail_states.get(&item.media_id) {
-        Some(ThumbnailState::Ready(path)) => Some(path.clone()),
-        _ => item.thumbnail_path.clone(),
-    };
-    let thumb: Element<'_, Message> = if let Some(path) = &resolved_thumb {
-        image(image::Handle::from_path(path))
-            .width(Length::Fill)
-            .height(Length::Fixed(height))
-            .content_fit(ContentFit::Cover)
-            .into()
-    } else {
-        let placeholder_label = match app.thumbnail_states.get(&item.media_id) {
-            Some(ThumbnailState::Queued { attempt })
-            | Some(ThumbnailState::Generating { attempt }) => {
-                format!(
-                    "{} ({})",
-                    app.i18n.text(TextKey::ThumbnailRetryingLabel),
-                    attempt.saturating_add(1)
-                )
-            }
-            Some(ThumbnailState::Failed {
-                retryable,
-                last_error,
-                attempt,
-            }) => {
-                if *retryable {
-                    format!(
-                        "{} ({}/{}): {}",
-                        app.i18n.text(TextKey::ThumbnailRetryingLabel),
-                        attempt.saturating_add(1),
-                        THUMBNAIL_MAX_RETRY_ATTEMPTS,
-                        last_error
-                    )
-                } else {
-                    format!(
-                        "{}: {}",
-                        app.i18n.text(TextKey::ThumbnailFailedLabel),
-                        last_error
-                    )
-                }
-            }
-            Some(ThumbnailState::Missing) => {
-                app.i18n.text(TextKey::ThumbnailUnavailable).to_owned()
-            }
-            _ => item.title.clone(),
-        };
-        container(
-            column![
-                Space::new().height(Length::Fill),
-                text(placeholder_label)
-                    .size(FONT_CAPTION)
-                    .color(TEXT_TERTIARY),
-            ]
-            .padding(SPACE_XS as u16),
-        )
-        .width(Length::Fill)
-        .height(Length::Fixed(height))
-        .style(thumb_placeholder_style)
-        .into()
+    let thumb_presentation =
+        resolve_thumbnail_presentation(app, item.media_id, item.thumbnail_path.as_ref());
+    let thumb: Element<'_, Message> = match thumb_presentation.state {
+        ThumbnailPresentationState::Ready => {
+            let path = thumb_presentation
+                .resolved_path
+                .expect("ready thumbnail presentation must include path");
+            image(image::Handle::from_path(path))
+                .width(Length::Fill)
+                .height(Length::Fixed(height))
+                .content_fit(ContentFit::Cover)
+                .into()
+        }
+        ThumbnailPresentationState::Loading => render_thumbnail_placeholder(
+            app.i18n.text(TextKey::ThumbnailLoadingLabel).to_owned(),
+            None,
+            height,
+            true,
+        ),
+        ThumbnailPresentationState::Unavailable => render_thumbnail_placeholder(
+            app.i18n.text(TextKey::ThumbnailUnavailable).to_owned(),
+            None,
+            height,
+            false,
+        ),
     };
 
     let kind_icon_handle = if item.media_kind.eq_ignore_ascii_case("video") {
@@ -2068,6 +2039,75 @@ fn render_media_card<'a>(
         .on_press(Message::SelectMedia(item.media_id))
         .style(card_button_style(selected))
         .padding(0)
+        .into()
+}
+
+fn resolve_thumbnail_presentation(
+    app: &Librapix,
+    media_id: i64,
+    fallback_thumbnail: Option<&PathBuf>,
+) -> ThumbnailPresentation {
+    let thumbnail_state = app.thumbnail_states.get(&media_id);
+    if let Some(ThumbnailState::Ready(path)) = thumbnail_state {
+        return ThumbnailPresentation {
+            resolved_path: Some(path.clone()),
+            state: ThumbnailPresentationState::Ready,
+        };
+    }
+    if let Some(path) = fallback_thumbnail {
+        return ThumbnailPresentation {
+            resolved_path: Some(path.clone()),
+            state: ThumbnailPresentationState::Ready,
+        };
+    }
+
+    let state = if let Some(state) = thumbnail_state {
+        if matches!(state, ThumbnailState::Queued | ThumbnailState::Generating)
+            || matches!(
+                state,
+                ThumbnailState::Failed {
+                    retryable: true,
+                    ..
+                }
+            )
+        {
+            ThumbnailPresentationState::Loading
+        } else {
+            ThumbnailPresentationState::Unavailable
+        }
+    } else {
+        if app.background.thumbnail_queued_ids.contains(&media_id) {
+            ThumbnailPresentationState::Loading
+        } else {
+            ThumbnailPresentationState::Unavailable
+        }
+    };
+
+    ThumbnailPresentation {
+        resolved_path: None,
+        state,
+    }
+}
+
+fn render_thumbnail_placeholder<'a>(
+    status_label: String,
+    title: Option<&'a str>,
+    height: f32,
+    loading: bool,
+) -> Element<'a, Message> {
+    let mut body = column![Space::new().height(Length::Fill)].spacing(SPACE_XS);
+    if loading {
+        body = body.push(container(progress_bar(0.0..=1.0, 0.35)).height(Length::Fixed(4.0)));
+    }
+    if let Some(title) = title {
+        body = body.push(text(title).size(FONT_CAPTION).color(TEXT_SECONDARY));
+    }
+    body = body.push(text(status_label).size(FONT_CAPTION).color(TEXT_TERTIARY));
+
+    container(body.padding(SPACE_SM as u16))
+        .width(Length::Fill)
+        .height(Length::Fixed(height))
+        .style(thumb_placeholder_style)
         .into()
 }
 
@@ -3164,25 +3204,39 @@ fn render_new_media_dialog(app: &Librapix) -> Element<'_, Message> {
         column![].into()
     };
 
-    let preview: Element<'_, Message> = if let Some(path) = &announcement.preview_path {
-        container(
-            image(image::Handle::from_path(path))
-                .width(Length::Fill)
-                .height(Length::Fixed(220.0))
-                .content_fit(ContentFit::Contain),
-        )
-        .style(card_style)
-        .into()
-    } else {
-        container(
-            text(announcement.title.as_str())
-                .size(FONT_CAPTION)
-                .color(TEXT_TERTIARY),
-        )
-        .height(Length::Fixed(180.0))
-        .center_y(Length::Shrink)
-        .style(thumb_placeholder_style)
-        .into()
+    let preview_fallback = announcement.preview_path.as_ref().or_else(|| {
+        app.media_cache
+            .get(&announcement.media_id)
+            .and_then(|details| details.detail_thumbnail_path.as_ref())
+    });
+    let preview_presentation =
+        resolve_thumbnail_presentation(app, announcement.media_id, preview_fallback);
+    let preview: Element<'_, Message> = match preview_presentation.state {
+        ThumbnailPresentationState::Ready => {
+            let path = preview_presentation
+                .resolved_path
+                .expect("ready thumbnail presentation must include path");
+            container(
+                image(image::Handle::from_path(path))
+                    .width(Length::Fill)
+                    .height(Length::Fixed(220.0))
+                    .content_fit(ContentFit::Contain),
+            )
+            .style(card_style)
+            .into()
+        }
+        ThumbnailPresentationState::Loading => render_thumbnail_placeholder(
+            app.i18n.text(TextKey::ThumbnailLoadingLabel).to_owned(),
+            Some(announcement.title.as_str()),
+            220.0,
+            true,
+        ),
+        ThumbnailPresentationState::Unavailable => render_thumbnail_placeholder(
+            app.i18n.text(TextKey::ThumbnailUnavailable).to_owned(),
+            Some(announcement.title.as_str()),
+            220.0,
+            false,
+        ),
     };
 
     let metadata_lines = column![
@@ -5921,7 +5975,7 @@ fn enqueue_thumbnail_items(app: &mut Librapix, items: Vec<ThumbnailWorkItem>) {
         if let Some(ThumbnailState::Ready(_)) = app.thumbnail_states.get(&item.media_id) {
             continue;
         }
-        if let Some(ThumbnailState::Generating { .. }) = app.thumbnail_states.get(&item.media_id) {
+        if let Some(ThumbnailState::Generating) = app.thumbnail_states.get(&item.media_id) {
             continue;
         }
         if matches!(
@@ -5935,12 +5989,8 @@ fn enqueue_thumbnail_items(app: &mut Librapix, items: Vec<ThumbnailWorkItem>) {
         }
         app.background.thumbnail_queued_ids.insert(item.media_id);
         app.background.thumbnail_queue.push_back(item.clone());
-        app.thumbnail_states.insert(
-            item.media_id,
-            ThumbnailState::Queued {
-                attempt: item.attempt,
-            },
-        );
+        app.thumbnail_states
+            .insert(item.media_id, ThumbnailState::Queued);
     }
     app.activity_progress.queue_depth = app.background.thumbnail_queue.len();
 }
@@ -5956,12 +6006,8 @@ fn run_next_thumbnail_batch_if_idle(app: &mut Librapix) -> Task<Message> {
         let Some(item) = app.background.thumbnail_queue.pop_front() else {
             break;
         };
-        app.thumbnail_states.insert(
-            item.media_id,
-            ThumbnailState::Generating {
-                attempt: item.attempt,
-            },
-        );
+        app.thumbnail_states
+            .insert(item.media_id, ThumbnailState::Generating);
         batch.push(item);
     }
 
@@ -6036,7 +6082,6 @@ fn do_thumbnail_batch(input: ThumbnailBatchInput) -> ThumbnailBatchResult {
                     state: ThumbnailState::Failed {
                         retryable,
                         last_error: error.to_string(),
-                        attempt: item.attempt,
                     },
                     thumbnail_path: None,
                 });
@@ -6210,7 +6255,15 @@ fn apply_projection_job_result(app: &mut Librapix, result: ProjectionJobResult) 
     }
     app.browse_status = result.browse_status;
 
-    if let Some(announcement) = announcement {
+    if let Some(mut announcement) = announcement {
+        if announcement.preview_path.is_none()
+            && let Some(path) = app
+                .media_cache
+                .get(&announcement.media_id)
+                .and_then(|details| details.detail_thumbnail_path.as_ref())
+        {
+            announcement.preview_path = Some(path.clone());
+        }
         app.new_media_announcement = Some(announcement);
     }
 
@@ -6273,6 +6326,11 @@ fn apply_thumbnail_batch_result(app: &mut Librapix, result: ThumbnailBatchResult
             patch_thumbnail_path(&mut app.search_items, outcome.media_id, &path);
             if let Some(details) = app.media_cache.get_mut(&outcome.media_id) {
                 details.detail_thumbnail_path = Some(path.clone());
+            }
+            if let Some(announcement) = app.new_media_announcement.as_mut()
+                && announcement.media_id == outcome.media_id
+            {
+                announcement.preview_path = Some(path.clone());
             }
             if app.state.selected_media_id == Some(outcome.media_id) {
                 app.details_preview_path = Some(path);
@@ -6354,7 +6412,7 @@ fn refresh_thumbnail_states_from_items(app: &mut Librapix) {
         seen_ids.insert(item.media_id);
         if matches!(
             app.thumbnail_states.get(&item.media_id),
-            Some(ThumbnailState::Queued { .. }) | Some(ThumbnailState::Generating { .. })
+            Some(ThumbnailState::Queued) | Some(ThumbnailState::Generating)
         ) {
             continue;
         }
@@ -6368,10 +6426,7 @@ fn refresh_thumbnail_states_from_items(app: &mut Librapix) {
     }
     app.thumbnail_states.retain(|media_id, state| {
         seen_ids.contains(media_id)
-            || matches!(
-                state,
-                ThumbnailState::Queued { .. } | ThumbnailState::Generating { .. }
-            )
+            || matches!(state, ThumbnailState::Queued | ThumbnailState::Generating)
     });
 }
 
@@ -6885,6 +6940,79 @@ mod tests {
     }
 
     #[test]
+    fn thumbnail_presentation_uses_loading_state_for_retryable_failures() {
+        let mut app = Librapix::default();
+        app.thumbnail_states.insert(
+            11,
+            ThumbnailState::Failed {
+                retryable: true,
+                last_error: "still being written".to_owned(),
+            },
+        );
+
+        let presentation = resolve_thumbnail_presentation(&app, 11, None);
+        assert_eq!(presentation.state, ThumbnailPresentationState::Loading);
+        assert_eq!(presentation.resolved_path, None);
+    }
+
+    #[test]
+    fn thumbnail_presentation_uses_unavailable_state_for_terminal_failures() {
+        let mut app = Librapix::default();
+        app.thumbnail_states.insert(
+            12,
+            ThumbnailState::Failed {
+                retryable: false,
+                last_error: "unsupported".to_owned(),
+            },
+        );
+
+        let presentation = resolve_thumbnail_presentation(&app, 12, None);
+        assert_eq!(presentation.state, ThumbnailPresentationState::Unavailable);
+        assert_eq!(presentation.resolved_path, None);
+    }
+
+    #[test]
+    fn thumbnail_batch_completion_updates_announcement_preview_path() {
+        let mut app = Librapix::default();
+        app.background.thumbnail_generation = 3;
+        app.background.thumbnail_total = 1;
+        app.new_media_announcement = Some(NewMediaAnnouncement {
+            media_id: 42,
+            title: "shot.png".to_owned(),
+            metadata_line: "Image".to_owned(),
+            preview_path: None,
+            media_kind: "image".to_owned(),
+            file_size_bytes: 123,
+            modified_unix_seconds: Some(10),
+            width_px: Some(10),
+            height_px: Some(10),
+            absolute_path: PathBuf::from("/tmp/shot.png"),
+            additional_count: 0,
+        });
+
+        let preview_path = PathBuf::from("/tmp/thumb-42.png");
+        let result = ThumbnailBatchResult {
+            generation: 3,
+            outcomes: vec![ThumbnailWorkOutcome {
+                media_id: 42,
+                state: ThumbnailState::Ready(preview_path.clone()),
+                thumbnail_path: Some(preview_path.clone()),
+            }],
+            reused: 1,
+            ..Default::default()
+        };
+
+        let _ = apply_thumbnail_batch_result(&mut app, result);
+
+        assert_eq!(
+            app.new_media_announcement
+                .as_ref()
+                .and_then(|announcement| announcement.preview_path.clone()),
+            Some(preview_path)
+        );
+    }
+
+    #[test]
     fn projection_pending_reason_prefers_filesystem_watch() {
         let mut app = Librapix::default();
         app.background.reconcile_in_flight = true;
@@ -6947,7 +7075,7 @@ mod tests {
         });
         app.background.thumbnail_queued_ids.insert(media_id);
         app.thumbnail_states
-            .insert(media_id, ThumbnailState::Queued { attempt: 0 });
+            .insert(media_id, ThumbnailState::Queued);
 
         let stale = ThumbnailBatchResult {
             generation: 8,
@@ -6960,7 +7088,7 @@ mod tests {
         assert!(app.background.thumbnail_queue.is_empty());
         assert!(matches!(
             app.thumbnail_states.get(&media_id),
-            Some(ThumbnailState::Generating { attempt: 0 })
+            Some(ThumbnailState::Generating)
         ));
     }
 

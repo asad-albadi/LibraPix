@@ -50,6 +50,27 @@
   - Treat every state-machine early return path as a transition point: in-flight flags must be cleared or handed off explicitly.
   - Keep stale-generation result handlers responsible for lock cleanup where cancellation is cooperative rather than preemptive.
 
+## Thumbnail cards/new-file modal show retry diagnostics or empty preview while thumbnails are still generating
+
+- Symptoms
+  - Gallery/timeline/search cards can show technical retry text (for example retry attempt/error details) while thumbnails are still being generated.
+  - New-file announcement modal can stay on a blank/title-only placeholder even after the thumbnail batch completes.
+- Affected area
+  - Thumbnail state-to-UI presentation mapping in browse cards and new-file announcement modal.
+- Confirmed cause
+  - Card placeholder rendering used raw `ThumbnailState::Failed`/retry diagnostics text as user-facing content.
+  - New-file announcement preview path was created from projection-time cache and not updated when thumbnail completion outcomes arrived.
+- Resolution
+  - Added shared thumbnail presentation-state mapping:
+    - `Ready` -> render thumbnail
+    - queued/generating/retryable-failed -> render loading preview placeholder
+    - terminal failure/missing -> render unavailable placeholder
+  - Thumbnail completion now patches active announcement preview path for the same `media_id`.
+  - Modal preview fallback now also resolves through current thumbnail state/cache so loading/ready transitions are reflected without restart.
+- Prevention guidance
+  - Keep retry diagnostics in diagnostics/status surfaces, not primary browse cards.
+  - Ensure transient UI surfaces (announcement modal) subscribe to the same thumbnail readiness updates as main browse models.
+
 ## Update chip stays on "Updates" and does not show release state
 
 - Symptoms

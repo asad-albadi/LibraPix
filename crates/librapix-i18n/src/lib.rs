@@ -122,6 +122,7 @@ pub enum TextKey {
     ProgressErrorLabel,
     LibraryFilterAdjustedLabel,
     LibraryFilterResetUnavailableLabel,
+    ThumbnailLoadingLabel,
     ThumbnailRetryingLabel,
     DetailsKindLabel,
     DetailsSizeLabel,
@@ -279,7 +280,7 @@ fn en_us(key: TextKey) -> &'static str {
         TextKey::ThumbnailGeneratedLabel => "generated",
         TextKey::ThumbnailReusedLabel => "reused",
         TextKey::ThumbnailFailedLabel => "failed",
-        TextKey::ThumbnailUnavailable => "unavailable",
+        TextKey::ThumbnailUnavailable => "Preview unavailable",
         TextKey::DetailsSelectedMediaLabel => "Selected",
         TextKey::DetailsTagInputLabel => "Tag name",
         TextKey::DetailsMetadataSectionLabel => "Metadata",
@@ -343,6 +344,7 @@ fn en_us(key: TextKey) -> &'static str {
         TextKey::LibraryFilterResetUnavailableLabel => {
             "Selected library filter is unavailable. Showing all libraries."
         }
+        TextKey::ThumbnailLoadingLabel => "Generating preview\u{2026}",
         TextKey::ThumbnailRetryingLabel => "Retrying failed thumbnails",
         TextKey::DetailsKindLabel => "Type",
         TextKey::DetailsSizeLabel => "Size",

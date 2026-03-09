@@ -84,6 +84,8 @@ All notable changes to this project are documented in this file.
 - Corrected staged-runtime activity state transitions so completed reconcile/projection/thumbnail flows reliably return to `Ready` instead of staying stuck on stale busy labels (for example `Refreshing gallery`).
 - Fixed reconcile-to-projection handoff to clear reconcile in-flight state before starting projection, preventing dead-end pending projection states.
 - Fixed stale/superseded thumbnail batch completion handling to release the thumbnail in-flight lock and resume current-generation queued thumbnail work.
+- Fixed thumbnail card placeholder UX to show product-style preview loading/unavailable states instead of exposing retry diagnostics text in normal browse cards.
+- Fixed new-file announcement modal preview hydration so thumbnail completion updates the active modal preview path and pending thumbnails display a loading state.
 
 ### Added
 - Branding integration: blue logo in app header, GitHub link button, asset-based icons throughout UI.

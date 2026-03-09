@@ -89,7 +89,8 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
   - `Task::done(Message::StartupRestore)` fires after the first render.
   - Startup now runs in two phases:
     - Phase A: `start_snapshot_hydrate` loads persisted browse snapshot payload (`projection_snapshots`) plus roots/ignore rules for immediate render.
-    - Phase B: queued reconcile (`request_reconcile`) runs scan/index/projection/thumbnails in background after hydrate is applied.
+    - Phase B: startup reconcile is kicked off after hydrate delay (`StartupReconcileKickoff`) so the first usable UI frame is not blocked by immediate scan pressure.
+      - If snapshot payload is missing/empty, projection is bootstrapped first, then reconcile runs from pending state.
   - Startup restore also schedules a non-blocking GitHub latest-release check task.
   - UI remains interactive while background work proceeds; activity status shown in the sidebar runtime panel.
   - Snapshot and reconcile completions are generation-guarded; stale completions are ignored.
@@ -128,6 +129,8 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
   - Repeated triggers are coalesced:
     - watcher bursts merge through pending reconcile + deduped pending path set
     - rapid projection/filter/search triggers set `pending_projection` (with reason merge) and supersede older completions
+    - reconcile requests defer while projection/thumbnail batches are in-flight, then run from pending state
+  - Thumbnail retry wakeups are self-driven (`ThumbnailRetryEnqueue`) and rebase to the current thumbnail generation when the media item still needs retry work.
   - Projection refresh persists default browse snapshot payloads for subsequent fast startup hydration.
   - Scan stage now captures visible-media IDs and schedules targeted thumbnail work even when projection rebuild is skipped.
   - Release checks continue to use non-blocking `Task::perform` (`start_update_check` -> `UpdateCheckCompleted`).

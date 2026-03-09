@@ -82,6 +82,9 @@ All notable changes to this project are documented in this file.
 - New-file detected dialog now uses the same content-sized modal behavior as other dialogs, removing extra bottom gap below actions.
 
 ### Fixed
+- Fixed startup responsiveness on large indexed libraries by removing root-availability filesystem checks from synchronous bootstrap, capping in-memory preview-line materialization, and deferring startup reconcile kickoff after snapshot hydrate.
+- Fixed staged thumbnail retry deadlocks where retryable failures could stay in loading state without further progress: retry items now rebase to current thumbnail generation, reconcile requests no longer preempt in-flight thumbnail batches, and exhausted retry budgets transition to terminal failure state.
+- Fixed new-file announcement preview stalls caused by orphaned retry/loading state so modal preview updates can complete from self-driven thumbnail retries without waiting for the next filesystem event.
 - Fixed staged-runtime indeterminate progress rendering to use an animated activity indicator instead of a static half-filled bar.
 - Corrected staged-runtime activity state transitions so completed reconcile/projection/thumbnail flows reliably return to `Ready` instead of staying stuck on stale busy labels (for example `Refreshing gallery`).
 - Fixed reconcile-to-projection handoff to clear reconcile in-flight state before starting projection, preventing dead-end pending projection states.

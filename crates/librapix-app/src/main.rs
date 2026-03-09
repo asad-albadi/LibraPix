@@ -90,6 +90,7 @@ enum Message {
     IgnoreRuleApplyEdit,
     IgnoreRuleCancelEdit,
     StartupRestore,
+    StartupReconcileKickoff,
     FilesystemChanged(Vec<PathBuf>),
     SetFilterMediaKind(Option<String>),
     SetFilterExtension(Option<String>),
@@ -540,10 +541,12 @@ const AUTO_UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 const MANUAL_UPDATE_CHECK_COOLDOWN: Duration = Duration::from_secs(5 * 60);
 const PROJECTION_SNAPSHOT_KEY: &str = "default";
 const PROJECTION_SNAPSHOT_VERSION: u32 = 1;
+const STARTUP_RECONCILE_DELAY_MS: u64 = 550;
 const THUMBNAIL_BATCH_SIZE: usize = 32;
 const THUMBNAIL_MAX_RETRY_ATTEMPTS: u8 = 5;
 const THUMBNAIL_RETRY_DELAY_MS: u64 = 1200;
 const VISIBLE_THUMBNAIL_QUEUE_LIMIT: usize = 180;
+const STATE_PREVIEW_LINE_LIMIT: usize = 400;
 
 #[derive(Debug, Clone)]
 struct RuntimeContext {
@@ -795,6 +798,7 @@ fn message_event_label(msg: &Message) -> String {
         Message::IgnoreRuleApplyEdit => "IgnoreRuleApplyEdit".into(),
         Message::IgnoreRuleCancelEdit => "IgnoreRuleCancelEdit".into(),
         Message::StartupRestore => "StartupRestore".into(),
+        Message::StartupReconcileKickoff => "StartupReconcileKickoff".into(),
         Message::FilesystemChanged(paths) => {
             format!("FilesystemChanged(paths={})", paths.len())
         }
@@ -1065,6 +1069,13 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
             }
             return Task::batch(tasks);
         }
+        Message::StartupReconcileKickoff => {
+            if app.state.library_roots.is_empty() {
+                set_activity_ready(app);
+                return Task::none();
+            }
+            return request_reconcile(app, BackgroundWorkReason::UserOrSystem);
+        }
         Message::FilesystemChanged(paths) => {
             return on_filesystem_changed(app, paths);
         }
@@ -1129,7 +1140,7 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
             return apply_thumbnail_batch_result(app, *result);
         }
         Message::ThumbnailRetryEnqueue(item) => {
-            if item_retry_generation_is_current(app, &item) {
+            if let Some(item) = normalize_thumbnail_retry_item(app, item) {
                 enqueue_thumbnail_items(app, vec![item]);
                 return run_next_thumbnail_batch_if_idle(app);
             }
@@ -3985,7 +3996,6 @@ fn bootstrap_runtime() -> BootstrapRuntime {
         }
     }
     let _ = storage.ensure_default_ignore_rules();
-    let _ = storage.reconcile_source_root_availability();
 
     runtime.roots = storage
         .list_source_roots()
@@ -5257,6 +5267,14 @@ fn collect_visible_media_ids_for_thumbnailing(app: &Librapix) -> Vec<i64> {
     ordered
 }
 
+fn collect_preview_lines(items: &[BrowseItem]) -> Vec<String> {
+    items
+        .iter()
+        .take(STATE_PREVIEW_LINE_LIMIT)
+        .map(|item| item.line.clone())
+        .collect()
+}
+
 fn ensure_valid_library_filter(app: &mut Librapix) {
     let Some(active_filter) = app.filter_source_root_id else {
         return;
@@ -5304,6 +5322,15 @@ fn start_snapshot_hydrate(app: &mut Librapix) -> Task<Message> {
     Task::perform(async move { do_snapshot_hydrate(input) }, |result| {
         Message::HydrateSnapshotComplete(Box::new(result))
     })
+}
+
+fn schedule_startup_reconcile() -> Task<Message> {
+    Task::perform(
+        async move {
+            std::thread::sleep(Duration::from_millis(STARTUP_RECONCILE_DELAY_MS));
+        },
+        |_| Message::StartupReconcileKickoff,
+    )
 }
 
 fn do_snapshot_hydrate(input: SnapshotHydrateInput) -> SnapshotHydrateResult {
@@ -5376,20 +5403,11 @@ fn apply_snapshot_hydrate_result(
             .collect();
         app.available_filter_tags = snapshot.available_filter_tags;
         app.state.apply(AppMessage::ReplaceGalleryPreview);
-        app.state.replace_gallery_preview(
-            app.gallery_items
-                .iter()
-                .map(|item| item.line.clone())
-                .collect(),
-        );
+        app.state
+            .replace_gallery_preview(collect_preview_lines(&app.gallery_items));
         app.state.apply(AppMessage::ReplaceTimelinePreview);
-        app.state.replace_timeline_preview(
-            app.timeline_items
-                .iter()
-                .map(|item| item.line.clone())
-                .collect(),
-        );
-        refresh_thumbnail_states_from_items(app);
+        app.state
+            .replace_timeline_preview(collect_preview_lines(&app.timeline_items));
     }
 
     if !app.background.reconcile_in_flight && !app.background.projection_in_flight {
@@ -5397,16 +5415,28 @@ fn apply_snapshot_hydrate_result(
     }
     if app.background.startup_reconcile_queued {
         app.background.startup_reconcile_queued = false;
-        return request_reconcile(app, BackgroundWorkReason::UserOrSystem);
+        if app.gallery_items.is_empty() && app.timeline_items.is_empty() {
+            app.background.pending_reconcile = true;
+            app.background.pending_reconcile_reason = BackgroundWorkReason::UserOrSystem;
+            return request_projection_refresh(app, BackgroundWorkReason::UserOrSystem);
+        }
+        return schedule_startup_reconcile();
     }
     Task::none()
 }
 
 fn request_reconcile(app: &mut Librapix, reason: BackgroundWorkReason) -> Task<Message> {
-    if app.background.reconcile_in_flight {
+    if app.background.reconcile_in_flight
+        || app.background.projection_in_flight
+        || app.background.thumbnail_in_flight
+    {
+        let was_pending = app.background.pending_reconcile;
         app.background.pending_reconcile = true;
-        app.background.pending_reconcile_reason =
-            merge_work_reason(app.background.pending_reconcile_reason, reason);
+        app.background.pending_reconcile_reason = if was_pending {
+            merge_work_reason(app.background.pending_reconcile_reason, reason)
+        } else {
+            reason
+        };
         return Task::none();
     }
 
@@ -5767,11 +5797,7 @@ fn do_projection_job(input: ProjectionJobInput) -> ProjectionJobResult {
             )
         })
         .collect();
-    out.gallery_preview_lines = out
-        .gallery_items
-        .iter()
-        .map(|item| item.line.clone())
-        .collect();
+    out.gallery_preview_lines = collect_preview_lines(&out.gallery_items);
 
     let filtered_media = media
         .into_iter()
@@ -5855,11 +5881,7 @@ fn do_projection_job(input: ProjectionJobInput) -> ProjectionJobResult {
             rows
         })
         .collect();
-    out.timeline_preview_lines = out
-        .timeline_items
-        .iter()
-        .map(|item| item.line.clone())
-        .collect();
+    out.timeline_preview_lines = collect_preview_lines(&out.timeline_items);
 
     if !input.search_query.trim().is_empty() {
         let docs = all_rows
@@ -5904,11 +5926,7 @@ fn do_projection_job(input: ProjectionJobInput) -> ProjectionJobResult {
             .filter(|row| row_matches_tag_filter(row, active_tag_filter.map(|tag| tag.as_str())))
             .map(|row| browse_item_from_row(input.i18n, &input.thumbnails_dir, row))
             .collect::<Vec<_>>();
-        out.search_preview_lines = out
-            .search_items
-            .iter()
-            .map(|item| item.line.clone())
-            .collect();
+        out.search_preview_lines = collect_preview_lines(&out.search_items);
     }
 
     let projected_ids = out
@@ -6185,26 +6203,15 @@ fn do_thumbnail_batch(input: ThumbnailBatchInput) -> ThumbnailBatchResult {
                 });
             }
             Err(error) => {
-                let retryable = thumbnail_error_retryable(&error);
+                let (state, retry_item) = classify_thumbnail_failure(&item, &error);
                 out.failed += 1;
                 out.outcomes.push(ThumbnailWorkOutcome {
                     media_id: item.media_id,
-                    state: ThumbnailState::Failed {
-                        retryable,
-                        last_error: error.to_string(),
-                    },
+                    state,
                     thumbnail_path: None,
                 });
-                if retryable && item.attempt.saturating_add(1) < THUMBNAIL_MAX_RETRY_ATTEMPTS {
-                    out.retry_items.push(ThumbnailWorkItem {
-                        generation: item.generation,
-                        media_id: item.media_id,
-                        absolute_path: item.absolute_path,
-                        media_kind: item.media_kind,
-                        file_size_bytes: item.file_size_bytes,
-                        modified_unix_seconds: item.modified_unix_seconds,
-                        attempt: item.attempt.saturating_add(1),
-                    });
+                if let Some(retry_item) = retry_item {
+                    out.retry_items.push(retry_item);
                 }
             }
         }
@@ -6223,8 +6230,49 @@ fn thumbnail_error_retryable(error: &librapix_thumbnails::ThumbnailError) -> boo
     }
 }
 
-fn item_retry_generation_is_current(app: &Librapix, item: &ThumbnailWorkItem) -> bool {
-    item.generation == app.background.thumbnail_generation
+fn classify_thumbnail_failure(
+    item: &ThumbnailWorkItem,
+    error: &librapix_thumbnails::ThumbnailError,
+) -> (ThumbnailState, Option<ThumbnailWorkItem>) {
+    let retryable_error = thumbnail_error_retryable(error);
+    let retry_budget_remaining = item.attempt.saturating_add(1) < THUMBNAIL_MAX_RETRY_ATTEMPTS;
+    let should_retry = retryable_error && retry_budget_remaining;
+    let state = ThumbnailState::Failed {
+        retryable: should_retry,
+        last_error: error.to_string(),
+    };
+    let retry_item = if should_retry {
+        Some(ThumbnailWorkItem {
+            generation: item.generation,
+            media_id: item.media_id,
+            absolute_path: item.absolute_path.clone(),
+            media_kind: item.media_kind.clone(),
+            file_size_bytes: item.file_size_bytes,
+            modified_unix_seconds: item.modified_unix_seconds,
+            attempt: item.attempt.saturating_add(1),
+        })
+    } else {
+        None
+    };
+    (state, retry_item)
+}
+
+fn normalize_thumbnail_retry_item(
+    app: &Librapix,
+    mut item: ThumbnailWorkItem,
+) -> Option<ThumbnailWorkItem> {
+    if matches!(
+        app.thumbnail_states.get(&item.media_id),
+        Some(ThumbnailState::Ready(_))
+            | Some(ThumbnailState::Failed {
+                retryable: false,
+                ..
+            })
+    ) {
+        return None;
+    }
+    item.generation = app.background.thumbnail_generation;
+    Some(item)
 }
 
 fn thumbnail_retry_delay_ms(attempt: u8) -> u64 {
@@ -6407,6 +6455,22 @@ fn apply_thumbnail_batch_result(app: &mut Librapix, result: ThumbnailBatchResult
     if result.generation != app.background.thumbnail_generation {
         // A superseded batch completed after a newer generation was requested.
         // Release the in-flight lock and continue the current generation queue.
+        for outcome in result.outcomes {
+            if app
+                .background
+                .thumbnail_queued_ids
+                .contains(&outcome.media_id)
+            {
+                continue;
+            }
+            if matches!(
+                app.thumbnail_states.get(&outcome.media_id),
+                Some(ThumbnailState::Queued) | Some(ThumbnailState::Generating)
+            ) {
+                app.thumbnail_states
+                    .insert(outcome.media_id, ThumbnailState::Missing);
+            }
+        }
         app.background.thumbnail_in_flight = false;
         app.activity_progress.queue_depth = app.background.thumbnail_queue.len();
         let next_batch = run_next_thumbnail_batch_if_idle(app);
@@ -7050,6 +7114,60 @@ mod tests {
     }
 
     #[test]
+    fn classify_thumbnail_failure_marks_terminal_when_retry_budget_exhausted() {
+        let item = ThumbnailWorkItem {
+            generation: 1,
+            media_id: 5,
+            absolute_path: PathBuf::from("/tmp/shot.png"),
+            media_kind: "image".to_owned(),
+            file_size_bytes: 100,
+            modified_unix_seconds: Some(12),
+            attempt: THUMBNAIL_MAX_RETRY_ATTEMPTS.saturating_sub(1),
+        };
+        let error = librapix_thumbnails::ThumbnailError::Io(std::io::Error::other(
+            "file still being written",
+        ));
+
+        let (state, retry) = classify_thumbnail_failure(&item, &error);
+        assert!(retry.is_none());
+        assert!(matches!(
+            state,
+            ThumbnailState::Failed {
+                retryable: false,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn classify_thumbnail_failure_schedules_retry_when_budget_allows() {
+        let item = ThumbnailWorkItem {
+            generation: 7,
+            media_id: 8,
+            absolute_path: PathBuf::from("/tmp/clip.mp4"),
+            media_kind: "video".to_owned(),
+            file_size_bytes: 250,
+            modified_unix_seconds: Some(44),
+            attempt: 0,
+        };
+        let error =
+            librapix_thumbnails::ThumbnailError::Io(std::io::Error::other("sharing violation"));
+
+        let (state, retry) = classify_thumbnail_failure(&item, &error);
+        assert!(matches!(
+            state,
+            ThumbnailState::Failed {
+                retryable: true,
+                ..
+            }
+        ));
+        let retry = retry.expect("retry item should be scheduled");
+        assert_eq!(retry.generation, item.generation);
+        assert_eq!(retry.media_id, item.media_id);
+        assert_eq!(retry.attempt, 1);
+    }
+
+    #[test]
     fn activity_indicator_mode_is_idle_when_not_busy() {
         let progress = ActivityProgressState::default();
         assert_eq!(
@@ -7175,6 +7293,76 @@ mod tests {
             app.background.pending_projection_reason,
             BackgroundWorkReason::FilesystemWatch
         );
+    }
+
+    #[test]
+    fn request_reconcile_defers_while_thumbnail_batch_in_flight() {
+        let mut app = Librapix::default();
+        app.background.reconcile_generation = 12;
+        app.background.thumbnail_in_flight = true;
+
+        let _ = request_reconcile(&mut app, BackgroundWorkReason::FilesystemWatch);
+
+        assert_eq!(app.background.reconcile_generation, 12);
+        assert!(!app.background.reconcile_in_flight);
+        assert!(app.background.pending_reconcile);
+        assert_eq!(
+            app.background.pending_reconcile_reason,
+            BackgroundWorkReason::FilesystemWatch
+        );
+    }
+
+    #[test]
+    fn stale_retry_enqueue_rebases_to_current_thumbnail_generation() {
+        let mut app = Librapix::default();
+        app.background.thumbnail_generation = 9;
+        app.thumbnail_states.insert(
+            5,
+            ThumbnailState::Failed {
+                retryable: true,
+                last_error: "file still being written".to_owned(),
+            },
+        );
+        let item = ThumbnailWorkItem {
+            generation: 3,
+            media_id: 5,
+            absolute_path: PathBuf::from("/tmp/new.png"),
+            media_kind: "image".to_owned(),
+            file_size_bytes: 400,
+            modified_unix_seconds: Some(99),
+            attempt: 2,
+        };
+
+        let normalized = normalize_thumbnail_retry_item(&app, item).expect("retry should rebase");
+        assert_eq!(normalized.generation, 9);
+        assert_eq!(normalized.attempt, 2);
+    }
+
+    #[test]
+    fn startup_hydrate_without_snapshot_bootstraps_projection_before_reconcile() {
+        let mut app = Librapix::default();
+        app.background.snapshot_generation = 4;
+        app.background.startup_reconcile_queued = true;
+        app.state.replace_library_roots(vec![LibraryRootView {
+            id: 7,
+            normalized_path: PathBuf::from("/tmp/library"),
+            lifecycle: RootLifecycle::Active,
+            display_name: Some("Main".to_owned()),
+        }]);
+
+        let result = SnapshotHydrateResult {
+            generation: 4,
+            roots: app.state.library_roots.clone(),
+            ignore_rules: Vec::new(),
+            snapshot: None,
+            snapshot_error: None,
+        };
+
+        let _ = apply_snapshot_hydrate_result(&mut app, result);
+
+        assert!(app.background.projection_in_flight);
+        assert!(app.background.pending_reconcile);
+        assert!(!app.background.reconcile_in_flight);
     }
 
     #[test]

@@ -32,6 +32,46 @@
 - Prevention guidance
   - Validate filter state after root mutations and preserve explicit “All means all roots” semantics.
 
+## Startup feels hung on large libraries (especially on Windows) even when already indexed
+
+- Symptoms
+  - App window opens late or appears unresponsive during startup on very large indexed libraries.
+  - `Loading library snapshot` appears to stall before normal browsing feels usable.
+- Affected area
+  - Startup bootstrap + snapshot-hydrate apply path.
+- Confirmed cause
+  - Startup bootstrap performed synchronous root availability filesystem checks before UI startup.
+  - Snapshot apply/materialization cloned large preview-line vectors on the UI update path.
+  - Startup reconcile launched immediately after hydrate, increasing first-load contention.
+- Resolution
+  - Removed synchronous root-availability reconciliation from startup bootstrap.
+  - Capped preview-line materialization to bounded samples instead of full all-item cloning.
+  - Startup now schedules reconcile kickoff after hydrate delay; if snapshot data is missing, projection is bootstrapped first and reconcile follows.
+- Prevention guidance
+  - Keep startup phase-A hydrate free of filesystem traversal/checks.
+  - Avoid unbounded UI-thread materialization from large read models.
+  - Sequence startup work as hydrate-first, reconcile-after.
+
+## New screenshot thumbnail appears only after a later filesystem event
+
+- Symptoms
+  - Screenshot `N` stays on loading/unavailable, then appears only when screenshot `N+1` triggers another watcher cycle.
+  - New-file dialog preview can stay loading until later unrelated watcher activity.
+- Affected area
+  - Thumbnail retry scheduling + reconcile generation coordination.
+- Confirmed cause
+  - Retry enqueue messages were dropped when their generation was older than the latest reconcile generation, even when retry was still valid.
+  - Reconcile could preempt in-flight thumbnail batches, increasing generation churn and invalidating retry wakeups.
+  - Retryable failures with exhausted retry budget remained marked `retryable`, leaving UI in permanent loading state.
+- Resolution
+  - Retry enqueue now rebases onto current thumbnail generation when the media item still needs retry work.
+  - Reconcile requests are deferred while projection/thumbnail batches are in-flight, using pending coalescing instead of generation churn.
+  - Exhausted retry budgets now transition to terminal failure state (`retryable: false`) so loading indicators clear truthfully.
+- Prevention guidance
+  - Keep retry wakeups self-driven and independent from new watcher events.
+  - Ensure retry-state flags reflect whether another retry is actually scheduled.
+  - Avoid generation resets while thumbnail batches are actively applying outcomes.
+
 ## Activity status stays stuck on "Refreshing gallery" after background work
 
 - Symptoms

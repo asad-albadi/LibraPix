@@ -82,6 +82,9 @@ All notable changes to this project are documented in this file.
 - New-file detected dialog now uses the same content-sized modal behavior as other dialogs, removing extra bottom gap below actions.
 
 ### Fixed
+- Fixed runtime timer starvation by replacing blocking `std::thread::sleep` loops/tasks in app subscriptions with `iced::time::every` timers plus coordinator due-time state (`startup_reconcile_due_at`, thumbnail retry queue). This removes startup stall behavior and prevents background retry/work wakeups from depending on unrelated events.
+- Fixed burst screenshot thumbnail lag where screenshot `N` could wait for screenshot `N+1`: retryable thumbnail failures now progress from a self-driven retry tick queue instead of per-item sleeping tasks.
+- Fixed details/new-file preview stalls under bursty updates by preserving retryable thumbnail state across projection refresh and by falling back details preview resolution to ready gallery-size thumbnails when detail-size cache paths are absent.
 - Fixed startup responsiveness on large indexed libraries by removing root-availability filesystem checks from synchronous bootstrap, capping in-memory preview-line materialization, and deferring startup reconcile kickoff after snapshot hydrate.
 - Fixed staged thumbnail retry deadlocks where retryable failures could stay in loading state without further progress: retry items now rebase to current thumbnail generation, reconcile requests no longer preempt in-flight thumbnail batches, and exhausted retry budgets transition to terminal failure state.
 - Fixed new-file announcement preview stalls caused by orphaned retry/loading state so modal preview updates can complete from self-driven thumbnail retries without waiting for the next filesystem event.

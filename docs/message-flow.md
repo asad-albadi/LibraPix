@@ -12,4 +12,4 @@ Key current behavior:
 - Background work is staged (`ScanJobComplete`, `ProjectionJobComplete`, `ThumbnailBatchComplete`), not a single monolithic completion.
 - Generation guards prevent stale stage completions from overwriting newer UI state.
 - Filesystem watcher events are coalesced through pending reconcile/projection coordination.
-- Thumbnail retry wakeups are self-driven and rebase to the current thumbnail generation when valid.
+- Thumbnail retry wakeups are self-driven via timer ticks (`ThumbnailRetryTick`) and rebase to the current thumbnail generation when valid.

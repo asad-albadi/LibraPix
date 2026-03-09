@@ -17,7 +17,7 @@ This file tracks major direct dependencies that shape architecture and maintenan
   - [https://github.com/iced-rs/iced/releases](https://github.com/iced-rs/iced/releases)
 - Notes:
   - Latest stable verified at baseline: `0.14.0`.
-  - Features enabled: `image` (raster icons), `svg` (vector logo in header).
+  - Features enabled: `image` (raster icons), `svg` (vector logo in header), `tokio` (timer backend for `iced::time::every` subscriptions).
   - Timeline scrubber uses `operation::scroll_to` for absolute offset targeting with `operation::snap_to` fallback during early viewport initialization.
   - Keep presentation logic in `librapix-app` and prevent leakage into domain/storage.
 - Risks/tradeoffs:

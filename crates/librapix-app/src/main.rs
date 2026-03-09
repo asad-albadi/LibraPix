@@ -12,7 +12,7 @@ use iced::widget::{
     Id, Space, button, column, container, image, mouse_area, operation, progress_bar, responsive,
     row, scrollable, stack, svg, text, text_input, vertical_slider,
 };
-use iced::{ContentFit, Element, Length, Size, Subscription, Task, Theme};
+use iced::{ContentFit, Element, Length, Size, Subscription, Task, Theme, time};
 use librapix_config::{
     LocalePreference, ThemePreference, lexical_normalize_path, load_from_path, load_or_create,
     save_to_path,
@@ -106,7 +106,7 @@ enum Message {
     ScanJobComplete(Box<ScanJobResult>),
     ProjectionJobComplete(Box<ProjectionJobResult>),
     ThumbnailBatchComplete(Box<ThumbnailBatchResult>),
-    ThumbnailRetryEnqueue(ThumbnailWorkItem),
+    ThumbnailRetryTick,
     OpenMediaById(i64),
     CopyMediaFileById(i64),
     DismissNewMediaAnnouncement,
@@ -214,6 +214,12 @@ struct ThumbnailWorkOutcome {
 }
 
 #[derive(Debug, Clone)]
+struct ScheduledThumbnailRetry {
+    item: ThumbnailWorkItem,
+    due_at: Instant,
+}
+
+#[derive(Debug, Clone)]
 struct SnapshotHydrateInput {
     generation: u64,
     database_file: PathBuf,
@@ -313,6 +319,7 @@ struct BackgroundCoordinator {
     thumbnail_generation: u64,
     snapshot_loaded: bool,
     startup_reconcile_queued: bool,
+    startup_reconcile_due_at: Option<Instant>,
     reconcile_in_flight: bool,
     projection_in_flight: bool,
     thumbnail_in_flight: bool,
@@ -324,6 +331,7 @@ struct BackgroundCoordinator {
     reconcile_has_media_changes: bool,
     reconcile_force_projection: bool,
     deferred_thumbnail_items: Vec<ThumbnailWorkItem>,
+    thumbnail_retry_queue: VecDeque<ScheduledThumbnailRetry>,
     thumbnail_queue: VecDeque<ThumbnailWorkItem>,
     thumbnail_queued_ids: HashSet<i64>,
     thumbnail_done: usize,
@@ -542,9 +550,11 @@ const MANUAL_UPDATE_CHECK_COOLDOWN: Duration = Duration::from_secs(5 * 60);
 const PROJECTION_SNAPSHOT_KEY: &str = "default";
 const PROJECTION_SNAPSHOT_VERSION: u32 = 1;
 const STARTUP_RECONCILE_DELAY_MS: u64 = 550;
+const STARTUP_RECONCILE_TICK_INTERVAL: Duration = Duration::from_millis(120);
 const THUMBNAIL_BATCH_SIZE: usize = 32;
 const THUMBNAIL_MAX_RETRY_ATTEMPTS: u8 = 5;
 const THUMBNAIL_RETRY_DELAY_MS: u64 = 1200;
+const THUMBNAIL_RETRY_TICK_INTERVAL: Duration = Duration::from_millis(180);
 const VISIBLE_THUMBNAIL_QUEUE_LIMIT: usize = 180;
 const STATE_PREVIEW_LINE_LIMIT: usize = 400;
 
@@ -654,12 +664,24 @@ struct WatchSubscriptionConfig {
 
 fn subscription(app: &Librapix) -> Subscription<Message> {
     let keyboard_subscription = keyboard::listen().map(Message::KeyboardEvent);
-    let update_tick_subscription = Subscription::run(update_check_tick_stream);
+    let update_tick_subscription =
+        time::every(UPDATE_CHECK_TICK_INTERVAL).map(|_| Message::UpdateCheckTick);
     let activity_animation_subscription = if matches!(
         activity_indicator_mode(&app.activity_progress),
         ActivityIndicatorMode::Indeterminate
-    ) {
-        Subscription::run(activity_animation_tick_stream)
+    ) || has_active_thumbnail_loading(app)
+    {
+        time::every(ACTIVITY_ANIMATION_INTERVAL).map(|_| Message::ActivityAnimationTick)
+    } else {
+        Subscription::none()
+    };
+    let startup_reconcile_subscription = if app.background.startup_reconcile_due_at.is_some() {
+        time::every(STARTUP_RECONCILE_TICK_INTERVAL).map(|_| Message::StartupReconcileKickoff)
+    } else {
+        Subscription::none()
+    };
+    let thumbnail_retry_subscription = if !app.background.thumbnail_retry_queue.is_empty() {
+        time::every(THUMBNAIL_RETRY_TICK_INTERVAL).map(|_| Message::ThumbnailRetryTick)
     } else {
         Subscription::none()
     };
@@ -676,6 +698,8 @@ fn subscription(app: &Librapix) -> Subscription<Message> {
         keyboard_subscription,
         update_tick_subscription,
         activity_animation_subscription,
+        startup_reconcile_subscription,
+        thumbnail_retry_subscription,
     ];
     if !roots.is_empty() {
         subscriptions.push(Subscription::run_with(
@@ -684,30 +708,6 @@ fn subscription(app: &Librapix) -> Subscription<Message> {
         ));
     }
     Subscription::batch(subscriptions)
-}
-
-fn update_check_tick_stream() -> impl iced::futures::Stream<Item = Message> + use<> {
-    use iced::futures::sink::SinkExt;
-    use iced::stream;
-
-    stream::channel(1, async move |mut output| {
-        loop {
-            std::thread::sleep(UPDATE_CHECK_TICK_INTERVAL);
-            let _ = output.send(Message::UpdateCheckTick).await;
-        }
-    })
-}
-
-fn activity_animation_tick_stream() -> impl iced::futures::Stream<Item = Message> + use<> {
-    use iced::futures::sink::SinkExt;
-    use iced::stream;
-
-    stream::channel(1, async move |mut output| {
-        loop {
-            std::thread::sleep(ACTIVITY_ANIMATION_INTERVAL);
-            let _ = output.send(Message::ActivityAnimationTick).await;
-        }
-    })
 }
 
 fn watch_filesystem(
@@ -818,7 +818,7 @@ fn message_event_label(msg: &Message) -> String {
         Message::ScanJobComplete(_) => "ScanJobComplete".into(),
         Message::ProjectionJobComplete(_) => "ProjectionJobComplete".into(),
         Message::ThumbnailBatchComplete(_) => "ThumbnailBatchComplete".into(),
-        Message::ThumbnailRetryEnqueue(_) => "ThumbnailRetryEnqueue".into(),
+        Message::ThumbnailRetryTick => "ThumbnailRetryTick".into(),
         Message::OpenMediaById(id) => format!("OpenMediaById({id})"),
         Message::CopyMediaFileById(id) => format!("CopyMediaFileById({id})"),
         Message::DismissNewMediaAnnouncement => "DismissNewMediaAnnouncement".into(),
@@ -1070,6 +1070,12 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
             return Task::batch(tasks);
         }
         Message::StartupReconcileKickoff => {
+            if let Some(due_at) = app.background.startup_reconcile_due_at
+                && Instant::now() < due_at
+            {
+                return Task::none();
+            }
+            app.background.startup_reconcile_due_at = None;
             if app.state.library_roots.is_empty() {
                 set_activity_ready(app);
                 return Task::none();
@@ -1139,12 +1145,8 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
         Message::ThumbnailBatchComplete(result) => {
             return apply_thumbnail_batch_result(app, *result);
         }
-        Message::ThumbnailRetryEnqueue(item) => {
-            if let Some(item) = normalize_thumbnail_retry_item(app, item) {
-                enqueue_thumbnail_items(app, vec![item]);
-                return run_next_thumbnail_batch_if_idle(app);
-            }
-            refresh_diagnostics(app);
+        Message::ThumbnailRetryTick => {
+            return process_thumbnail_retry_tick(app);
         }
         Message::OpenMediaById(media_id) => {
             open_media_by_id(app, media_id, false);
@@ -1902,6 +1904,12 @@ fn activity_indicator_mode(progress: &ActivityProgressState) -> ActivityIndicato
     ActivityIndicatorMode::Indeterminate
 }
 
+fn has_active_thumbnail_loading(app: &Librapix) -> bool {
+    app.background.thumbnail_in_flight
+        || !app.background.thumbnail_queue.is_empty()
+        || !app.background.thumbnail_retry_queue.is_empty()
+}
+
 fn activity_spinner_frame(frame: u8) -> &'static str {
     const FRAMES: [&str; 4] = ["\u{25D0}", "\u{25D3}", "\u{25D1}", "\u{25D2}"];
     FRAMES[(frame as usize) % FRAMES.len()]
@@ -2107,12 +2115,14 @@ fn render_media_card<'a>(
             None,
             height,
             true,
+            app.activity_animation_frame,
         ),
         ThumbnailPresentationState::Unavailable => render_thumbnail_placeholder(
             app.i18n.text(TextKey::ThumbnailUnavailable).to_owned(),
             None,
             height,
             false,
+            app.activity_animation_frame,
         ),
     };
 
@@ -2211,15 +2221,28 @@ fn render_thumbnail_placeholder<'a>(
     title: Option<&'a str>,
     height: f32,
     loading: bool,
+    animation_frame: u8,
 ) -> Element<'a, Message> {
     let mut body = column![Space::new().height(Length::Fill)].spacing(SPACE_XS);
     if loading {
-        body = body.push(container(progress_bar(0.0..=1.0, 0.35)).height(Length::Fixed(4.0)));
+        body = body.push(
+            row![
+                text(activity_spinner_frame(animation_frame))
+                    .size(FONT_BODY)
+                    .color(ACCENT),
+                text(indeterminate_activity_label(&status_label, animation_frame))
+                    .size(FONT_CAPTION)
+                    .color(TEXT_SECONDARY),
+            ]
+            .spacing(SPACE_XS)
+            .align_y(iced::Alignment::Center),
+        );
+    } else {
+        body = body.push(text(status_label).size(FONT_CAPTION).color(TEXT_TERTIARY));
     }
     if let Some(title) = title {
         body = body.push(text(title).size(FONT_CAPTION).color(TEXT_SECONDARY));
     }
-    body = body.push(text(status_label).size(FONT_CAPTION).color(TEXT_TERTIARY));
 
     container(body.padding(SPACE_SM as u16))
         .width(Length::Fill)
@@ -3347,12 +3370,14 @@ fn render_new_media_dialog(app: &Librapix) -> Element<'_, Message> {
             Some(announcement.title.as_str()),
             220.0,
             true,
+            app.activity_animation_frame,
         ),
         ThumbnailPresentationState::Unavailable => render_thumbnail_placeholder(
             app.i18n.text(TextKey::ThumbnailUnavailable).to_owned(),
             Some(announcement.title.as_str()),
             220.0,
             false,
+            app.activity_animation_frame,
         ),
     };
 
@@ -3686,21 +3711,40 @@ fn render_details_panel(app: &Librapix) -> Element<'_, Message> {
         .into();
     }
 
-    let preview: Element<'_, Message> = if let Some(path) = &app.details_preview_path {
-        container(
-            image(image::Handle::from_path(path))
-                .width(Length::Fill)
-                .content_fit(ContentFit::Contain),
-        )
-        .width(Length::Fill)
-        .style(card_style)
-        .into()
-    } else {
-        container(text(""))
+    let selected_media_id = app
+        .state
+        .selected_media_id
+        .expect("selected media should exist while rendering details panel");
+    let preview_presentation =
+        resolve_thumbnail_presentation(app, selected_media_id, app.details_preview_path.as_ref());
+    let preview: Element<'_, Message> = match preview_presentation.state {
+        ThumbnailPresentationState::Ready => {
+            let path = preview_presentation
+                .resolved_path
+                .expect("ready thumbnail presentation must include path");
+            container(
+                image(image::Handle::from_path(path))
+                    .width(Length::Fill)
+                    .content_fit(ContentFit::Contain),
+            )
             .width(Length::Fill)
-            .height(Length::Fixed(160.0))
-            .style(thumb_placeholder_style)
+            .style(card_style)
             .into()
+        }
+        ThumbnailPresentationState::Loading => render_thumbnail_placeholder(
+            app.i18n.text(TextKey::ThumbnailLoadingLabel).to_owned(),
+            None,
+            160.0,
+            true,
+            app.activity_animation_frame,
+        ),
+        ThumbnailPresentationState::Unavailable => render_thumbnail_placeholder(
+            app.i18n.text(TextKey::ThumbnailUnavailable).to_owned(),
+            None,
+            160.0,
+            false,
+            app.activity_animation_frame,
+        ),
     };
 
     let metadata = if app.details_lines.is_empty() {
@@ -4356,8 +4400,7 @@ fn load_media_details(app: &mut Librapix) {
             .file_name()
             .map(|name| name.to_string_lossy().to_string())
             .unwrap_or_else(|| details.absolute_path.display().to_string());
-        app.details_preview_path =
-            resolve_thumbnail(&app.runtime.thumbnails_dir, &details, DETAIL_THUMB_SIZE);
+        app.details_preview_path = resolve_detail_thumbnail(&app.runtime.thumbnails_dir, &details);
         app.details_lines = vec![
             format!(
                 "{}: {}",
@@ -5113,6 +5156,33 @@ fn resolve_thumbnail(
     }
 }
 
+fn resolve_detail_thumbnail(
+    thumbnails_dir: &std::path::Path,
+    row: &librapix_storage::MediaReadModel,
+) -> Option<PathBuf> {
+    resolve_thumbnail(thumbnails_dir, row, DETAIL_THUMB_SIZE)
+        .or_else(|| resolve_thumbnail(thumbnails_dir, row, GALLERY_THUMB_SIZE))
+}
+
+fn resolve_details_preview_path(
+    app: &Librapix,
+    media_id: i64,
+    cached_thumbnail: Option<&PathBuf>,
+) -> Option<PathBuf> {
+    if let Some(path) = cached_thumbnail {
+        return Some(path.clone());
+    }
+    if let Some(ThumbnailState::Ready(path)) = app.thumbnail_states.get(&media_id) {
+        return Some(path.clone());
+    }
+    app.gallery_items
+        .iter()
+        .chain(app.timeline_items.iter())
+        .chain(app.search_items.iter())
+        .find(|item| !item.is_group_header && item.media_id == media_id)
+        .and_then(|item| item.thumbnail_path.clone())
+}
+
 fn load_media_details_cached(app: &mut Librapix) {
     app.details_editing_tag = None;
     app.details_tag_input.clear();
@@ -5130,7 +5200,8 @@ fn load_media_details_cached(app: &mut Librapix) {
             .file_name()
             .map(|name| name.to_string_lossy().to_string())
             .unwrap_or_else(|| cached.absolute_path.display().to_string());
-        app.details_preview_path = cached.detail_thumbnail_path.clone();
+        app.details_preview_path =
+            resolve_details_preview_path(app, media_id, cached.detail_thumbnail_path.as_ref());
         app.details_lines = vec![
             format!(
                 "{}: {}",
@@ -5324,13 +5395,10 @@ fn start_snapshot_hydrate(app: &mut Librapix) -> Task<Message> {
     })
 }
 
-fn schedule_startup_reconcile() -> Task<Message> {
-    Task::perform(
-        async move {
-            std::thread::sleep(Duration::from_millis(STARTUP_RECONCILE_DELAY_MS));
-        },
-        |_| Message::StartupReconcileKickoff,
-    )
+fn schedule_startup_reconcile(app: &mut Librapix) -> Task<Message> {
+    app.background.startup_reconcile_due_at =
+        Some(Instant::now() + Duration::from_millis(STARTUP_RECONCILE_DELAY_MS));
+    Task::none()
 }
 
 fn do_snapshot_hydrate(input: SnapshotHydrateInput) -> SnapshotHydrateResult {
@@ -5420,7 +5488,7 @@ fn apply_snapshot_hydrate_result(
             app.background.pending_reconcile_reason = BackgroundWorkReason::UserOrSystem;
             return request_projection_refresh(app, BackgroundWorkReason::UserOrSystem);
         }
-        return schedule_startup_reconcile();
+        return schedule_startup_reconcile(app);
     }
     Task::none()
 }
@@ -5440,6 +5508,8 @@ fn request_reconcile(app: &mut Librapix, reason: BackgroundWorkReason) -> Task<M
         return Task::none();
     }
 
+    app.background.startup_reconcile_due_at = None;
+    app.background.startup_reconcile_queued = false;
     app.background.reconcile_in_flight = true;
     app.background.reconcile_generation = app.background.reconcile_generation.saturating_add(1);
     app.background.pending_reconcile = false;
@@ -5950,11 +6020,7 @@ fn do_projection_job(input: ProjectionJobInput) -> ProjectionJobResult {
                     modified_unix_seconds: row.modified_unix_seconds,
                     width_px: row.width_px,
                     height_px: row.height_px,
-                    detail_thumbnail_path: resolve_thumbnail(
-                        &input.thumbnails_dir,
-                        row,
-                        DETAIL_THUMB_SIZE,
-                    ),
+                    detail_thumbnail_path: resolve_detail_thumbnail(&input.thumbnails_dir, row),
                 },
             )
         })
@@ -6070,11 +6136,7 @@ fn queue_selected_media_thumbnail(app: &mut Librapix) -> Task<Message> {
             modified_unix_seconds: row.modified_unix_seconds,
             width_px: row.width_px,
             height_px: row.height_px,
-            detail_thumbnail_path: resolve_thumbnail(
-                &app.runtime.thumbnails_dir,
-                &row,
-                DETAIL_THUMB_SIZE,
-            ),
+            detail_thumbnail_path: resolve_detail_thumbnail(&app.runtime.thumbnails_dir, &row),
         };
         app.media_cache.insert(media_id, details.clone());
         details
@@ -6278,6 +6340,48 @@ fn normalize_thumbnail_retry_item(
 fn thumbnail_retry_delay_ms(attempt: u8) -> u64 {
     let exponent = u32::from(attempt.saturating_sub(1)).min(4);
     THUMBNAIL_RETRY_DELAY_MS.saturating_mul(2u64.saturating_pow(exponent))
+}
+
+fn schedule_thumbnail_retries(app: &mut Librapix, items: Vec<ThumbnailWorkItem>) {
+    let now = Instant::now();
+    for item in items {
+        let due_at = now + Duration::from_millis(thumbnail_retry_delay_ms(item.attempt));
+        app.background
+            .thumbnail_retry_queue
+            .push_back(ScheduledThumbnailRetry { item, due_at });
+    }
+}
+
+fn drop_scheduled_thumbnail_retries_for_media(app: &mut Librapix, media_id: i64) {
+    app.background
+        .thumbnail_retry_queue
+        .retain(|entry| entry.item.media_id != media_id);
+}
+
+fn process_thumbnail_retry_tick(app: &mut Librapix) -> Task<Message> {
+    if app.background.thumbnail_retry_queue.is_empty() {
+        return Task::none();
+    }
+
+    let now = Instant::now();
+    let mut ready_items = Vec::new();
+    let mut pending = VecDeque::new();
+    while let Some(entry) = app.background.thumbnail_retry_queue.pop_front() {
+        if entry.due_at <= now {
+            if let Some(item) = normalize_thumbnail_retry_item(app, entry.item) {
+                ready_items.push(item);
+            }
+        } else {
+            pending.push_back(entry);
+        }
+    }
+    app.background.thumbnail_retry_queue = pending;
+
+    if ready_items.is_empty() {
+        return Task::none();
+    }
+    enqueue_thumbnail_items(app, ready_items);
+    run_next_thumbnail_batch_if_idle(app)
 }
 
 fn on_filesystem_changed(app: &mut Librapix, paths: Vec<PathBuf>) -> Task<Message> {
@@ -6494,6 +6598,17 @@ fn apply_thumbnail_batch_result(app: &mut Librapix, result: ThumbnailBatchResult
         }
         app.thumbnail_states
             .insert(outcome.media_id, outcome.state.clone());
+        if matches!(outcome.state, ThumbnailState::Ready(_))
+            || matches!(
+                outcome.state,
+                ThumbnailState::Failed {
+                    retryable: false,
+                    ..
+                }
+            )
+        {
+            drop_scheduled_thumbnail_retries_for_media(app, outcome.media_id);
+        }
         if let Some(path) = outcome.thumbnail_path {
             patch_thumbnail_path(&mut app.gallery_items, outcome.media_id, &path);
             patch_thumbnail_path(&mut app.timeline_items, outcome.media_id, &path);
@@ -6513,20 +6628,7 @@ fn apply_thumbnail_batch_result(app: &mut Librapix, result: ThumbnailBatchResult
         app.background.thumbnail_done = app.background.thumbnail_done.saturating_add(1);
     }
 
-    let retry_tasks = result
-        .retry_items
-        .into_iter()
-        .map(|item| {
-            let delay_ms = thumbnail_retry_delay_ms(item.attempt);
-            Task::perform(
-                async move {
-                    std::thread::sleep(Duration::from_millis(delay_ms));
-                    item
-                },
-                Message::ThumbnailRetryEnqueue,
-            )
-        })
-        .collect::<Vec<_>>();
+    schedule_thumbnail_retries(app, result.retry_items);
 
     app.thumbnail_status = format!(
         "{}: {}={}, {}={}, {}={}",
@@ -6560,7 +6662,6 @@ fn apply_thumbnail_batch_result(app: &mut Librapix, result: ThumbnailBatchResult
         }
     }
 
-    tasks.extend(retry_tasks);
     if tasks.is_empty() {
         Task::none()
     } else {
@@ -6586,7 +6687,12 @@ fn refresh_thumbnail_states_from_items(app: &mut Librapix) {
         seen_ids.insert(item.media_id);
         if matches!(
             app.thumbnail_states.get(&item.media_id),
-            Some(ThumbnailState::Queued) | Some(ThumbnailState::Generating)
+            Some(ThumbnailState::Queued)
+                | Some(ThumbnailState::Generating)
+                | Some(ThumbnailState::Failed {
+                    retryable: true,
+                    ..
+                })
         ) {
             continue;
         }
@@ -6600,7 +6706,15 @@ fn refresh_thumbnail_states_from_items(app: &mut Librapix) {
     }
     app.thumbnail_states.retain(|media_id, state| {
         seen_ids.contains(media_id)
-            || matches!(state, ThumbnailState::Queued | ThumbnailState::Generating)
+            || matches!(
+                state,
+                ThumbnailState::Queued
+                    | ThumbnailState::Generating
+                    | ThumbnailState::Failed {
+                        retryable: true,
+                        ..
+                    }
+            )
     });
 }
 
@@ -7336,6 +7450,78 @@ mod tests {
         let normalized = normalize_thumbnail_retry_item(&app, item).expect("retry should rebase");
         assert_eq!(normalized.generation, 9);
         assert_eq!(normalized.attempt, 2);
+    }
+
+    #[test]
+    fn thumbnail_retry_tick_wakes_without_filesystem_events() {
+        let mut app = Librapix::default();
+        app.background.thumbnail_generation = 3;
+        app.thumbnail_states.insert(
+            90,
+            ThumbnailState::Failed {
+                retryable: true,
+                last_error: "still writing".to_owned(),
+            },
+        );
+        app.background
+            .thumbnail_retry_queue
+            .push_back(ScheduledThumbnailRetry {
+                item: ThumbnailWorkItem {
+                    generation: 1,
+                    media_id: 90,
+                    absolute_path: PathBuf::from("/tmp/shot-90.png"),
+                    media_kind: "image".to_owned(),
+                    file_size_bytes: 100,
+                    modified_unix_seconds: Some(10),
+                    attempt: 1,
+                },
+                due_at: Instant::now() - Duration::from_millis(1),
+            });
+
+        let _ = process_thumbnail_retry_tick(&mut app);
+
+        assert!(app.background.thumbnail_in_flight);
+        assert!(app.background.thumbnail_retry_queue.is_empty());
+        assert!(matches!(
+            app.thumbnail_states.get(&90),
+            Some(ThumbnailState::Generating)
+        ));
+    }
+
+    #[test]
+    fn load_media_details_cached_falls_back_to_ready_thumbnail_state() {
+        let mut app = Librapix::default();
+        let media_id = 55;
+        let fallback_thumb = PathBuf::from("/tmp/thumb-55.png");
+        app.state.apply(AppMessage::SetSelectedMedia);
+        app.state.set_selected_media(Some(media_id));
+        app.media_cache.insert(
+            media_id,
+            CachedDetails {
+                absolute_path: PathBuf::from("/tmp/shot-55.png"),
+                media_kind: "image".to_owned(),
+                file_size_bytes: 12,
+                modified_unix_seconds: Some(20),
+                width_px: Some(10),
+                height_px: Some(10),
+                detail_thumbnail_path: None,
+            },
+        );
+        app.thumbnail_states
+            .insert(media_id, ThumbnailState::Ready(fallback_thumb.clone()));
+
+        load_media_details_cached(&mut app);
+
+        assert_eq!(app.details_preview_path, Some(fallback_thumb));
+    }
+
+    #[test]
+    fn startup_reconcile_schedule_uses_due_time_state() {
+        let mut app = Librapix::default();
+
+        let _ = schedule_startup_reconcile(&mut app);
+
+        assert!(app.background.startup_reconcile_due_at.is_some());
     }
 
     #[test]

@@ -48,9 +48,12 @@
 - Implemented: background thumbnail batches now throttle video work to one item per batch and make in-flight video extraction cancellation-aware.
 - Implemented: failed thumbnail items now enter runtime backoff, and ffmpeg resolution/spawn failures disable repeated video attempts for the rest of the session.
 - Implemented: thumbnail runtime logs now record batch dispatch/start/end/cancel timing, apply timing, refresh pressure during thumbnail work, result-message rate, and video command/exit/timeout/stderr details.
+- Implemented: thumbnail runtime logs now also record worker-complete -> dispatch-to-UI -> message-received handoff timing plus slow-handoff warnings.
+- Implemented: periodic app ticks now use `iced::time::every` on the Iced tokio backend instead of blocking `std::thread::sleep` subscription loops, removing the Windows thumbnail completion/apply gap.
 - Implemented: route switches can trigger deferred surface refresh when startup intentionally leaves a non-visible surface for later.
 - Implemented: stale delayed startup-reconcile ticks are ignored after their due timestamp is cleared, preventing duplicate startup scan/projection loops.
 - Implemented: targeted regression coverage now covers deferred thumbnail catch-up readiness, startup route deferral, startup thumbnail prioritization, exact thumbnail reuse, compatible fallback reuse, placeholder scheduling, video non-blocking startup, video deferral, session disable/backoff, thumbnail batch cancellation, and projection refresh cancellation of thumbnail work.
+- Implemented: runtime regression coverage now verifies that active timer subscriptions do not delay background completion message delivery through the Iced runtime.
 - Implemented: final verification loop (`fmt`, `check`, `clippy`, `test`) passed after the startup completion + instrumentation changes.
 - Implemented: startup smoke runs now confirm log-path emission, legacy snapshot discard, version-2 startup-snapshot persistence, and fast-path version-2 startup restore.
 - Partially implemented: orchestration still enters through `crates/librapix-app/src/main.rs`, even though startup/catch-up boundaries are now materially cleaner.

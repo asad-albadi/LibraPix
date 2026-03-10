@@ -57,6 +57,7 @@ Important behavior:
   - videos are throttled to one item per batch
 - Route/projection refreshes cancel queued thumbnail work and invalidate stale in-flight batches.
 - In-flight video extraction is cancellation-aware while waiting on ffmpeg.
+- Thumbnail batch completion is applied as soon as `ThumbnailBatchComplete` reaches the app update loop; it is no longer indirectly dependent on later timer wakes.
 
 ## Failure policy
 
@@ -77,6 +78,9 @@ Implemented:
 - startup/runtime logging records artifact lookup timing, exact reuse counts, fallback reuse counts, placeholder counts, scheduled-generation counts, and rejected-artifact reasons
 - startup/runtime logging now also records:
   - thumbnail batch dispatch/start/end/cancel timing
+  - thumbnail batch dispatch-to-UI and message-received timing
+  - slow completion-to-receive handoff warnings
+  - thumbnail apply start timing
   - thumbnail apply duration on the app state side
   - result-message rate during active thumbnail work
   - route/projection refresh pressure while thumbnails are active

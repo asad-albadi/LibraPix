@@ -5,6 +5,7 @@ All notable changes to this project are documented in this file.
 ## [Unreleased]
 
 ### Docs
+- Added a dedicated thumbnail apply handoff audit covering the Windows completion-to-apply delay, the exact Iced runtime cause, and the corrected timer/runtime policy.
 - Added a dedicated background thumbnail responsiveness audit covering the Windows post-ready lag path, retry loop, and the corrected video/background policy.
 - Added a dedicated startup thumbnail reuse audit covering the exact DB-first reuse failure, the compatible-fallback policy, and the corrected startup-ready boundary.
 - Updated thumbnail, message-flow, startup audit, troubleshooting, and catalog-first checklist docs to reflect projection-time exact/fallback thumbnail reuse, non-blocking startup-ready, and the final background video-throttling/backoff policy.
@@ -47,6 +48,8 @@ All notable changes to this project are documented in this file.
 - Removed `packaging/windows/` scripts and packaging README from the repository.
 
 ### Changed
+- Periodic app ticks now use `iced::time::every` on the Iced tokio backend instead of blocking `std::thread::sleep` subscription loops, removing the executor-side delay that could leave thumbnail completions unapplied on Windows.
+- Thumbnail runtime logs now record worker-complete -> dispatch-to-UI -> message-received handoff timing, apply-start timing, and slow handoff warnings.
 - Background thumbnail runtime now treats images and videos differently: visible videos defer into slower catch-up, video batches run one item at a time, and in-flight video extraction is cancellation-aware.
 - Thumbnail failures now feed runtime backoff/session-disable policy instead of immediately re-entering the next projection refresh.
 - Thumbnail runtime logs now record batch dispatch/start/end/cancel timing, apply timing, refresh pressure during thumbnail work, result-message rate, and detailed ffmpeg command/exit/timeout/stderr failure context.

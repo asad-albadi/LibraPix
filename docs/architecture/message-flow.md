@@ -116,6 +116,8 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
     - reconcile/projection timing
     - thumbnail start/end timing
     - thumbnail batch dispatch/start/end/cancel timing
+    - thumbnail worker-complete -> dispatch-to-UI -> message-received handoff timing
+    - thumbnail apply start timing plus apply duration
     - thumbnail apply timing in the app state
     - thumbnail result-message rate during active background work
     - artifact lookup start/end timing
@@ -137,6 +139,7 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
     - opens the latest release URL immediately when `UpdateAvailable` is active
     - otherwise attempts a manual re-check (rate-limited to 5 minutes)
   - A periodic tick subscription emits `UpdateCheckTick`.
+  - Periodic runtime timers now use `iced::time::every(...)` on the Iced tokio backend instead of custom blocking `std::thread::sleep(...)` subscription loops.
   - `UpdateCheckTick` enforces a 24-hour auto re-check policy while preventing overlapping checks.
   - Background task completion emits `UpdateCheckCompleted`, which applies the new update-check state and successful-check timestamp.
 - Library dialog folder picker
@@ -167,12 +170,18 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
     - visible-slice cache warm-up
     - deferred non-visible route refresh
   - Activity state is structural runtime state, not a widget-local hint; stage text and ready transitions are driven by the coordinator state machine.
+  - Periodic coordinator ticks (`UpdateCheckTick`, `StartupReconcileKickoff`, `SnapshotApplyTick`, `DeferredThumbnailCatchupKickoff`) now use Iced's timer API instead of blocking timer streams, so background task completions are not left waiting behind sleeping subscription workers.
   - Ready-enough and background catch-up are now distinct runtime concepts:
     - startup completion no longer waits for any thumbnail batch
     - deferred thumbnail catch-up is delayed and batched more lightly after startup becomes usable
   - Background thumbnail policy is no longer uniform:
     - images can remain higher-priority background work
     - videos are throttled more aggressively, with one-item batches plus backoff/cancellation
+  - Thumbnail batch completion is now explicitly observable end-to-end:
+    - worker finish
+    - dispatch to UI
+    - message received in `update`
+    - apply start/end in app state
   - Current branch limitation: the staged coordinator still lives in `librapix-app/src/main.rs` and has not yet been extracted into smaller orchestration modules.
   - Release checks continue to follow the same non-blocking task model (`Task::perform`) through `start_update_check` -> `UpdateCheckCompleted`.
 

@@ -12,13 +12,15 @@ This file tracks major direct dependencies that shape architecture and maintenan
 - Official docs consulted:
   - [https://docs.rs/crate/iced/latest](https://docs.rs/crate/iced/latest)
   - [https://docs.iced.rs/iced/](https://docs.iced.rs/iced/)
+  - [https://docs.rs/iced/latest/iced/time/index.html](https://docs.rs/iced/latest/iced/time/index.html)
   - [https://docs.rs/iced/latest/iced/widget/operation/scrollable/fn.scroll_to.html](https://docs.rs/iced/latest/iced/widget/operation/scrollable/fn.scroll_to.html)
   - [https://docs.rs/iced/latest/iced/widget/scrollable/fn.scroll_to.html](https://docs.rs/iced/latest/iced/widget/scrollable/fn.scroll_to.html)
   - [https://github.com/iced-rs/iced/releases](https://github.com/iced-rs/iced/releases)
 - Notes:
   - Latest stable verified at baseline: `0.14.0`.
-  - Features enabled: `image` (raster icons), `svg` (vector logo in header).
+  - Features enabled: `image` (raster icons), `svg` (vector logo in header), `tokio` (non-blocking timer subscriptions via `iced::time::every`).
   - Timeline scrubber uses `operation::scroll_to` for absolute offset targeting with `operation::snap_to` fallback during early viewport initialization.
+  - Startup/runtime ticks now use Iced's timer API on the tokio backend; the older blocking `std::thread::sleep` subscription loops were removed after they delayed thumbnail result handoff on Windows.
   - Keep presentation logic in `librapix-app` and prevent leakage into domain/storage.
 - Risks/tradeoffs:
   - API evolution can require incremental refactors.

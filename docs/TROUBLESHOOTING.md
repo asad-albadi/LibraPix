@@ -82,6 +82,31 @@
   - Never let known-bad items re-enter the hot path without backoff.
   - Keep background thumbnail logs rich enough to distinguish worker time from app-state apply time.
 
+## Thumbnail batches finish quickly but the UI applies them much later
+
+- Symptoms
+  - Logs show `startup.thumbnail.batch.end`, but `startup.thumbnail.apply` does not appear until much later.
+  - The app is already `startup.ready`, yet thumbnail results do not show up promptly.
+  - Windows large-library runs can feel wrong even when worker elapsed time is short.
+- Affected area
+  - Iced timer subscriptions and thumbnail result handoff in `crates/librapix-app/src/main.rs`.
+- Confirmed cause
+  - The app previously implemented periodic subscriptions with `Subscription::run(...)` plus `std::thread::sleep(...)` inside async loops.
+  - Librapix was still using Iced's default native executor selection, which falls back to the thread-pool backend when `tokio`/`smol` are not enabled.
+  - Those blocking timer loops could delay unrelated runtime message forwarding, including `ThumbnailBatchComplete`.
+- Resolution
+  - Enable Iced's `tokio` runtime feature.
+  - Replace the blocking tick streams with `iced::time::every(...)`.
+  - Log thumbnail handoff stages explicitly:
+    - worker complete
+    - dispatch to UI
+    - message received
+    - apply start/end
+- Prevention guidance
+  - Do not implement periodic Iced subscriptions with blocking `std::thread::sleep(...)`.
+  - Prefer `iced::time::every(...)` or another non-blocking timer source supported by the active Iced executor.
+  - When background work updates visible UI state, keep message-delivery logs explicit so executor starvation can be distinguished from slow worker time.
+
 ## Startup logs are hard to find
 
 - Symptoms

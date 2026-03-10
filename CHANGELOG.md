@@ -48,6 +48,9 @@ All notable changes to this project are documented in this file.
 - Removed `packaging/windows/` scripts and packaging README from the repository.
 
 ### Changed
+- First-open media selection no longer generates the `detail-800` thumbnail synchronously on the UI thread when startup snapshot state has not warmed the detail cache yet; the details pane now reuses an existing detail artifact when present and otherwise falls back to the already-visible browse thumbnail immediately.
+- Post-startup route, filter, search, and filesystem-driven projection refreshes now use a current-surface-first projection policy instead of always rebuilding both Gallery and Timeline; non-visible route refresh is deferred until the user opens that route.
+- Interaction logs now cover media selection/detail load, route switches, projection request/apply ownership, and slow-step thresholds so post-startup hangs are provable from the Windows runtime logs.
 - Startup no longer forces a current-surface gallery projection on unchanged launches when a compatible gallery snapshot is already restored; after reconcile reports `new_files=0`, `changed_files=0`, and `missing_marked=0`, the app now skips the redundant full-gallery rebuild, marks startup ready immediately, and defers timeline refresh until the user opens that route.
 - Startup/runtime logs now record queued reconcile/projection requests, reconcile failure reasons, explicit gallery-working set/clear ownership, and skipped startup projection reasons so repeated refresh loops are provable from the newest Windows startup log.
 - Periodic app ticks now use `iced::time::every` on the Iced tokio backend instead of blocking `std::thread::sleep` subscription loops, removing the executor-side delay that could leave thumbnail completions unapplied on Windows.

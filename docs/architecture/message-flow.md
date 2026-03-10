@@ -69,6 +69,10 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
 - Load media details
   - UI provides selected media id.
   - App resolves media details from storage read-model lookup.
+  - If startup snapshot state has not warmed the selected media into `media_cache`, details now stay placeholder-first:
+    - prefer an already-existing `detail-800` file when present
+    - otherwise reuse the current browse thumbnail immediately
+    - do not synchronously generate a new detail thumbnail on the selection path
   - UI renders metadata lines and action status.
 - Tag actions
   - UI provides selected media id + tag text or chip action (edit/remove).
@@ -159,6 +163,10 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
   - After indexing completes, gallery projection refreshes automatically (within StartupRestore flow).
   - Filesystem-triggered background refresh compares previous and current media cache ids to detect newly indexed files.
   - New files can trigger a dismissible in-app modal dialog with preview/metadata and quick actions.
+  - Post-startup route/filter/search/filesystem projection refreshes are current-surface-first:
+    - the active route is rebuilt immediately
+    - the non-visible route is marked deferred and rebuilt only when opened later
+    - projection logs record trigger, policy, refreshed surfaces, and working-state ownership
 
 - Background work pattern
   - Heavy operations still run off the UI thread through `Task::perform`, but the branch now uses staged job families instead of one monolithic worker result.

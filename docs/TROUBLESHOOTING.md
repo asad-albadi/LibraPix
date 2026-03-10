@@ -1,5 +1,45 @@
 # Troubleshooting
 
+## First-open media selection hangs after startup
+
+- Symptoms
+  - Clicking an image or video for the first time after startup can leave the app feeling hung before the details pane populates.
+  - Windows interaction logs show `interaction.media_select.cache.miss` followed by `interaction.detail_thumbnail.lookup.start`.
+  - Before the fix, the next slow step was synchronous `interaction.detail_thumbnail.generate.end` on the UI thread, often taking multiple seconds.
+- Affected area
+  - Details load path in `crates/librapix-app/src/main.rs`.
+- Confirmed cause
+  - When startup restored only the snapshot gallery slice, some first-open selections missed `media_cache`.
+  - That cache miss fell through to `load_media_details(...)`, which synchronously generated the `detail-800` thumbnail in the selection path before clearing detail-working state.
+  - The same code path applied to both images and videos because `load_media_details(...)` always resolved a detail thumbnail before finishing the selection.
+- Resolution
+  - Stop generating detail thumbnails synchronously during selection.
+  - Prefer an existing `detail-800` file when one already exists.
+  - Otherwise reuse the already-visible browse thumbnail immediately and finish the detail load without extra blocking work.
+  - Keep the interaction logs explicit about cache miss/hit, preview source, and detail-working ownership.
+- Prevention guidance
+  - Do not put thumbnail generation on the synchronous details-selection path.
+  - Treat first-open details as placeholder-first and enrich only from already-available artifacts.
+
+## Route or filter switches rebuild too much work after startup
+
+- Symptoms
+  - Opening Timeline, switching back to Gallery, or changing filters can briefly push the app back into `Refreshing gallery` / `Working` even when only one surface is visible.
+  - Windows interaction logs show `interaction.projection.start` after a route/filter action, with the old behavior rebuilding both routes (`refreshed_gallery=true refreshed_timeline=true`) even when only Timeline was requested.
+- Affected area
+  - Projection policy selection in `crates/librapix-app/src/main.rs`.
+- Confirmed cause
+  - After startup became ready, projection policy always fell back to `Full`.
+  - Route switches, filter changes, search submits, and filesystem-driven updates therefore rebuilt both Gallery and Timeline and expanded the cache warm-up scope even when the user could only see one surface.
+- Resolution
+  - Use a current-surface-first projection policy for route, filter, search, and filesystem-driven refreshes.
+  - Refresh only the active surface immediately.
+  - Mark the other route deferred and rebuild it only when the user explicitly opens that route.
+  - Log the accepted projection trigger, policy, refreshed surfaces, and working-state ownership.
+- Prevention guidance
+  - Do not treat every post-startup refresh as a full dual-surface rebuild.
+  - Keep non-visible route refresh outside the critical interaction path unless correctness requires it immediately.
+
 ## Startup still enters `Refreshing gallery` even when nothing changed
 
 - Symptoms

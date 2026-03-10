@@ -50,7 +50,7 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
   - Worker loads catalog rows, delegates grouping to `librapix-projections`, and applies kind/extension/tag filters.
   - Projection prefers persisted timeline keys from `media_catalog` and falls back to timestamp conversion only when needed.
   - Worker derives `TimelineAnchor` metadata from timeline buckets (`build_timeline_anchors`).
-  - UI renders selectable timeline items grouped by route panel when `BackgroundWorkComplete` is applied.
+  - UI renders selectable timeline items grouped by route panel when staged projection results are applied.
 - Timeline scrubber interaction
   - Timeline pane owns a stable scrollable `Id` (`media-pane-scrollable`).
   - Timeline/gallery media scrollable uses embedded vertical scrollbar spacing so scrollbar gutter is outside card content.
@@ -62,7 +62,7 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
 - Run gallery projection baseline
   - App schedules projection-only background work.
   - Worker loads catalog rows, delegates filtering/sorting to `librapix-projections`, and applies `GalleryQuery`.
-  - UI renders selectable gallery items by route panel when `BackgroundWorkComplete` is applied.
+  - UI renders selectable gallery items by route panel when staged projection results are applied.
 - Direct media selection
   - Selection is explicit app state (`selected_media_id`).
   - Selecting from search/gallery/timeline loads details and enables actions/tags.
@@ -87,10 +87,16 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
   - Ignored-only subscription prevents conflicts with focused text input widgets.
 - Startup restore
   - `Task::done(Message::StartupRestore)` fires after the first render.
-  - If roots exist, spawns background work via `Task::perform` to run indexing, thumbnail generation, and gallery/timeline projections on a background thread.
+  - Startup restore first hydrates the persisted projection snapshot on a background task.
+  - If a compatible snapshot exists, app applies it incrementally through `SnapshotApplyTick` so initial browse state can appear without blocking the UI thread.
+  - Startup then schedules a delayed reconcile kickoff (`StartupReconcileKickoff`) when roots exist.
+  - Reconcile and projection now run as explicit staged jobs:
+    - `ScanJobComplete`
+    - `ProjectionJobComplete`
+    - `ThumbnailBatchComplete`
   - Startup restore also schedules a non-blocking GitHub latest-release check task.
-  - UI remains interactive while background work proceeds; activity status shown in header.
-  - On completion, `BackgroundWorkComplete` message applies all results to app state atomically.
+  - UI remains interactive while background work proceeds; sidebar/header activity state reflects the real stage currently in flight.
+  - Ready state is only restored after snapshot apply, reconcile, projection, and queued thumbnail work have all settled.
 - Release update check flow
   - State is explicit in app orchestration: `Unknown`, `Checking`, `UpToDate`, `UpdateAvailable { version, url }`, `Failed`.
   - Header chip click emits `UpdateChipPressed`.
@@ -115,15 +121,17 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
   - New files can trigger a dismissible in-app modal dialog with preview/metadata and quick actions.
 
 - Background work pattern
-  - Heavy operations (indexing, scanning, thumbnail generation, projections, search hydration) are encapsulated in `do_background_work`.
-  - `spawn_background_work` captures current app inputs in `BackgroundWorkInput` and returns a `Task::perform` that runs the work off the UI thread.
-  - Work mode is explicit:
-    - `IndexAndProject`: indexing + thumbnails + projections/search
-    - `ProjectOnly`: projections/search refresh without filesystem scan/index writes
-  - Current branch foundation: worker still lives in `librapix-app`, but it now relies on storage-owned catalog/artifact seams instead of rebuilding all browse/search state from raw read-model joins.
-  - `BackgroundWorkComplete` handler applies all returned state atomically.
-  - Multiple handlers share this pattern: `StartupRestore`, `FilesystemChanged`, `RunIndexing`, `ApplyMinFileSize`, library-dialog save operations, manual route refresh, search run, and filter changes.
-  - Release checks follow the same non-blocking task model (`Task::perform`) through `start_update_check` -> `UpdateCheckCompleted`.
+  - Heavy operations still run off the UI thread through `Task::perform`, but the branch now uses staged job families instead of one monolithic worker result.
+  - Startup/runtime stages are explicit:
+    - snapshot hydrate
+    - snapshot apply
+    - scan/reconcile
+    - catalog-backed projection/search preparation
+    - thumbnail batches
+  - Catalog-backed projection work refreshes `media_catalog`, queries normalized rows, reads ready derived artifacts, and then schedules missing thumbnail work separately.
+  - Activity state is structural runtime state, not a widget-local hint; stage text and ready transitions are driven by the coordinator state machine.
+  - Current branch limitation: the staged coordinator still lives in `librapix-app/src/main.rs` and has not yet been extracted into smaller orchestration modules.
+  - Release checks continue to follow the same non-blocking task model (`Task::perform`) through `start_update_check` -> `UpdateCheckCompleted`.
 
 ## Rules
 

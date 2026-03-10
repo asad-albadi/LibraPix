@@ -1,5 +1,38 @@
 # Troubleshooting
 
+## Startup shows no loading/activity state on catalog-first branch
+
+- Symptoms
+  - On startup with a real populated library, background work is clearly happening but the header activity text stays blank.
+  - Gallery/timeline/search can appear idle or empty while reconcile/projection work is still running.
+  - The app may compile, test, and launch, but product-visible startup/runtime state does not behave honestly.
+- Affected area
+  - Catalog-first startup/runtime orchestration in `crates/librapix-app/src/main.rs`.
+  - Database migration lineage between the older staged-runtime branch history and the catalog-first branch storage migrations.
+- Likely cause
+  - Existing user databases were already on migration version `10` from older projection-snapshot work, while the early catalog-first branch only knew migrations through `0009`, so `media_catalog` and `derived_artifacts` were never created for those real databases.
+  - Catalog refresh/query failures were swallowed with `unwrap_or_default()`, collapsing browse/search/timeline preparation silently to empty results.
+  - The branch partially introduced staged activity UI state, but still routed real startup work through the old monolithic background worker and then cleared activity state unconditionally.
+- Confirmed cause
+  - Migration lineage mismatch prevented catalog tables from being added to existing real databases.
+  - Silent error swallowing in catalog-backed background preparation hid the storage failure from the UI/runtime state machine.
+  - Startup/runtime activity state had been regressed from a staged coordinator to a single silent `BackgroundWorkComplete` flow.
+- Resolution
+  - Add compatibility migrations so existing version-10 databases receive both `projection_snapshots` and the catalog/artifact tables.
+  - Restore staged runtime flow:
+    - snapshot hydrate
+    - snapshot apply ticks
+    - delayed startup reconcile kickoff
+    - scan job
+    - projection job
+    - thumbnail batches
+  - Only set ready-state when no snapshot apply, reconcile, projection, or thumbnail work remains in flight or queued.
+  - Stop generating detail thumbnails eagerly during projection startup; load ready detail artifacts and fall back to browse thumbnails for selection/details while background thumbnail work progresses.
+- Prevention guidance
+  - Never advance storage schema direction on a long-lived branch without reconciling real migration lineage from adjacent branch history.
+  - Do not swallow catalog refresh/query failures in startup/runtime paths; surface them into structured activity/error state.
+  - When introducing staged activity UI, make sure the actual background orchestration uses the same staged messages instead of leaving a silent monolithic worker active.
+
 ## Update chip stays on "Updates" and does not show release state
 
 - Symptoms
@@ -372,9 +405,9 @@
 - Confirmed cause
   - `StartupRestore` handler called `run_indexing`, `run_gallery_projection`, and `run_timeline_projection` synchronously inside the `update` function, blocking the UI thread for the entire duration of filesystem scanning, SQLite writes, thumbnail generation, and projection computation.
 - Resolution
-  - All heavyweight startup work now runs via `Task::perform` on a background thread.
-  - The UI renders immediately with persisted state, and background work results are applied asynchronously via `BackgroundWorkComplete` message.
-  - `FilesystemChanged`, `RunIndexing`, `ApplyMinFileSize`, `AddRoot`, and auto-tag operations also use the async path.
+  - All heavyweight startup work now runs via staged `Task::perform` jobs on background threads.
+  - The UI renders immediately, hydrates any persisted snapshot, then reconciles/indexes/projects/thumbnails asynchronously without blocking `update`.
+  - `FilesystemChanged`, `RunIndexing`, `ApplyMinFileSize`, `AddRoot`, and auto-tag operations also use the async staged path.
 - Prevention guidance
   - Never perform blocking I/O (filesystem, SQLite, thumbnail generation) inside the `update` function.
   - Use `Task::perform` for any work that takes more than a few milliseconds.

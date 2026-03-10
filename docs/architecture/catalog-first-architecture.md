@@ -221,6 +221,11 @@ Planned:
 - split the current monolithic worker into clearer job families after the catalog seam is in place.
 - move durable pipeline responsibilities out of `librapix-app/src/main.rs`.
 
+Implemented as runtime reconciliation on this branch:
+
+- startup/runtime activity is now staged again instead of being cleared by a single monolithic background result.
+- snapshot hydrate, reconcile, projection, and thumbnail batches now surface explicit runtime stages to the shell.
+
 Deferred:
 
 - full staged coordinator replacement in this branch slice.
@@ -250,7 +255,9 @@ Deferred:
 ### Phase 3: runtime/orchestration restructuring
 
 - Partially implemented in this branch slice:
-  - app runtime uses stronger storage seams but still owns the top-level worker entrypoint.
+  - app runtime uses stronger storage seams and explicit staged startup/runtime jobs.
+  - activity/ready-state transitions are reconnected to those staged jobs.
+  - top-level orchestration still remains in `crates/librapix-app/src/main.rs`.
 
 ### Phase 4: timeline indexing foundation
 
@@ -278,6 +285,7 @@ Deferred:
 - catalog refresh can become too expensive if it remains a broad compatibility rebuild for too long.
 - artifact records can drift from disk contents if failure and cleanup policies are not explicit.
 - persisted local-time timeline keys depend on honest local-time semantics and need tests around boundary cases.
+- runtime/product regressions can still occur if future catalog refactors bypass the staged activity/state machine while changing data-preparation seams.
 - the branch can still accumulate too much app-level orchestration if later phases stop at "better storage" and never complete the runtime split.
 
 ## Rollback and Fallback

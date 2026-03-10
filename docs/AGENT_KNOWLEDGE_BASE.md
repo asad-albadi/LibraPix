@@ -83,23 +83,21 @@ Architecture style:
 - Explicit message loop (`Message` enum in `librapix-app/src/main.rs`).
 - `Librapix` holds app runtime/UI state.
 - `AppState` from `librapix-core` tracks route/root/media/query summaries.
-- Heavy work uses `Task::perform` background mode (`BackgroundWorkMode`).
+- Heavy work uses `Task::perform` with explicit staged jobs (`snapshot hydrate`, `scan`, `projection`, `thumbnail batches`).
 
 Startup:
 - `init()` returns `Task::done(Message::StartupRestore)`.
 - Startup restore:
-  - if roots exist: spawn background index+project task
+  - hydrate persisted projection snapshot first
+  - if roots exist: queue delayed startup reconcile
   - trigger startup update-check task.
 
-Background worker:
-- `spawn_background_work` snapshots inputs into `BackgroundWorkInput`.
-- `do_background_work` opens storage in worker context, runs:
-  - reconcile + ignore defaults
-  - optional indexing + thumbnail generation
-  - projection/search refresh
-  - media cache rebuild
-  - available tag list derivation.
-- Results are atomically applied by `apply_background_result`.
+Background work:
+- `do_snapshot_hydrate` loads roots/ignore rules and optional persisted projection snapshot.
+- `do_scan_job` opens storage in worker context, reconciles roots, scans/indexes, applies auto-tags/statistics, and returns indexing summary data.
+- `do_projection_job` refreshes `media_catalog`, queries normalized catalog rows, shapes gallery/timeline/search results, and schedules missing thumbnail work.
+- `do_thumbnail_batch` generates a bounded batch of thumbnails and records artifact readiness in storage.
+- Results are applied through staged messages, not a single monolithic completion handler.
 
 Non-blocking policy:
 - Indexing, projection refresh, search refresh, filter changes, filesystem-triggered updates use background tasks.

@@ -20,7 +20,7 @@ All browsing views consume `BrowseItem` which carries:
   - includes padded metadata row below the thumbnail.
 - `resolve_thumbnail(thumbnails_dir, row, max_edge)`: returns a thumbnail path for images (Lanczos3) or videos (ffmpeg), or None.
 - `aspect_ratio_from(width_px, height_px)`: computes aspect ratio from nullable stored dimensions.
-- `populate_media_cache(cache, rows, thumbnails_dir)`: caches read-model data and pre-resolved detail-size thumbnail paths for fast selection without I/O.
+- `populate_media_cache(cache, rows, thumbnails_dir)`: caches read-model data and already-ready detail-tier artifact paths without forcing eager thumbnail generation during projection startup.
 
 ## Justified row layout
 
@@ -58,7 +58,7 @@ This produces a Google-Photos-style justified layout where images maintain aspec
 
 - Selection is app-level state (`selected_media_id`).
 - On click, `load_media_details_cached()` checks `media_cache` first, then falls back to storage.
-- Cache hits use pre-resolved `detail_thumbnail_path` — no disk I/O on the click path.
+- Cache hits prefer pre-resolved `detail_thumbnail_path`; if the detail tier is not ready yet, selection/details fall back to the currently available browse thumbnail path.
 - Double-click opens the file in the OS default app.
 - Keyboard shortcuts are routed through ignored-key subscriptions to avoid text-input conflicts:
   - `Cmd/Ctrl+C` copies selected file
@@ -85,3 +85,13 @@ This produces a Google-Photos-style justified layout where images maintain aspec
 - Dialog content includes preview thumbnail, compact metadata, and path/modification details.
 - Quick actions: view/select, open file, copy file, dismiss.
 - Dialog state is app-level (`new_media_announcement`) and remains outside card/grid rendering primitives.
+
+## Runtime activity state
+
+- Startup/runtime activity is product state, not a view-local spinner.
+- The shell now reflects staged background work:
+  - snapshot hydrate/apply
+  - library reconcile/scan
+  - gallery/timeline/search projection refresh
+  - thumbnail batches
+- Activity text remains visible while real work is in flight and only clears to `Ready` when the staged coordinator has no remaining background work queued or running.

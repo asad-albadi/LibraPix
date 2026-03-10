@@ -37,9 +37,8 @@ use librapix_storage::{
     Storage, StorageOpenMetrics, TagKind,
 };
 use librapix_thumbnails::{
-    ThumbnailCancellation, ThumbnailError, ThumbnailOutcome, VideoThumbnailErrorKind,
-    VideoThumbnailOptions, ensure_image_thumbnail, ensure_video_thumbnail,
-    ensure_video_thumbnail_with_options, thumbnail_path,
+    ThumbnailCancellation, ThumbnailError, VideoThumbnailErrorKind, VideoThumbnailOptions,
+    ensure_image_thumbnail, ensure_video_thumbnail_with_options, thumbnail_path,
 };
 use notify::{EventKind, RecursiveMode, Watcher};
 use semver::Version;
@@ -174,7 +173,7 @@ enum BackgroundWorkReason {
 enum ProjectionRefreshPolicy {
     #[default]
     Full,
-    StartupCurrentSurface,
+    CurrentSurface,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -558,6 +557,7 @@ struct Librapix {
     details_title: String,
     details_tags: Vec<DetailsTagChip>,
     details_editing_tag: Option<String>,
+    details_loaded_media_ids: HashSet<i64>,
     ignore_rule_input: String,
     ignore_rules: Vec<librapix_storage::IgnoreRuleRecord>,
     ignore_rule_editing_id: Option<i64>,
@@ -748,6 +748,7 @@ impl Default for Librapix {
             details_title: String::new(),
             details_tags: Vec::new(),
             details_editing_tag: None,
+            details_loaded_media_ids: HashSet::new(),
             ignore_rule_input: String::new(),
             ignore_rules: Vec::new(),
             ignore_rule_editing_id: None,
@@ -1052,6 +1053,90 @@ fn log_diagnostic_event(app: &mut Librapix, label: &str) {
     }
 }
 
+fn route_name(route: Route) -> &'static str {
+    match route {
+        Route::Gallery => "gallery",
+        Route::Timeline => "timeline",
+    }
+}
+
+fn format_optional_str(value: Option<&str>) -> &str {
+    value.unwrap_or("none")
+}
+
+fn filter_state_summary(app: &Librapix) -> String {
+    format!(
+        "kind={} extension={} tag={} root_id={} search_len={}",
+        format_optional_str(app.filter_media_kind.as_deref()),
+        format_optional_str(app.filter_extension.as_deref()),
+        format_optional_str(app.filter_tag.as_deref()),
+        app.filter_source_root_id
+            .map(|id| id.to_string())
+            .unwrap_or_else(|| "none".to_owned()),
+        app.state.search_query.trim().len(),
+    )
+}
+
+fn route_item_count(app: &Librapix, route: Route) -> usize {
+    match route {
+        Route::Gallery => app.gallery_items.len(),
+        Route::Timeline => app.timeline_items.len(),
+    }
+}
+
+fn interaction_slow_threshold_ms(duration: Duration) -> Option<u128> {
+    let elapsed = duration.as_millis();
+    if elapsed >= 500 {
+        Some(500)
+    } else if elapsed >= 250 {
+        Some(250)
+    } else if elapsed >= 100 {
+        Some(100)
+    } else if elapsed >= 50 {
+        Some(50)
+    } else {
+        None
+    }
+}
+
+fn log_interaction_duration(event: &str, duration: Duration, detail: &str) {
+    let detail = if detail.trim().is_empty() {
+        format!("elapsed_ms={}", duration.as_millis())
+    } else {
+        format!("{detail} elapsed_ms={}", duration.as_millis())
+    };
+    startup_log::log_info(event, &detail);
+    if let Some(threshold_ms) = interaction_slow_threshold_ms(duration) {
+        startup_log::log_warn(
+            &format!("{event}.slow"),
+            &format!("threshold_ms={threshold_ms} {detail}"),
+        );
+    }
+}
+
+fn selected_media_context(app: &Librapix, media_id: i64) -> String {
+    let cache = app.media_cache.get(&media_id);
+    let browse_thumbnail = browse_thumbnail_path(app, media_id);
+    let path = cache
+        .map(|details| details.absolute_path.display().to_string())
+        .unwrap_or_default();
+    let kind = cache
+        .map(|details| details.media_kind.as_str())
+        .unwrap_or("unknown");
+    format!(
+        "media_id={} kind={} path={} cached={} detail_thumb_cached={} browse_thumb_present={} first_open={}",
+        media_id,
+        kind,
+        path,
+        cache.is_some(),
+        cache
+            .and_then(|details| details.detail_thumbnail_path.as_ref())
+            .is_some(),
+        browse_thumbnail.is_some(),
+        !app.details_loaded_media_ids.contains(&media_id),
+    )
+}
+
 fn close_all_dialogs(app: &mut Librapix) {
     app.filter_dialog_open = false;
     app.settings_open = false;
@@ -1066,19 +1151,99 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
 
     match message {
         Message::OpenGallery => {
+            let started_at = Instant::now();
+            let from_route = app.state.active_route;
+            startup_log::log_info(
+                "interaction.route_switch.request.start",
+                &format!(
+                    "from={} to=gallery reason=user_tab_click from_items={} to_items={} startup_deferred_gallery={} startup_deferred_timeline={} {}",
+                    route_name(from_route),
+                    route_item_count(app, from_route),
+                    route_item_count(app, Route::Gallery),
+                    app.background.startup_deferred_gallery_refresh,
+                    app.background.startup_deferred_timeline_refresh,
+                    filter_state_summary(app),
+                ),
+            );
             app.state.apply(AppMessage::OpenGallery);
             app.timeline_scrubbing = false;
             if app.background.startup_deferred_gallery_refresh {
-                return request_projection_refresh(app, BackgroundWorkReason::UserOrSystem);
+                startup_log::log_info(
+                    "interaction.route_switch.request.end",
+                    &format!(
+                        "from={} to=gallery deferred_projection=true startup_deferred_gallery={} startup_deferred_timeline={} {} elapsed_ms={}",
+                        route_name(from_route),
+                        app.background.startup_deferred_gallery_refresh,
+                        app.background.startup_deferred_timeline_refresh,
+                        filter_state_summary(app),
+                        started_at.elapsed().as_millis(),
+                    ),
+                );
+                return request_projection_refresh_with_context(
+                    app,
+                    BackgroundWorkReason::UserOrSystem,
+                    "route_switch",
+                );
             }
+            log_interaction_duration(
+                "interaction.route_switch.request.end",
+                started_at.elapsed(),
+                &format!(
+                    "from={} to=gallery deferred_projection=false startup_deferred_gallery={} startup_deferred_timeline={} {}",
+                    route_name(from_route),
+                    app.background.startup_deferred_gallery_refresh,
+                    app.background.startup_deferred_timeline_refresh,
+                    filter_state_summary(app),
+                ),
+            );
         }
         Message::OpenTimeline => {
+            let started_at = Instant::now();
+            let from_route = app.state.active_route;
+            startup_log::log_info(
+                "interaction.route_switch.request.start",
+                &format!(
+                    "from={} to=timeline reason=user_tab_click from_items={} to_items={} startup_deferred_gallery={} startup_deferred_timeline={} {}",
+                    route_name(from_route),
+                    route_item_count(app, from_route),
+                    route_item_count(app, Route::Timeline),
+                    app.background.startup_deferred_gallery_refresh,
+                    app.background.startup_deferred_timeline_refresh,
+                    filter_state_summary(app),
+                ),
+            );
             app.state.apply(AppMessage::OpenTimeline);
             app.timeline_scrubbing = false;
             sync_timeline_scrub_selection(app, app.timeline_scrub_value);
             if app.background.startup_deferred_timeline_refresh {
-                return request_projection_refresh(app, BackgroundWorkReason::UserOrSystem);
+                startup_log::log_info(
+                    "interaction.route_switch.request.end",
+                    &format!(
+                        "from={} to=timeline deferred_projection=true startup_deferred_gallery={} startup_deferred_timeline={} {} elapsed_ms={}",
+                        route_name(from_route),
+                        app.background.startup_deferred_gallery_refresh,
+                        app.background.startup_deferred_timeline_refresh,
+                        filter_state_summary(app),
+                        started_at.elapsed().as_millis(),
+                    ),
+                );
+                return request_projection_refresh_with_context(
+                    app,
+                    BackgroundWorkReason::UserOrSystem,
+                    "route_switch",
+                );
             }
+            log_interaction_duration(
+                "interaction.route_switch.request.end",
+                started_at.elapsed(),
+                &format!(
+                    "from={} to=timeline deferred_projection=false startup_deferred_gallery={} startup_deferred_timeline={} {}",
+                    route_name(from_route),
+                    app.background.startup_deferred_gallery_refresh,
+                    app.background.startup_deferred_timeline_refresh,
+                    filter_state_summary(app),
+                ),
+            );
         }
         Message::SelectRoot(id) => {
             app.state.apply(AppMessage::SetSelectedRoot);
@@ -1141,15 +1306,60 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
             app.state.set_search_query(value);
         }
         Message::RunSearchQuery => {
-            return request_projection_refresh(app, BackgroundWorkReason::UserOrSystem);
+            startup_log::log_info(
+                "interaction.filter_change.request.start",
+                &format!(
+                    "trigger=search previous_route={} {}",
+                    route_name(app.state.active_route),
+                    filter_state_summary(app),
+                ),
+            );
+            return request_projection_refresh_with_context(
+                app,
+                BackgroundWorkReason::UserOrSystem,
+                "search_query",
+            );
         }
         Message::RunTimelineProjection => {
-            return request_projection_refresh(app, BackgroundWorkReason::UserOrSystem);
+            startup_log::log_info(
+                "interaction.route_switch.request.start",
+                &format!(
+                    "from={} to=timeline reason=explicit_projection_button from_items={} to_items={} {}",
+                    route_name(app.state.active_route),
+                    route_item_count(app, app.state.active_route),
+                    route_item_count(app, Route::Timeline),
+                    filter_state_summary(app),
+                ),
+            );
+            return request_projection_refresh_with_context(
+                app,
+                BackgroundWorkReason::UserOrSystem,
+                "route_switch",
+            );
         }
         Message::RunGalleryProjection => {
-            return request_projection_refresh(app, BackgroundWorkReason::UserOrSystem);
+            startup_log::log_info(
+                "interaction.route_switch.request.start",
+                &format!(
+                    "from={} to=gallery reason=explicit_projection_button from_items={} to_items={} {}",
+                    route_name(app.state.active_route),
+                    route_item_count(app, app.state.active_route),
+                    route_item_count(app, Route::Gallery),
+                    filter_state_summary(app),
+                ),
+            );
+            return request_projection_refresh_with_context(
+                app,
+                BackgroundWorkReason::UserOrSystem,
+                "route_switch",
+            );
         }
         Message::SelectMedia(media_id) => {
+            let started_at = Instant::now();
+            startup_log::log_info(
+                "interaction.media_select.request.start",
+                &selected_media_context(app, media_id),
+            );
             if app
                 .new_media_announcement
                 .as_ref()
@@ -1166,11 +1376,29 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
             app.last_click_time = Some(now);
 
             if is_double_click {
+                startup_log::log_info(
+                    "interaction.media_select.request.end",
+                    &format!(
+                        "{} double_click=true",
+                        selected_media_context(app, media_id)
+                    ),
+                );
                 open_selected_path(app, false);
             } else {
                 app.state.apply(AppMessage::SetSelectedMedia);
                 app.state.set_selected_media(Some(media_id));
                 load_media_details_cached(app);
+                log_interaction_duration(
+                    "interaction.media_select.request.end",
+                    started_at.elapsed(),
+                    &format!(
+                        "{} double_click=false details_status={} details_lines={} details_tags={}",
+                        selected_media_context(app, media_id),
+                        app.details_action_status,
+                        app.details_lines.len(),
+                        app.details_tags.len(),
+                    ),
+                );
             }
         }
         Message::DetailsTagInputChanged(value) => {
@@ -1266,17 +1494,80 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
             return request_reconcile(app, BackgroundWorkReason::FilesystemWatch);
         }
         Message::SetFilterMediaKind(kind) => {
+            let started_at = Instant::now();
+            let previous = filter_state_summary(app);
             app.filter_media_kind = kind;
             app.filter_extension = None;
-            return request_projection_refresh(app, BackgroundWorkReason::UserOrSystem);
+            startup_log::log_info(
+                "interaction.filter_change.request.start",
+                &format!(
+                    "trigger=media_kind previous=\"{previous}\" next=\"{}\"",
+                    filter_state_summary(app),
+                ),
+            );
+            log_interaction_duration(
+                "interaction.filter_change.request.end",
+                started_at.elapsed(),
+                &format!(
+                    "trigger=media_kind previous=\"{previous}\" next=\"{}\"",
+                    filter_state_summary(app),
+                ),
+            );
+            return request_projection_refresh_with_context(
+                app,
+                BackgroundWorkReason::UserOrSystem,
+                "filter_change",
+            );
         }
         Message::SetFilterExtension(ext) => {
+            let started_at = Instant::now();
+            let previous = filter_state_summary(app);
             app.filter_extension = ext;
-            return request_projection_refresh(app, BackgroundWorkReason::UserOrSystem);
+            startup_log::log_info(
+                "interaction.filter_change.request.start",
+                &format!(
+                    "trigger=extension previous=\"{previous}\" next=\"{}\"",
+                    filter_state_summary(app),
+                ),
+            );
+            log_interaction_duration(
+                "interaction.filter_change.request.end",
+                started_at.elapsed(),
+                &format!(
+                    "trigger=extension previous=\"{previous}\" next=\"{}\"",
+                    filter_state_summary(app),
+                ),
+            );
+            return request_projection_refresh_with_context(
+                app,
+                BackgroundWorkReason::UserOrSystem,
+                "filter_change",
+            );
         }
         Message::SetFilterTag(tag) => {
+            let started_at = Instant::now();
+            let previous = filter_state_summary(app);
             app.filter_tag = tag;
-            return request_projection_refresh(app, BackgroundWorkReason::UserOrSystem);
+            startup_log::log_info(
+                "interaction.filter_change.request.start",
+                &format!(
+                    "trigger=tag previous=\"{previous}\" next=\"{}\"",
+                    filter_state_summary(app),
+                ),
+            );
+            log_interaction_duration(
+                "interaction.filter_change.request.end",
+                started_at.elapsed(),
+                &format!(
+                    "trigger=tag previous=\"{previous}\" next=\"{}\"",
+                    filter_state_summary(app),
+                ),
+            );
+            return request_projection_refresh_with_context(
+                app,
+                BackgroundWorkReason::UserOrSystem,
+                "filter_change",
+            );
         }
         Message::MinFileSizeInputChanged(value) => {
             app.min_file_size_input = value;
@@ -1466,8 +1757,29 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
             }
         }
         Message::SetFilterLibrary(root_id) => {
+            let started_at = Instant::now();
+            let previous = filter_state_summary(app);
             app.filter_source_root_id = root_id;
-            return request_projection_refresh(app, BackgroundWorkReason::UserOrSystem);
+            startup_log::log_info(
+                "interaction.filter_change.request.start",
+                &format!(
+                    "trigger=library previous=\"{previous}\" next=\"{}\"",
+                    filter_state_summary(app),
+                ),
+            );
+            log_interaction_duration(
+                "interaction.filter_change.request.end",
+                started_at.elapsed(),
+                &format!(
+                    "trigger=library previous=\"{previous}\" next=\"{}\"",
+                    filter_state_summary(app),
+                ),
+            );
+            return request_projection_refresh_with_context(
+                app,
+                BackgroundWorkReason::UserOrSystem,
+                "filter_change",
+            );
         }
     }
 
@@ -1614,11 +1926,20 @@ fn mark_startup_ready(app: &mut Librapix) {
     }
 }
 
-fn projection_refresh_policy(app: &Librapix) -> ProjectionRefreshPolicy {
-    if app.background.startup_ready {
-        ProjectionRefreshPolicy::Full
+fn projection_refresh_policy(
+    app: &Librapix,
+    reason: BackgroundWorkReason,
+    trigger: &'static str,
+) -> ProjectionRefreshPolicy {
+    if !app.background.startup_ready {
+        return ProjectionRefreshPolicy::CurrentSurface;
+    }
+    if matches!(reason, BackgroundWorkReason::FilesystemWatch)
+        || matches!(trigger, "route_switch" | "filter_change" | "search_query")
+    {
+        ProjectionRefreshPolicy::CurrentSurface
     } else {
-        ProjectionRefreshPolicy::StartupCurrentSurface
+        ProjectionRefreshPolicy::Full
     }
 }
 
@@ -4541,6 +4862,7 @@ fn apply_ignore_rule_edit(app: &mut Librapix) {
 }
 
 fn load_media_details(app: &mut Librapix) {
+    let started_at = Instant::now();
     app.details_editing_tag = None;
     app.details_tag_input.clear();
     let Some(media_id) = app.state.selected_media_id else {
@@ -4548,21 +4870,68 @@ fn load_media_details(app: &mut Librapix) {
         app.details_preview_path = None;
         app.details_title.clear();
         app.details_tags.clear();
+        startup_log::log_info(
+            "interaction.detail_load.request.end",
+            "media_id=none selected=false result=no_selection",
+        );
         return;
     };
+    startup_log::log_info(
+        "interaction.detail_load.request.start",
+        &selected_media_context(app, media_id),
+    );
+    startup_log::log_info(
+        "interaction.detail_working.set",
+        &format!(
+            "owner=detail_load media_id={} route={} {}",
+            media_id,
+            route_name(app.state.active_route),
+            filter_state_summary(app),
+        ),
+    );
+    let storage_started_at = Instant::now();
     let details = with_storage(&app.runtime, |storage| {
         storage.get_media_read_model_by_id(media_id)
     })
     .ok()
     .flatten();
+    log_interaction_duration(
+        "interaction.detail_load.storage_lookup",
+        storage_started_at.elapsed(),
+        &format!("media_id={media_id} found={}", details.is_some()),
+    );
     if let Some(details) = details {
         app.details_title = details
             .absolute_path
             .file_name()
             .map(|name| name.to_string_lossy().to_string())
             .unwrap_or_else(|| details.absolute_path.display().to_string());
-        app.details_preview_path =
-            resolve_thumbnail(&app.runtime.thumbnails_dir, &details, DETAIL_THUMB_SIZE);
+        let thumbnail_lookup_started_at = Instant::now();
+        startup_log::log_info(
+            "interaction.detail_thumbnail.lookup.start",
+            &format!(
+                "media_id={} kind={} path={} size={DETAIL_THUMB_SIZE}",
+                media_id,
+                details.media_kind,
+                details.absolute_path.display(),
+            ),
+        );
+        let (preview_path, preview_source) = resolve_existing_detail_preview_path(
+            &app.runtime.thumbnails_dir,
+            &details,
+            browse_thumbnail_path(app, media_id),
+        );
+        app.details_preview_path = preview_path;
+        log_interaction_duration(
+            "interaction.detail_thumbnail.lookup.end",
+            thumbnail_lookup_started_at.elapsed(),
+            &format!(
+                "media_id={} kind={} resolved={} source={preview_source}",
+                media_id,
+                details.media_kind,
+                app.details_preview_path.is_some(),
+            ),
+        );
         app.details_lines = vec![
             format!(
                 "{}: {}",
@@ -4591,6 +4960,7 @@ fn load_media_details(app: &mut Librapix) {
             ),
         ];
         refresh_details_tags(app, media_id);
+        app.details_loaded_media_ids.insert(media_id);
         app.details_action_status = app.i18n.text(TextKey::DetailsActionSuccess).to_owned();
     } else {
         app.details_lines.clear();
@@ -4599,6 +4969,28 @@ fn load_media_details(app: &mut Librapix) {
         app.details_tags.clear();
         app.details_action_status = app.i18n.text(TextKey::DetailsActionFailed).to_owned();
     }
+    log_interaction_duration(
+        "interaction.detail_load.request.end",
+        started_at.elapsed(),
+        &format!(
+            "{} result={} details_lines={} details_tags={} preview_path={}",
+            selected_media_context(app, media_id),
+            app.details_action_status,
+            app.details_lines.len(),
+            app.details_tags.len(),
+            app.details_preview_path.is_some(),
+        ),
+    );
+    startup_log::log_info(
+        "interaction.detail_working.clear",
+        &format!(
+            "owner=detail_load media_id={} route={} result={} preview_path={}",
+            media_id,
+            route_name(app.state.active_route),
+            app.details_action_status,
+            app.details_preview_path.is_some(),
+        ),
+    );
 }
 
 fn attach_tag_to_selected_media(app: &mut Librapix, kind: TagKind) {
@@ -4702,6 +5094,11 @@ fn apply_details_tag_edit(app: &mut Librapix) {
 }
 
 fn refresh_details_tags(app: &mut Librapix, media_id: i64) {
+    let started_at = Instant::now();
+    startup_log::log_info(
+        "interaction.detail_tags.load.start",
+        &format!("media_id={media_id}"),
+    );
     let media_row = with_storage(&app.runtime, |storage| {
         storage.get_media_read_model_by_id(media_id)
     })
@@ -4709,6 +5106,11 @@ fn refresh_details_tags(app: &mut Librapix, media_id: i64) {
     .flatten();
     let Some(media_row) = media_row else {
         app.details_tags.clear();
+        log_interaction_duration(
+            "interaction.detail_tags.load.end",
+            started_at.elapsed(),
+            &format!("media_id={media_id} tags=0 media_row_found=false"),
+        );
         return;
     };
     let root_tags = with_storage(&app.runtime, |storage| {
@@ -4733,6 +5135,15 @@ fn refresh_details_tags(app: &mut Librapix, media_id: i64) {
         .collect::<Vec<_>>();
     tags.sort_by(|left, right| left.name.to_lowercase().cmp(&right.name.to_lowercase()));
     app.details_tags = tags;
+    log_interaction_duration(
+        "interaction.detail_tags.load.end",
+        started_at.elapsed(),
+        &format!(
+            "media_id={media_id} tags={} inherited_candidates={}",
+            app.details_tags.len(),
+            inherited_names.len(),
+        ),
+    );
 }
 
 fn open_selected_path(app: &mut Librapix, containing_folder: bool) {
@@ -5279,37 +5690,6 @@ fn catalog_row_matches_tag_filter(row: &CatalogMediaRecord, tag_filter: Option<&
     })
 }
 
-fn generate_thumbnail(
-    thumbnails_dir: &Path,
-    absolute_path: &Path,
-    media_kind: &str,
-    file_size_bytes: u64,
-    modified_unix_seconds: Option<i64>,
-    max_edge: u32,
-) -> Option<ThumbnailOutcome> {
-    if media_kind == "image" {
-        ensure_image_thumbnail(
-            thumbnails_dir,
-            absolute_path,
-            file_size_bytes,
-            modified_unix_seconds,
-            max_edge,
-        )
-        .ok()
-    } else if media_kind == "video" {
-        ensure_video_thumbnail(
-            thumbnails_dir,
-            absolute_path,
-            file_size_bytes,
-            modified_unix_seconds,
-            max_edge,
-        )
-        .ok()
-    } else {
-        None
-    }
-}
-
 fn projection_matches_tag_filter(item: &ProjectionMedia, tag_filter: Option<&str>) -> bool {
     tag_filter.is_none_or(|selected| {
         item.tags
@@ -5318,20 +5698,25 @@ fn projection_matches_tag_filter(item: &ProjectionMedia, tag_filter: Option<&str
     })
 }
 
-fn resolve_thumbnail(
-    thumbnails_dir: &std::path::Path,
+fn resolve_existing_detail_preview_path(
+    thumbnails_dir: &Path,
     row: &librapix_storage::MediaReadModel,
-    max_edge: u32,
-) -> Option<PathBuf> {
-    generate_thumbnail(
+    browse_fallback: Option<PathBuf>,
+) -> (Option<PathBuf>, &'static str) {
+    let detail_path = thumbnail_path(
         thumbnails_dir,
         &row.absolute_path,
-        &row.media_kind,
         row.file_size_bytes,
         row.modified_unix_seconds,
-        max_edge,
-    )
-    .map(|outcome| outcome.thumbnail_path)
+        DETAIL_THUMB_SIZE,
+    );
+    if detail_path.is_file() {
+        (Some(detail_path), "detail_artifact")
+    } else if let Some(path) = browse_fallback {
+        (Some(path), "browse_thumbnail")
+    } else {
+        (None, "none")
+    }
 }
 
 fn relative_artifact_path(artifact_root: &Path, artifact_path: &Path) -> Option<PathBuf> {
@@ -5725,6 +6110,7 @@ fn startup_priority_media_ids(app: &Librapix, limit: usize) -> Vec<i64> {
 }
 
 fn load_media_details_cached(app: &mut Librapix) {
+    let started_at = Instant::now();
     app.details_editing_tag = None;
     app.details_tag_input.clear();
     let Some(media_id) = app.state.selected_media_id else {
@@ -5732,8 +6118,16 @@ fn load_media_details_cached(app: &mut Librapix) {
         app.details_preview_path = None;
         app.details_title.clear();
         app.details_tags.clear();
+        startup_log::log_info(
+            "interaction.media_select.cache.end",
+            "media_id=none selected=false result=no_selection",
+        );
         return;
     };
+    startup_log::log_info(
+        "interaction.media_select.cache.start",
+        &selected_media_context(app, media_id),
+    );
 
     if let Some(cached) = app.media_cache.get(&media_id) {
         app.details_title = cached
@@ -5773,9 +6167,36 @@ fn load_media_details_cached(app: &mut Librapix) {
             ),
         ];
         refresh_details_tags(app, media_id);
+        app.details_loaded_media_ids.insert(media_id);
         app.details_action_status = app.i18n.text(TextKey::DetailsActionSuccess).to_owned();
+        log_interaction_duration(
+            "interaction.media_select.cache.end",
+            started_at.elapsed(),
+            &format!(
+                "{} cache_hit=true details_lines={} details_tags={} preview_path={}",
+                selected_media_context(app, media_id),
+                app.details_lines.len(),
+                app.details_tags.len(),
+                app.details_preview_path.is_some(),
+            ),
+        );
     } else {
+        startup_log::log_info(
+            "interaction.media_select.cache.miss",
+            &selected_media_context(app, media_id),
+        );
         load_media_details(app);
+        log_interaction_duration(
+            "interaction.media_select.cache.end",
+            started_at.elapsed(),
+            &format!(
+                "{} cache_hit=false details_lines={} details_tags={} preview_path={}",
+                selected_media_context(app, media_id),
+                app.details_lines.len(),
+                app.details_tags.len(),
+                app.details_preview_path.is_some(),
+            ),
+        );
     }
 }
 
@@ -6675,11 +7096,36 @@ fn do_scan_job(input: ScanJobInput) -> ScanJobResult {
 }
 
 fn request_projection_refresh(app: &mut Librapix, reason: BackgroundWorkReason) -> Task<Message> {
+    request_projection_refresh_with_context(app, reason, "system")
+}
+
+fn request_projection_refresh_with_context(
+    app: &mut Librapix,
+    reason: BackgroundWorkReason,
+    trigger: &'static str,
+) -> Task<Message> {
     if app.background.snapshot_apply.is_some()
         || (!app.background.snapshot_loaded && app.background.snapshot_generation > 0)
         || app.background.reconcile_in_flight
         || app.background.projection_in_flight
     {
+        startup_log::log_info(
+            "interaction.projection.request.deduped",
+            &format!(
+                "trigger={trigger} reason={reason:?} route={} snapshot_apply={} snapshot_loaded={} snapshot_generation={} reconcile_in_flight={} projection_in_flight={} pending_reconcile={} pending_projection={} gallery_items={} timeline_items={} {}",
+                route_name(app.state.active_route),
+                app.background.snapshot_apply.is_some(),
+                app.background.snapshot_loaded,
+                app.background.snapshot_generation,
+                app.background.reconcile_in_flight,
+                app.background.projection_in_flight,
+                app.background.pending_reconcile,
+                app.background.pending_projection,
+                app.gallery_items.len(),
+                app.timeline_items.len(),
+                filter_state_summary(app),
+            ),
+        );
         startup_log::log_info(
             "startup.projection.request.queued",
             &format!(
@@ -6702,23 +7148,41 @@ fn request_projection_refresh(app: &mut Librapix, reason: BackgroundWorkReason) 
         return Task::none();
     }
 
-    start_projection_refresh(app, reason)
+    startup_log::log_info(
+        "interaction.projection.request.accepted",
+        &format!(
+            "trigger={trigger} reason={reason:?} route={} gallery_items={} timeline_items={} startup_ready={} {}",
+            route_name(app.state.active_route),
+            app.gallery_items.len(),
+            app.timeline_items.len(),
+            app.background.startup_ready,
+            filter_state_summary(app),
+        ),
+    );
+    start_projection_refresh(app, reason, trigger)
 }
 
-fn start_projection_refresh(app: &mut Librapix, reason: BackgroundWorkReason) -> Task<Message> {
+fn start_projection_refresh(
+    app: &mut Librapix,
+    reason: BackgroundWorkReason,
+    trigger: &'static str,
+) -> Task<Message> {
     note_thumbnail_refresh_pressure(app, "projection_refresh");
     cancel_thumbnail_work(app, "reason=projection_refresh");
-    let policy = projection_refresh_policy(app);
+    let policy = projection_refresh_policy(app, reason, trigger);
     app.background.projection_in_flight = true;
     app.background.pending_projection = false;
     app.background.pending_projection_reason = reason;
     app.background.projection_generation = app.background.projection_generation.saturating_add(1);
     app.startup_metrics.projection_started_at = Some(Instant::now());
-    if matches!(policy, ProjectionRefreshPolicy::StartupCurrentSurface) {
+    if matches!(policy, ProjectionRefreshPolicy::CurrentSurface) {
         app.background.startup_deferred_gallery_refresh =
             !matches!(app.state.active_route, Route::Gallery);
         app.background.startup_deferred_timeline_refresh =
             !matches!(app.state.active_route, Route::Timeline);
+    } else {
+        app.background.startup_deferred_gallery_refresh = false;
+        app.background.startup_deferred_timeline_refresh = false;
     }
     set_activity_stage(
         app,
@@ -6744,6 +7208,16 @@ fn start_projection_refresh(app: &mut Librapix, reason: BackgroundWorkReason) ->
         ),
     );
     startup_log::log_info(
+        "interaction.route_working.set",
+        &format!(
+            "owner=projection trigger={trigger} route={} generation={} reason={reason:?} browse_status={} startup_ready={}",
+            route_name(app.state.active_route),
+            app.background.projection_generation,
+            app.browse_status,
+            app.background.startup_ready,
+        ),
+    );
+    startup_log::log_info(
         "startup.projection.start",
         &format!(
             "generation={} reason={:?} policy={policy:?} route={:?} search_len={} filter_kind={:?} filter_extension={:?} filter_tag={:?} filter_root_id={:?}",
@@ -6755,6 +7229,18 @@ fn start_projection_refresh(app: &mut Librapix, reason: BackgroundWorkReason) ->
             app.filter_extension,
             app.filter_tag,
             app.filter_source_root_id,
+        ),
+    );
+    startup_log::log_info(
+        "interaction.projection.start",
+        &format!(
+            "trigger={trigger} generation={} route={} reason={reason:?} policy={policy:?} gallery_items={} timeline_items={} search_items={} {}",
+            app.background.projection_generation,
+            route_name(app.state.active_route),
+            app.gallery_items.len(),
+            app.timeline_items.len(),
+            app.search_items.len(),
+            filter_state_summary(app),
         ),
     );
 
@@ -7388,7 +7874,35 @@ fn apply_scan_job_result(app: &mut Librapix, result: ScanJobResult) -> Task<Mess
 }
 
 fn apply_projection_job_result(app: &mut Librapix, result: ProjectionJobResult) -> Task<Message> {
+    let apply_started_at = Instant::now();
+    let previous_gallery_items = app.gallery_items.len();
+    let previous_timeline_items = app.timeline_items.len();
+    let previous_search_items = app.search_items.len();
+    startup_log::log_info(
+        "interaction.projection.message.received",
+        &format!(
+            "generation={} route={} refreshed_gallery={} refreshed_timeline={} previous_gallery_items={} previous_timeline_items={} previous_search_items={} {}",
+            result.generation,
+            route_name(app.state.active_route),
+            result.refreshed_gallery,
+            result.refreshed_timeline,
+            previous_gallery_items,
+            previous_timeline_items,
+            previous_search_items,
+            filter_state_summary(app),
+        ),
+    );
     if result.generation != app.background.projection_generation {
+        startup_log::log_info(
+            "interaction.projection.message.stale",
+            &format!(
+                "generation={} active_generation={} route={} {}",
+                result.generation,
+                app.background.projection_generation,
+                route_name(app.state.active_route),
+                filter_state_summary(app),
+            ),
+        );
         return Task::none();
     }
     app.background.projection_in_flight = false;
@@ -7402,6 +7916,15 @@ fn apply_projection_job_result(app: &mut Librapix, result: ProjectionJobResult) 
                 &format!("generation={} success=false", result.generation),
             );
         }
+        startup_log::log_warn(
+            "interaction.projection.message.failed",
+            &format!(
+                "generation={} route={} {}",
+                result.generation,
+                route_name(app.state.active_route),
+                filter_state_summary(app),
+            ),
+        );
         return finalize_background_flow(app);
     }
 
@@ -7459,6 +7982,26 @@ fn apply_projection_job_result(app: &mut Librapix, result: ProjectionJobResult) 
     }
     app.browse_status = result.browse_status;
     reconcile_selected_media_after_projection(app);
+    log_interaction_duration(
+        "interaction.projection.apply",
+        apply_started_at.elapsed(),
+        &format!(
+            "generation={} route={} refreshed_gallery={} refreshed_timeline={} gallery_items_before={} gallery_items_after={} timeline_items_before={} timeline_items_after={} search_items_before={} search_items_after={} deferred_gallery={} deferred_timeline={} {}",
+            result.generation,
+            route_name(app.state.active_route),
+            result.refreshed_gallery,
+            result.refreshed_timeline,
+            previous_gallery_items,
+            app.gallery_items.len(),
+            previous_timeline_items,
+            app.timeline_items.len(),
+            previous_search_items,
+            app.search_items.len(),
+            app.background.startup_deferred_gallery_refresh,
+            app.background.startup_deferred_timeline_refresh,
+            filter_state_summary(app),
+        ),
+    );
 
     if let Some(mut announcement) = announcement {
         if announcement.preview_path.is_none() {
@@ -8637,6 +9180,21 @@ fn finalize_background_flow(app: &mut Librapix) -> Task<Message> {
                 app.background.deferred_thumbnail_queue.len(),
             ),
         );
+        startup_log::log_info(
+            "interaction.route_working.clear",
+            &format!(
+                "owner=finalize route={} browse_status={} gallery_items={} timeline_items={} pending_reconcile={} pending_projection={} thumbnail_in_flight={} deferred_thumbnail_queue={} {}",
+                route_name(app.state.active_route),
+                app.browse_status,
+                app.gallery_items.len(),
+                app.timeline_items.len(),
+                app.background.pending_reconcile,
+                app.background.pending_projection,
+                app.background.thumbnail_in_flight,
+                app.background.deferred_thumbnail_queue.len(),
+                filter_state_summary(app),
+            ),
+        );
         set_activity_ready(app);
     }
     Task::none()
@@ -8811,6 +9369,7 @@ mod tests {
             details_title: String::new(),
             details_tags: Vec::new(),
             details_editing_tag: None,
+            details_loaded_media_ids: HashSet::new(),
             ignore_rule_input: String::new(),
             ignore_rules: Vec::new(),
             ignore_rule_editing_id: None,
@@ -9447,11 +10006,71 @@ mod tests {
         app.background.startup_ready = false;
         app.state.apply(AppMessage::OpenGallery);
 
-        let _ = start_projection_refresh(&mut app, BackgroundWorkReason::UserOrSystem);
+        let _ = start_projection_refresh(&mut app, BackgroundWorkReason::UserOrSystem, "test");
 
         assert!(app.background.projection_in_flight);
         assert!(!app.background.startup_deferred_gallery_refresh);
         assert!(app.background.startup_deferred_timeline_refresh);
+    }
+
+    #[test]
+    fn route_switch_projection_policy_stays_current_surface_after_startup() {
+        let mut app = test_app();
+        app.background.startup_ready = true;
+        app.state.apply(AppMessage::OpenTimeline);
+
+        assert_eq!(
+            projection_refresh_policy(&app, BackgroundWorkReason::UserOrSystem, "route_switch"),
+            ProjectionRefreshPolicy::CurrentSurface
+        );
+        assert_eq!(
+            projection_refresh_policy(&app, BackgroundWorkReason::UserOrSystem, "filter_change"),
+            ProjectionRefreshPolicy::CurrentSurface
+        );
+        assert_eq!(
+            projection_refresh_policy(&app, BackgroundWorkReason::FilesystemWatch, "system"),
+            ProjectionRefreshPolicy::CurrentSurface
+        );
+        assert_eq!(
+            projection_refresh_policy(&app, BackgroundWorkReason::UserOrSystem, "system"),
+            ProjectionRefreshPolicy::Full
+        );
+    }
+
+    #[test]
+    fn existing_detail_preview_prefers_existing_file_then_browse_fallback() {
+        let thumbnails_dir = unique_temp_dir("detail-preview");
+        let row = librapix_storage::MediaReadModel {
+            media_id: 77,
+            source_root_id: 1,
+            absolute_path: thumbnails_dir.join("source.png"),
+            media_kind: "image".to_owned(),
+            file_size_bytes: 32,
+            modified_unix_seconds: Some(100),
+            width_px: Some(400),
+            height_px: Some(300),
+            metadata_status: librapix_storage::IndexedMetadataStatus::Ok,
+            tags: Vec::new(),
+        };
+        let browse_path = thumbnails_dir.join("browse.png");
+        let detail_path = thumbnail_path(
+            &thumbnails_dir,
+            &row.absolute_path,
+            row.file_size_bytes,
+            row.modified_unix_seconds,
+            DETAIL_THUMB_SIZE,
+        );
+
+        let (fallback_preview, fallback_source) =
+            resolve_existing_detail_preview_path(&thumbnails_dir, &row, Some(browse_path.clone()));
+        assert_eq!(fallback_preview, Some(browse_path));
+        assert_eq!(fallback_source, "browse_thumbnail");
+
+        write_thumbnail_stub(&detail_path);
+        let (detail_preview, detail_source) =
+            resolve_existing_detail_preview_path(&thumbnails_dir, &row, None);
+        assert_eq!(detail_preview, Some(detail_path));
+        assert_eq!(detail_source, "detail_artifact");
     }
 
     #[test]

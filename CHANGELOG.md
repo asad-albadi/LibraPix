@@ -23,6 +23,7 @@ All notable changes to this project are documented in this file.
 - Migration `0009_catalog_first_foundation.sql` with:
   - `media_catalog` for normalized browse/search/timeline facts
   - `derived_artifacts` for named thumbnail variant readiness
+- Debug runtime automation via `LIBRAPIX_AUTOMATION_SCRIPT` for deterministic Windows validation of route switches, filter changes, and first-open detail interactions against the real executable and large-library state.
 - Storage APIs for catalog materialization and derived-artifact lookup.
 - GitHub release update-check flow in `librapix-app` using GitHub latest-release endpoint (`/releases/latest`) with explicit state model: `Unknown`, `Checking`, `UpToDate`, `UpdateAvailable { version, url }`, `Failed`.
 - Header update-status chip with click behavior:

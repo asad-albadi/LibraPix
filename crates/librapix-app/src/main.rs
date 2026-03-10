@@ -122,6 +122,7 @@ enum Message {
     ProjectionJobComplete(Box<ProjectionJobResult>),
     ThumbnailBatchComplete(Box<ThumbnailBatchResult>),
     StartupGalleryContinuationKickoff,
+    AutomationTick,
     DeferredThumbnailCatchupKickoff,
     OpenMediaById(i64),
     CopyMediaFileById(i64),
@@ -165,6 +166,7 @@ enum IntervalMessageKind {
     StartupReconcileKickoff,
     SnapshotApplyTick,
     StartupGalleryContinuationKickoff,
+    AutomationTick,
     DeferredThumbnailCatchupKickoff,
 }
 
@@ -466,6 +468,63 @@ struct ProjectionThumbnailLookupInput<'a> {
     search_items: &'a [BrowseItem],
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum AutomationAction {
+    OpenGallery,
+    OpenTimeline,
+    SetFilterMediaKind(Option<String>),
+    SelectFirstVisible,
+}
+
+impl AutomationAction {
+    fn label(&self) -> String {
+        match self {
+            Self::OpenGallery => "gallery".to_owned(),
+            Self::OpenTimeline => "timeline".to_owned(),
+            Self::SetFilterMediaKind(Some(kind)) => format!("filter_kind:{kind}"),
+            Self::SetFilterMediaKind(None) => "filter_kind:none".to_owned(),
+            Self::SelectFirstVisible => "select_first".to_owned(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AutomationStep {
+    wait_ms: u64,
+    action: AutomationAction,
+}
+
+#[derive(Debug, Clone)]
+struct AutomationRunner {
+    steps: VecDeque<AutomationStep>,
+    due_at: Option<Instant>,
+    poll_interval: Duration,
+}
+
+impl AutomationRunner {
+    fn from_env() -> Option<Self> {
+        let raw = std::env::var("LIBRAPIX_AUTOMATION_SCRIPT").ok()?;
+        let steps = parse_automation_script(&raw);
+        if steps.is_empty() {
+            startup_log::log_warn(
+                "automation.script.ignored",
+                "reason=empty_or_invalid env=LIBRAPIX_AUTOMATION_SCRIPT",
+            );
+            return None;
+        }
+
+        startup_log::log_info(
+            "automation.script.loaded",
+            &format!("steps={} script={raw}", steps.len()),
+        );
+        Some(Self {
+            steps: steps.into(),
+            due_at: None,
+            poll_interval: Duration::from_millis(100),
+        })
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 struct BackgroundCoordinator {
     snapshot_generation: u64,
@@ -488,6 +547,7 @@ struct BackgroundCoordinator {
     pending_projection: bool,
     pending_projection_reason: BackgroundWorkReason,
     deferred_thumbnail_due_at: Option<Instant>,
+    automation: Option<AutomationRunner>,
     thumbnail_cancel_generation: Arc<AtomicU64>,
     thumbnail_batch_id: u64,
     thumbnail_queue: VecDeque<ThumbnailWorkItem>,
@@ -730,6 +790,7 @@ const AUTO_UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 const MANUAL_UPDATE_CHECK_COOLDOWN: Duration = Duration::from_secs(5 * 60);
 const MEDIA_VIRTUAL_OVERSCAN_PX: f32 = 1200.0;
 const TIMELINE_GROUP_HEADER_HEIGHT: f32 = 40.0;
+const AUTOMATION_TICK_INTERVAL: Duration = Duration::from_millis(100);
 static LARGE_SURFACE_RENDER_LOGS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
 #[derive(Debug, Clone)]
@@ -815,6 +876,7 @@ impl Default for Librapix {
             last_auto_update_check_attempt: None,
             startup_metrics: StartupFlowMetrics::default(),
         };
+        app.background.automation = AutomationRunner::from_env();
         refresh_ignore_rules(&mut app);
         set_activity_ready(&mut app);
         app.background.startup_ready = true;
@@ -862,6 +924,14 @@ fn subscription(app: &Librapix) -> Subscription<Message> {
         SNAPSHOT_APPLY_TICK_INTERVAL,
         IntervalMessageKind::SnapshotApplyTick,
     );
+    let automation_subscription = interval_subscription(
+        app.background
+            .automation
+            .as_ref()
+            .is_some_and(|runner| runner.due_at.is_some()),
+        AUTOMATION_TICK_INTERVAL,
+        IntervalMessageKind::AutomationTick,
+    );
     let deferred_thumbnail_subscription = interval_subscription(
         app.background.deferred_thumbnail_due_at.is_some(),
         DEFERRED_THUMBNAIL_TICK_INTERVAL,
@@ -883,6 +953,7 @@ fn subscription(app: &Librapix) -> Subscription<Message> {
             startup_reconcile_subscription,
             startup_gallery_continuation_subscription,
             snapshot_apply_subscription,
+            automation_subscription,
             deferred_thumbnail_subscription,
         ])
     } else {
@@ -892,6 +963,7 @@ fn subscription(app: &Librapix) -> Subscription<Message> {
             startup_reconcile_subscription,
             startup_gallery_continuation_subscription,
             snapshot_apply_subscription,
+            automation_subscription,
             deferred_thumbnail_subscription,
             Subscription::run_with(WatchSubscriptionConfig { roots }, watch_filesystem),
         ])
@@ -918,6 +990,7 @@ fn interval_message((message, _instant): (IntervalMessageKind, Instant)) -> Mess
             Message::StartupGalleryContinuationKickoff
         }
         IntervalMessageKind::SnapshotApplyTick => Message::SnapshotApplyTick,
+        IntervalMessageKind::AutomationTick => Message::AutomationTick,
         IntervalMessageKind::DeferredThumbnailCatchupKickoff => {
             Message::DeferredThumbnailCatchupKickoff
         }
@@ -1029,6 +1102,7 @@ fn message_event_label(msg: &Message) -> String {
         Message::ProjectionJobComplete(_) => "ProjectionJobComplete".into(),
         Message::ThumbnailBatchComplete(_) => "ThumbnailBatchComplete".into(),
         Message::StartupGalleryContinuationKickoff => "StartupGalleryContinuationKickoff".into(),
+        Message::AutomationTick => "AutomationTick".into(),
         Message::DeferredThumbnailCatchupKickoff => "DeferredThumbnailCatchupKickoff".into(),
         Message::OpenMediaById(id) => format!("OpenMediaById({id})"),
         Message::CopyMediaFileById(id) => format!("CopyMediaFileById({id})"),
@@ -1525,6 +1599,12 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
         Message::StartupGalleryContinuationKickoff => {
             return start_startup_gallery_continuation(app);
         }
+        Message::AutomationTick => {
+            if let Some(message) = maybe_execute_automation_step(app) {
+                return Task::done(message);
+            }
+            return Task::none();
+        }
         Message::FilesystemChanged => {
             return request_reconcile(app, BackgroundWorkReason::FilesystemWatch);
         }
@@ -1950,6 +2030,7 @@ fn note_first_usable_gallery(app: &mut Librapix, source: &str) {
 fn mark_startup_ready(app: &mut Librapix) {
     app.background.startup_ready = true;
     set_activity_ready(app);
+    schedule_automation_if_needed(app, "startup_ready");
     if !app.startup_metrics.startup_ready_recorded {
         app.startup_metrics.startup_ready_recorded = true;
         let elapsed_ms = startup_log::elapsed_since_launch()
@@ -1965,6 +2046,184 @@ fn mark_startup_ready(app: &mut Librapix) {
             ),
         );
     }
+}
+
+fn schedule_automation_if_needed(app: &mut Librapix, reason: &'static str) {
+    let Some(runner) = app.background.automation.as_mut() else {
+        return;
+    };
+    if runner.due_at.is_some() || runner.steps.is_empty() || !app.background.startup_ready {
+        return;
+    }
+
+    let wait_ms = runner
+        .steps
+        .front()
+        .map(|step| step.wait_ms)
+        .unwrap_or_default();
+    runner.due_at = Some(Instant::now() + Duration::from_millis(wait_ms));
+    startup_log::log_info(
+        "automation.step.scheduled",
+        &format!(
+            "reason={reason} wait_ms={wait_ms} remaining_steps={}",
+            runner.steps.len()
+        ),
+    );
+}
+
+fn maybe_execute_automation_step(app: &mut Librapix) -> Option<Message> {
+    let due_at = app.background.automation.as_ref()?.due_at?;
+    if Instant::now() < due_at {
+        return None;
+    }
+
+    if !automation_can_advance(app) {
+        let poll_interval = app
+            .background
+            .automation
+            .as_ref()
+            .map(|runner| runner.poll_interval)
+            .unwrap_or(AUTOMATION_TICK_INTERVAL);
+        if let Some(runner) = app.background.automation.as_mut() {
+            runner.due_at = Some(Instant::now() + poll_interval);
+        }
+        startup_log::log_info(
+            "automation.step.deferred",
+            &format!(
+                "route={} startup_ready={} reconcile_in_flight={} projection_in_flight={} thumbnail_in_flight={} pending_reconcile={} pending_projection={}",
+                route_name(app.state.active_route),
+                app.background.startup_ready,
+                app.background.reconcile_in_flight,
+                app.background.projection_in_flight,
+                app.background.thumbnail_in_flight,
+                app.background.pending_reconcile,
+                app.background.pending_projection,
+            ),
+        );
+        return None;
+    }
+
+    let step = {
+        let runner = app.background.automation.as_mut()?;
+        let step = runner.steps.pop_front()?;
+        runner.due_at = runner
+            .steps
+            .front()
+            .map(|next| Instant::now() + Duration::from_millis(next.wait_ms));
+        step
+    };
+
+    startup_log::log_info(
+        "automation.step.execute",
+        &format!(
+            "action={} remaining_steps={} route={} {}",
+            step.action.label(),
+            app.background
+                .automation
+                .as_ref()
+                .map(|runner| runner.steps.len())
+                .unwrap_or_default(),
+            route_name(app.state.active_route),
+            filter_state_summary(app),
+        ),
+    );
+
+    let message = automation_step_message(app, &step.action);
+    if app
+        .background
+        .automation
+        .as_ref()
+        .is_some_and(|runner| runner.steps.is_empty() && runner.due_at.is_none())
+    {
+        startup_log::log_info(
+            "automation.script.complete",
+            &format!(
+                "route={} gallery_items={} timeline_items={} {}",
+                route_name(app.state.active_route),
+                app.gallery_items.len(),
+                app.timeline_items.len(),
+                filter_state_summary(app),
+            ),
+        );
+    }
+    message
+}
+
+fn automation_can_advance(app: &Librapix) -> bool {
+    app.background.startup_ready
+        && app.background.snapshot_apply.is_none()
+        && !app.background.reconcile_in_flight
+        && !app.background.projection_in_flight
+        && !app.background.pending_reconcile
+        && !app.background.pending_projection
+}
+
+fn automation_step_message(app: &Librapix, action: &AutomationAction) -> Option<Message> {
+    match action {
+        AutomationAction::OpenGallery => Some(Message::OpenGallery),
+        AutomationAction::OpenTimeline => Some(Message::OpenTimeline),
+        AutomationAction::SetFilterMediaKind(kind) => {
+            Some(Message::SetFilterMediaKind(kind.clone()))
+        }
+        AutomationAction::SelectFirstVisible => current_route_items(app)
+            .iter()
+            .find(|item| !item.is_group_header)
+            .map(|item| Message::SelectMedia(item.media_id)),
+    }
+}
+
+fn current_route_items(app: &Librapix) -> &[BrowseItem] {
+    match app.state.active_route {
+        Route::Gallery => &app.gallery_items,
+        Route::Timeline => &app.timeline_items,
+    }
+}
+
+fn parse_automation_script(raw: &str) -> Vec<AutomationStep> {
+    let mut steps = Vec::new();
+    let mut pending_wait_ms = 0u64;
+
+    for token in raw
+        .split(';')
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+    {
+        if let Some(value) = token.strip_prefix("wait:") {
+            if let Ok(wait_ms) = value.trim().parse::<u64>() {
+                pending_wait_ms = pending_wait_ms.saturating_add(wait_ms);
+            }
+            continue;
+        }
+
+        let action = if token.eq_ignore_ascii_case("gallery") {
+            Some(AutomationAction::OpenGallery)
+        } else if token.eq_ignore_ascii_case("timeline") {
+            Some(AutomationAction::OpenTimeline)
+        } else if token.eq_ignore_ascii_case("select_first") {
+            Some(AutomationAction::SelectFirstVisible)
+        } else if let Some(value) = token.strip_prefix("filter_kind:") {
+            let value = value.trim();
+            Some(AutomationAction::SetFilterMediaKind(
+                if value.eq_ignore_ascii_case("none") || value.is_empty() {
+                    None
+                } else {
+                    Some(value.to_owned())
+                },
+            ))
+        } else {
+            None
+        };
+
+        if let Some(action) = action {
+            steps.push(AutomationStep {
+                wait_ms: pending_wait_ms,
+                action,
+            });
+            pending_wait_ms = 0;
+        }
+    }
+
+    steps
 }
 
 fn projection_refresh_policy(
@@ -9922,6 +10181,118 @@ mod tests {
         assert_eq!(announcement.media_id, 20);
         assert_eq!(announcement.additional_count, 1);
         assert!(announcement.metadata_line.contains("Video"));
+    }
+
+    #[test]
+    fn parse_automation_script_supports_waits_filters_and_selection() {
+        let steps = parse_automation_script(
+            "wait:250;timeline;wait:100;filter_kind:video;select_first;wait:50;filter_kind:none",
+        );
+
+        assert_eq!(
+            steps,
+            vec![
+                AutomationStep {
+                    wait_ms: 250,
+                    action: AutomationAction::OpenTimeline,
+                },
+                AutomationStep {
+                    wait_ms: 100,
+                    action: AutomationAction::SetFilterMediaKind(Some("video".to_owned())),
+                },
+                AutomationStep {
+                    wait_ms: 0,
+                    action: AutomationAction::SelectFirstVisible,
+                },
+                AutomationStep {
+                    wait_ms: 50,
+                    action: AutomationAction::SetFilterMediaKind(None),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn automation_tick_defers_while_background_work_is_active() {
+        let mut app = test_app();
+        app.background.startup_ready = true;
+        app.background.projection_in_flight = true;
+        app.background.automation = Some(AutomationRunner {
+            steps: VecDeque::from([AutomationStep {
+                wait_ms: 0,
+                action: AutomationAction::OpenTimeline,
+            }]),
+            due_at: Some(Instant::now() - Duration::from_millis(1)),
+            poll_interval: Duration::from_millis(100),
+        });
+
+        let message = maybe_execute_automation_step(&mut app);
+
+        assert!(message.is_none());
+        assert!(
+            app.background
+                .automation
+                .as_ref()
+                .and_then(|runner| runner.due_at)
+                .is_some()
+        );
+        assert_eq!(
+            app.background
+                .automation
+                .as_ref()
+                .map(|runner| runner.steps.len()),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn automation_tick_selects_first_non_header_item_on_active_route() {
+        let mut app = test_app();
+        app.background.startup_ready = true;
+        app.gallery_items = vec![
+            BrowseItem {
+                media_id: 10,
+                title: "Header".to_owned(),
+                thumbnail_path: None,
+                media_kind: "image".to_owned(),
+                metadata_line: String::new(),
+                is_group_header: true,
+                line: "2026-03-11".to_owned(),
+                aspect_ratio: 1.0,
+                group_image_count: None,
+                group_video_count: None,
+            },
+            BrowseItem {
+                media_id: 11,
+                title: "Item".to_owned(),
+                thumbnail_path: None,
+                media_kind: "image".to_owned(),
+                metadata_line: String::new(),
+                is_group_header: false,
+                line: String::new(),
+                aspect_ratio: 1.0,
+                group_image_count: None,
+                group_video_count: None,
+            },
+        ];
+        app.background.automation = Some(AutomationRunner {
+            steps: VecDeque::from([AutomationStep {
+                wait_ms: 0,
+                action: AutomationAction::SelectFirstVisible,
+            }]),
+            due_at: Some(Instant::now() - Duration::from_millis(1)),
+            poll_interval: Duration::from_millis(100),
+        });
+
+        let message = maybe_execute_automation_step(&mut app);
+
+        assert!(matches!(message, Some(Message::SelectMedia(11))));
+        assert!(
+            app.background
+                .automation
+                .as_ref()
+                .is_some_and(|runner| runner.steps.is_empty() && runner.due_at.is_none())
+        );
     }
 
     #[test]

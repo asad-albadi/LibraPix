@@ -35,7 +35,9 @@ use librapix_storage::{
     IndexedMediaWrite, IndexedMetadataStatus, SourceRootLifecycle, SourceRootStatisticsRecord,
     Storage, StorageOpenMetrics, TagKind,
 };
-use librapix_thumbnails::{ThumbnailOutcome, ensure_image_thumbnail, ensure_video_thumbnail};
+use librapix_thumbnails::{
+    ThumbnailOutcome, ensure_image_thumbnail, ensure_video_thumbnail, thumbnail_path,
+};
 use notify::{EventKind, RecursiveMode, Watcher};
 use semver::Version;
 use serde::{Deserialize, Serialize};
@@ -165,7 +167,7 @@ enum ProjectionRefreshPolicy {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 enum ThumbnailWorkMode {
     #[default]
-    StartupCritical,
+    StartupPriority,
     BackgroundCatchUp,
 }
 
@@ -321,9 +323,54 @@ struct ThumbnailBatchResult {
     generation: u64,
     outcomes: Vec<ThumbnailWorkOutcome>,
     generated: usize,
-    reused: usize,
+    reused_exact: usize,
+    reused_fallback: usize,
     failed: usize,
     errors: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct ArtifactValidationSummary {
+    accepted: usize,
+    rejected_missing_path: usize,
+    rejected_missing_file: usize,
+}
+
+#[derive(Debug, Clone, Default)]
+struct ThumbnailLookupSummary {
+    requested_media: usize,
+    priority_media: usize,
+    exact_catalog_reused: usize,
+    exact_deterministic_reused: usize,
+    fallback_catalog_reused: usize,
+    fallback_deterministic_reused: usize,
+    priority_placeholder: usize,
+    scheduled_generation: usize,
+    rejected_gallery_missing_path: usize,
+    rejected_gallery_missing_file: usize,
+    rejected_detail_missing_path: usize,
+    rejected_detail_missing_file: usize,
+}
+
+#[derive(Debug, Clone, Default)]
+struct ProjectionThumbnailLookup {
+    resolved_paths: HashMap<i64, PathBuf>,
+    reusable_media_ids: HashSet<i64>,
+    summary: ThumbnailLookupSummary,
+}
+
+struct ProjectionThumbnailLookupInput<'a> {
+    generation: u64,
+    all_rows: &'a [CatalogMediaRecord],
+    row_lookup: &'a HashMap<i64, &'a CatalogMediaRecord>,
+    gallery_artifacts: &'a [DerivedArtifactRecord],
+    detail_artifacts: &'a [DerivedArtifactRecord],
+    thumbnails_dir: &'a Path,
+    active_route: Route,
+    search_query: &'a str,
+    gallery_items: &'a [BrowseItem],
+    timeline_items: &'a [BrowseItem],
+    search_items: &'a [BrowseItem],
 }
 
 #[derive(Debug, Clone, Default)]
@@ -353,7 +400,8 @@ struct BackgroundCoordinator {
     thumbnail_done: usize,
     thumbnail_total: usize,
     thumbnail_generated: usize,
-    thumbnail_reused: usize,
+    thumbnail_reused_exact: usize,
+    thumbnail_reused_fallback: usize,
     thumbnail_failed: usize,
     thumbnail_mode: ThumbnailWorkMode,
 }
@@ -5220,21 +5268,297 @@ fn resolve_artifact_path(artifact_root: &Path, relative_path: &Path) -> PathBuf 
     }
 }
 
-fn build_ready_artifact_map(
+fn projection_priority_media_ids(
+    active_route: Route,
+    search_query: &str,
+    gallery_items: &[BrowseItem],
+    timeline_items: &[BrowseItem],
+    search_items: &[BrowseItem],
+    limit: usize,
+) -> Vec<i64> {
+    let mut ordered = Vec::new();
+    let mut seen = HashSet::new();
+
+    if !search_query.trim().is_empty() {
+        collect_priority_media_ids(search_items, &mut seen, &mut ordered, limit);
+    }
+
+    if ordered.len() < limit {
+        let browse_items = if matches!(active_route, Route::Timeline) {
+            timeline_items
+        } else {
+            gallery_items
+        };
+        collect_priority_media_ids(browse_items, &mut seen, &mut ordered, limit);
+    }
+
+    ordered
+}
+
+fn validate_ready_artifact_map(
     artifact_root: &Path,
     artifacts: &[DerivedArtifactRecord],
-) -> std::collections::HashMap<i64, PathBuf> {
-    artifacts
+    priority_media_ids: &HashSet<i64>,
+) -> (
+    std::collections::HashMap<i64, PathBuf>,
+    ArtifactValidationSummary,
+) {
+    let mut paths = HashMap::new();
+    let mut summary = ArtifactValidationSummary::default();
+
+    for artifact in artifacts {
+        let Some(relative_path) = artifact.relative_path.as_deref() else {
+            summary.rejected_missing_path += 1;
+            if priority_media_ids.contains(&artifact.media_id) {
+                startup_log::log_warn(
+                    "startup.thumbnail_lookup.artifact_rejected",
+                    &format!(
+                        "media_id={} variant={} reason=missing_relative_path",
+                        artifact.media_id, artifact.artifact_variant
+                    ),
+                );
+            }
+            continue;
+        };
+        let resolved = resolve_artifact_path(artifact_root, relative_path);
+        if !resolved.is_file() {
+            summary.rejected_missing_file += 1;
+            if priority_media_ids.contains(&artifact.media_id) {
+                startup_log::log_warn(
+                    "startup.thumbnail_lookup.artifact_rejected",
+                    &format!(
+                        "media_id={} variant={} reason=missing_file path={}",
+                        artifact.media_id,
+                        artifact.artifact_variant,
+                        resolved.display()
+                    ),
+                );
+            }
+            continue;
+        }
+        summary.accepted += 1;
+        paths.insert(artifact.media_id, resolved);
+    }
+
+    (paths, summary)
+}
+
+fn deterministic_thumbnail_file(
+    thumbnails_dir: &Path,
+    row: &CatalogMediaRecord,
+    max_edge: u32,
+) -> Option<PathBuf> {
+    let path = thumbnail_path(
+        thumbnails_dir,
+        &row.absolute_path,
+        row.file_size_bytes,
+        row.modified_unix_seconds,
+        max_edge,
+    );
+    path.is_file().then_some(path)
+}
+
+fn resolve_projection_thumbnail_lookup(
+    input: ProjectionThumbnailLookupInput<'_>,
+) -> ProjectionThumbnailLookup {
+    let lookup_started_at = Instant::now();
+    let priority_ids = projection_priority_media_ids(
+        input.active_route,
+        input.search_query,
+        input.gallery_items,
+        input.timeline_items,
+        input.search_items,
+        STARTUP_THUMBNAIL_PRIORITY_LIMIT,
+    );
+    let priority_set = priority_ids.iter().copied().collect::<HashSet<_>>();
+    startup_log::log_info(
+        "startup.thumbnail_lookup.start",
+        &format!(
+            "generation={} requested_media={} priority_media={}",
+            input.generation,
+            input.all_rows.len(),
+            priority_ids.len(),
+        ),
+    );
+
+    let gallery_validation_started_at = Instant::now();
+    let (mut resolved_paths, gallery_validation) =
+        validate_ready_artifact_map(input.thumbnails_dir, input.gallery_artifacts, &priority_set);
+    startup_log::log_duration(
+        "startup.thumbnail_lookup.validate_gallery_artifacts",
+        gallery_validation_started_at.elapsed(),
+        &format!(
+            "generation={} accepted={} rejected_missing_path={} rejected_missing_file={}",
+            input.generation,
+            gallery_validation.accepted,
+            gallery_validation.rejected_missing_path,
+            gallery_validation.rejected_missing_file,
+        ),
+    );
+    let mut reusable_media_ids = resolved_paths.keys().copied().collect::<HashSet<_>>();
+
+    let deterministic_gallery_started_at = Instant::now();
+    let mut exact_deterministic_reused = 0usize;
+    for row in input.all_rows {
+        if reusable_media_ids.contains(&row.media_id) {
+            continue;
+        }
+        if let Some(path) =
+            deterministic_thumbnail_file(input.thumbnails_dir, row, GALLERY_THUMB_SIZE)
+        {
+            reusable_media_ids.insert(row.media_id);
+            resolved_paths.insert(row.media_id, path);
+            exact_deterministic_reused += 1;
+        }
+    }
+    startup_log::log_duration(
+        "startup.thumbnail_lookup.exact_deterministic",
+        deterministic_gallery_started_at.elapsed(),
+        &format!(
+            "generation={} reused={}",
+            input.generation, exact_deterministic_reused,
+        ),
+    );
+
+    let detail_validation_started_at = Instant::now();
+    let (detail_paths, detail_validation) =
+        validate_ready_artifact_map(input.thumbnails_dir, input.detail_artifacts, &priority_set);
+    startup_log::log_duration(
+        "startup.thumbnail_lookup.validate_detail_artifacts",
+        detail_validation_started_at.elapsed(),
+        &format!(
+            "generation={} accepted={} rejected_missing_path={} rejected_missing_file={}",
+            input.generation,
+            detail_validation.accepted,
+            detail_validation.rejected_missing_path,
+            detail_validation.rejected_missing_file,
+        ),
+    );
+
+    let mut fallback_catalog_reused = 0usize;
+    for (media_id, path) in detail_paths {
+        if reusable_media_ids.insert(media_id) {
+            resolved_paths.insert(media_id, path);
+            fallback_catalog_reused += 1;
+        }
+    }
+
+    let deterministic_detail_started_at = Instant::now();
+    let mut fallback_deterministic_reused = 0usize;
+    for media_id in &priority_ids {
+        if reusable_media_ids.contains(media_id) {
+            continue;
+        }
+        let Some(row) = input.row_lookup.get(media_id).copied() else {
+            continue;
+        };
+        if let Some(path) =
+            deterministic_thumbnail_file(input.thumbnails_dir, row, DETAIL_THUMB_SIZE)
+        {
+            reusable_media_ids.insert(*media_id);
+            resolved_paths.insert(*media_id, path);
+            fallback_deterministic_reused += 1;
+        }
+    }
+    startup_log::log_duration(
+        "startup.thumbnail_lookup.fallback_deterministic",
+        deterministic_detail_started_at.elapsed(),
+        &format!(
+            "generation={} reused={}",
+            input.generation, fallback_deterministic_reused,
+        ),
+    );
+
+    let scheduled_generation = input
+        .all_rows
         .iter()
-        .filter_map(|artifact| {
-            artifact.relative_path.as_deref().map(|path| {
-                (
-                    artifact.media_id,
-                    resolve_artifact_path(artifact_root, path),
-                )
-            })
+        .filter(|row| !reusable_media_ids.contains(&row.media_id))
+        .filter(|row| {
+            row.media_kind.eq_ignore_ascii_case("image")
+                || row.media_kind.eq_ignore_ascii_case("video")
         })
-        .collect()
+        .count();
+    let priority_placeholder = priority_ids
+        .iter()
+        .filter(|media_id| !reusable_media_ids.contains(media_id))
+        .count();
+
+    let summary = ThumbnailLookupSummary {
+        requested_media: input.all_rows.len(),
+        priority_media: priority_ids.len(),
+        exact_catalog_reused: gallery_validation.accepted,
+        exact_deterministic_reused,
+        fallback_catalog_reused,
+        fallback_deterministic_reused,
+        priority_placeholder,
+        scheduled_generation,
+        rejected_gallery_missing_path: gallery_validation.rejected_missing_path,
+        rejected_gallery_missing_file: gallery_validation.rejected_missing_file,
+        rejected_detail_missing_path: detail_validation.rejected_missing_path,
+        rejected_detail_missing_file: detail_validation.rejected_missing_file,
+    };
+
+    startup_log::log_info(
+        "startup.thumbnail_lookup.exact_reuse",
+        &format!(
+            "generation={} catalog_hits={} deterministic_hits={}",
+            input.generation, summary.exact_catalog_reused, summary.exact_deterministic_reused,
+        ),
+    );
+    startup_log::log_info(
+        "startup.thumbnail_lookup.fallback_reuse",
+        &format!(
+            "generation={} catalog_hits={} deterministic_hits={}",
+            input.generation,
+            summary.fallback_catalog_reused,
+            summary.fallback_deterministic_reused,
+        ),
+    );
+    startup_log::log_info(
+        "startup.thumbnail_lookup.placeholder",
+        &format!(
+            "generation={} priority_items_without_reuse={}",
+            input.generation, summary.priority_placeholder,
+        ),
+    );
+    startup_log::log_info(
+        "startup.thumbnail_lookup.scheduled_generation",
+        &format!(
+            "generation={} items={}",
+            input.generation, summary.scheduled_generation,
+        ),
+    );
+    startup_log::log_info(
+        "startup.thumbnail_lookup.rejected_existing",
+        &format!(
+            "generation={} gallery_missing_path={} gallery_missing_file={} detail_missing_path={} detail_missing_file={}",
+            input.generation,
+            summary.rejected_gallery_missing_path,
+            summary.rejected_gallery_missing_file,
+            summary.rejected_detail_missing_path,
+            summary.rejected_detail_missing_file,
+        ),
+    );
+    startup_log::log_duration(
+        "startup.thumbnail_lookup.end",
+        lookup_started_at.elapsed(),
+        &format!(
+            "generation={} requested_media={} priority_media={} reused_exact={} reused_fallback={} priority_placeholder={} scheduled_generation={}",
+            input.generation,
+            summary.requested_media,
+            summary.priority_media,
+            summary.exact_catalog_reused + summary.exact_deterministic_reused,
+            summary.fallback_catalog_reused + summary.fallback_deterministic_reused,
+            summary.priority_placeholder,
+            summary.scheduled_generation,
+        ),
+    );
+
+    ProjectionThumbnailLookup {
+        resolved_paths,
+        reusable_media_ids,
+        summary,
+    }
 }
 
 fn populate_media_cache(
@@ -5257,7 +5581,8 @@ fn populate_media_cache(
             DETAIL_THUMB_VARIANT,
         )
         .unwrap_or_default();
-    let detail_artifact_paths = build_ready_artifact_map(thumbnails_dir, &detail_artifacts);
+    let (detail_artifact_paths, _) =
+        validate_ready_artifact_map(thumbnails_dir, &detail_artifacts, &HashSet::new());
 
     for media_id in media_ids {
         let Some(row) = row_lookup.get(media_id).copied() else {
@@ -5820,6 +6145,51 @@ fn schedule_startup_reconcile(app: &mut Librapix) -> Task<Message> {
     Task::none()
 }
 
+fn startup_blocking_work_complete(app: &Librapix) -> bool {
+    app.background.snapshot_apply.is_none()
+        && !app.background.pending_reconcile
+        && !app.background.pending_projection
+        && !app.background.reconcile_in_flight
+        && !app.background.projection_in_flight
+}
+
+fn all_background_work_idle(app: &Librapix) -> bool {
+    startup_blocking_work_complete(app)
+        && !app.background.thumbnail_in_flight
+        && app.background.thumbnail_queue.is_empty()
+        && app.background.deferred_thumbnail_queue.is_empty()
+        && app.background.deferred_thumbnail_due_at.is_none()
+}
+
+fn cancel_thumbnail_work(app: &mut Librapix, reason: &str) {
+    let had_work = app.background.thumbnail_in_flight
+        || !app.background.thumbnail_queue.is_empty()
+        || !app.background.deferred_thumbnail_queue.is_empty()
+        || app.background.deferred_thumbnail_due_at.is_some();
+    if !had_work {
+        return;
+    }
+
+    app.background.thumbnail_generation = app.background.thumbnail_generation.saturating_add(1);
+    app.background.thumbnail_in_flight = false;
+    app.background.deferred_thumbnail_due_at = None;
+    app.background.thumbnail_queue.clear();
+    app.background.thumbnail_queued_ids.clear();
+    app.background.deferred_thumbnail_queue.clear();
+    app.background.thumbnail_done = 0;
+    app.background.thumbnail_total = 0;
+    app.background.thumbnail_generated = 0;
+    app.background.thumbnail_reused_exact = 0;
+    app.background.thumbnail_reused_fallback = 0;
+    app.background.thumbnail_failed = 0;
+    app.background.thumbnail_mode = ThumbnailWorkMode::StartupPriority;
+    app.activity_progress.items_done = 0;
+    app.activity_progress.items_total = None;
+    app.activity_progress.queue_depth = 0;
+    app.thumbnail_status = thumbnail_status_text(app.i18n, 0, 0, 0);
+    startup_log::log_info("startup.thumbnail.cancelled", reason);
+}
+
 fn continue_startup_after_snapshot_hydrate(app: &mut Librapix) -> Task<Message> {
     if app.background.pending_reconcile {
         let reason = app.background.pending_reconcile_reason;
@@ -5839,11 +6209,7 @@ fn continue_startup_after_snapshot_hydrate(app: &mut Librapix) -> Task<Message> 
         return request_projection_refresh(app, reason);
     }
 
-    if !app.background.reconcile_in_flight
-        && !app.background.projection_in_flight
-        && !app.background.thumbnail_in_flight
-        && app.background.snapshot_apply.is_none()
-    {
+    if startup_blocking_work_complete(app) {
         mark_startup_ready(app);
     }
 
@@ -5855,7 +6221,6 @@ fn request_reconcile(app: &mut Librapix, reason: BackgroundWorkReason) -> Task<M
         || (!app.background.snapshot_loaded && app.background.snapshot_generation > 0)
         || app.background.reconcile_in_flight
         || app.background.projection_in_flight
-        || app.background.thumbnail_in_flight
     {
         app.background.pending_reconcile_reason = if app.background.pending_reconcile {
             merge_work_reason(app.background.pending_reconcile_reason, reason)
@@ -5873,18 +6238,7 @@ fn request_reconcile(app: &mut Librapix, reason: BackgroundWorkReason) -> Task<M
     app.background.pending_reconcile = false;
     app.background.pending_reconcile_reason = reason;
     app.background.pending_projection = false;
-    app.background.thumbnail_generation = app.background.thumbnail_generation.saturating_add(1);
-    app.background.thumbnail_in_flight = false;
-    app.background.deferred_thumbnail_due_at = None;
-    app.background.thumbnail_queue.clear();
-    app.background.thumbnail_queued_ids.clear();
-    app.background.deferred_thumbnail_queue.clear();
-    app.background.thumbnail_done = 0;
-    app.background.thumbnail_total = 0;
-    app.background.thumbnail_generated = 0;
-    app.background.thumbnail_reused = 0;
-    app.background.thumbnail_failed = 0;
-    app.background.thumbnail_mode = ThumbnailWorkMode::StartupCritical;
+    cancel_thumbnail_work(app, "reason=reconcile");
     app.startup_metrics.reconcile_started_at = Some(Instant::now());
 
     set_activity_stage(
@@ -6178,7 +6532,6 @@ fn request_projection_refresh(app: &mut Librapix, reason: BackgroundWorkReason) 
         || (!app.background.snapshot_loaded && app.background.snapshot_generation > 0)
         || app.background.reconcile_in_flight
         || app.background.projection_in_flight
-        || app.background.thumbnail_in_flight
     {
         app.background.pending_projection_reason = if app.background.pending_projection {
             merge_work_reason(app.background.pending_projection_reason, reason)
@@ -6193,6 +6546,7 @@ fn request_projection_refresh(app: &mut Librapix, reason: BackgroundWorkReason) 
 }
 
 fn start_projection_refresh(app: &mut Librapix, reason: BackgroundWorkReason) -> Task<Message> {
+    cancel_thumbnail_work(app, "reason=projection_refresh");
     let policy = projection_refresh_policy(app);
     app.background.projection_in_flight = true;
     app.background.pending_projection = false;
@@ -6402,8 +6756,32 @@ fn do_projection_job(input: ProjectionJobInput) -> ProjectionJobResult {
             gallery_artifacts.len(),
         ),
     );
-    let gallery_artifact_paths =
-        build_ready_artifact_map(&input.thumbnails_dir, &gallery_artifacts);
+    let detail_artifacts_started_at = Instant::now();
+    let detail_artifacts = match storage.list_ready_derived_artifacts_for_media_ids(
+        &media_ids,
+        DerivedArtifactKind::Thumbnail,
+        DETAIL_THUMB_VARIANT,
+    ) {
+        Ok(artifacts) => artifacts,
+        Err(error) => {
+            out.error = Some(error.to_string());
+            startup_log::log_error(
+                "startup.projection.list_detail_artifacts.failed",
+                &format!("generation={} error={error}", input.generation),
+            );
+            return out;
+        }
+    };
+    startup_log::log_duration(
+        "startup.projection.list_detail_artifacts",
+        detail_artifacts_started_at.elapsed(),
+        &format!(
+            "generation={} media_ids={} ready_artifacts={}",
+            input.generation,
+            media_ids.len(),
+            detail_artifacts.len(),
+        ),
+    );
 
     if refresh_gallery {
         let gallery_started_at = Instant::now();
@@ -6443,13 +6821,7 @@ fn do_projection_job(input: ProjectionJobInput) -> ProjectionJobResult {
                             group_video_count: None,
                         }
                     },
-                    |row| {
-                        browse_item_from_catalog_row(
-                            input.i18n,
-                            row,
-                            gallery_artifact_paths.get(&row.media_id).cloned(),
-                        )
-                    },
+                    |row| browse_item_from_catalog_row(input.i18n, row, None),
                 )
             })
             .collect();
@@ -6544,11 +6916,7 @@ fn do_projection_job(input: ProjectionJobInput) -> ProjectionJobResult {
                         }
                     },
                     |row| {
-                        let mut browse_item = browse_item_from_catalog_row(
-                            input.i18n,
-                            row,
-                            gallery_artifact_paths.get(&row.media_id).cloned(),
-                        );
+                        let mut browse_item = browse_item_from_catalog_row(input.i18n, row, None);
                         browse_item.line = format!("{} [{}]", item.absolute_path, item.media_kind);
                         browse_item
                     },
@@ -6609,13 +6977,7 @@ fn do_projection_job(input: ProjectionJobInput) -> ProjectionJobResult {
             .filter(|(_, row)| {
                 catalog_row_matches_tag_filter(row, active_tag_filter.map(|tag| tag.as_str()))
             })
-            .map(|(_, row)| {
-                browse_item_from_catalog_row(
-                    input.i18n,
-                    row,
-                    gallery_artifact_paths.get(&row.media_id).cloned(),
-                )
-            })
+            .map(|(_, row)| browse_item_from_catalog_row(input.i18n, row, None))
             .collect();
         out.search_preview_lines = collect_preview_lines(&out.search_items);
         startup_log::log_duration(
@@ -6659,6 +7021,23 @@ fn do_projection_job(input: ProjectionJobInput) -> ProjectionJobResult {
         ordered
     };
 
+    let thumbnail_lookup = resolve_projection_thumbnail_lookup(ProjectionThumbnailLookupInput {
+        generation: input.generation,
+        all_rows: &all_rows,
+        row_lookup: &row_lookup,
+        gallery_artifacts: &gallery_artifacts,
+        detail_artifacts: &detail_artifacts,
+        thumbnails_dir: &input.thumbnails_dir,
+        active_route: input.active_route,
+        search_query: &input.search_query,
+        gallery_items: &out.gallery_items,
+        timeline_items: &out.timeline_items,
+        search_items: &out.search_items,
+    });
+    patch_thumbnail_paths(&mut out.gallery_items, &thumbnail_lookup.resolved_paths);
+    patch_thumbnail_paths(&mut out.timeline_items, &thumbnail_lookup.resolved_paths);
+    patch_thumbnail_paths(&mut out.search_items, &thumbnail_lookup.resolved_paths);
+
     let media_cache_started_at = Instant::now();
     populate_media_cache(
         &storage,
@@ -6678,14 +7057,10 @@ fn do_projection_job(input: ProjectionJobInput) -> ProjectionJobResult {
         ),
     );
 
-    let ready_gallery_ids = gallery_artifact_paths
-        .keys()
-        .copied()
-        .collect::<HashSet<_>>();
     let thumbnail_candidates_started_at = Instant::now();
     out.thumbnail_candidates = all_rows
         .iter()
-        .filter(|row| !ready_gallery_ids.contains(&row.media_id))
+        .filter(|row| !thumbnail_lookup.reusable_media_ids.contains(&row.media_id))
         .filter(|row| {
             row.media_kind.eq_ignore_ascii_case("image")
                 || row.media_kind.eq_ignore_ascii_case("video")
@@ -6703,9 +7078,14 @@ fn do_projection_job(input: ProjectionJobInput) -> ProjectionJobResult {
         "startup.projection.collect_thumbnail_candidates",
         thumbnail_candidates_started_at.elapsed(),
         &format!(
-            "generation={} candidates={}",
+            "generation={} candidates={} priority_placeholders={} reused_exact={} reused_fallback={}",
             input.generation,
             out.thumbnail_candidates.len(),
+            thumbnail_lookup.summary.priority_placeholder,
+            thumbnail_lookup.summary.exact_catalog_reused
+                + thumbnail_lookup.summary.exact_deterministic_reused,
+            thumbnail_lookup.summary.fallback_catalog_reused
+                + thumbnail_lookup.summary.fallback_deterministic_reused,
         ),
     );
 
@@ -6908,6 +7288,16 @@ fn apply_projection_job_result(app: &mut Librapix, result: ProjectionJobResult) 
         split_startup_thumbnail_work(app, result.thumbnail_candidates);
     app.background.deferred_thumbnail_queue =
         deferred_thumbnails.into_iter().collect::<VecDeque<_>>();
+    startup_log::log_info(
+        "startup.thumbnail_schedule",
+        &format!(
+            "generation={} startup_priority={} deferred={} startup_ready_before_schedule={}",
+            result.generation,
+            immediate_thumbnails.len(),
+            app.background.deferred_thumbnail_queue.len(),
+            app.background.startup_ready,
+        ),
+    );
     if let Some(started_at) = app.startup_metrics.projection_started_at.take() {
         startup_log::log_duration(
             "startup.projection.end",
@@ -6924,18 +7314,30 @@ fn apply_projection_job_result(app: &mut Librapix, result: ProjectionJobResult) 
         );
     }
 
-    start_thumbnail_batches(
-        app,
-        immediate_thumbnails,
-        ThumbnailWorkMode::StartupCritical,
-    )
+    if !app.background.startup_ready && startup_blocking_work_complete(app) {
+        mark_startup_ready(app);
+    }
+
+    if !immediate_thumbnails.is_empty() {
+        return start_thumbnail_batches(
+            app,
+            immediate_thumbnails,
+            ThumbnailWorkMode::StartupPriority,
+        );
+    }
+
+    if !app.background.deferred_thumbnail_queue.is_empty() {
+        schedule_deferred_thumbnail_catchup(app);
+    }
+
+    finalize_background_flow(app)
 }
 
 fn split_startup_thumbnail_work(
     app: &Librapix,
     items: Vec<ThumbnailWorkItem>,
 ) -> (Vec<ThumbnailWorkItem>, Vec<ThumbnailWorkItem>) {
-    if app.background.startup_ready || items.len() <= STARTUP_THUMBNAIL_PRIORITY_LIMIT {
+    if items.len() <= STARTUP_THUMBNAIL_PRIORITY_LIMIT {
         return (items, Vec::new());
     }
 
@@ -6971,7 +7373,7 @@ fn split_startup_thumbnail_work(
 
 fn log_thumbnail_stage_start(app: &mut Librapix, mode: ThumbnailWorkMode, total: usize) {
     match mode {
-        ThumbnailWorkMode::StartupCritical => {
+        ThumbnailWorkMode::StartupPriority => {
             app.startup_metrics.startup_thumbnail_started_at = Some(Instant::now());
             startup_log::log_info(
                 "startup.thumbnail_priority.start",
@@ -6987,16 +7389,17 @@ fn log_thumbnail_stage_start(app: &mut Librapix, mode: ThumbnailWorkMode, total:
 
 fn log_thumbnail_stage_end(app: &mut Librapix) {
     match app.background.thumbnail_mode {
-        ThumbnailWorkMode::StartupCritical => {
+        ThumbnailWorkMode::StartupPriority => {
             if let Some(started_at) = app.startup_metrics.startup_thumbnail_started_at.take() {
                 startup_log::log_duration(
                     "startup.thumbnail_priority.end",
                     started_at.elapsed(),
                     &format!(
-                        "total={} generated={} reused={} failed={}",
+                        "total={} generated={} reused_exact={} reused_fallback={} failed={}",
                         app.background.thumbnail_total,
                         app.background.thumbnail_generated,
-                        app.background.thumbnail_reused,
+                        app.background.thumbnail_reused_exact,
+                        app.background.thumbnail_reused_fallback,
                         app.background.thumbnail_failed,
                     ),
                 );
@@ -7008,10 +7411,11 @@ fn log_thumbnail_stage_end(app: &mut Librapix) {
                     "startup.thumbnail_catchup.end",
                     started_at.elapsed(),
                     &format!(
-                        "total={} generated={} reused={} failed={}",
+                        "total={} generated={} reused_exact={} reused_fallback={} failed={}",
                         app.background.thumbnail_total,
                         app.background.thumbnail_generated,
-                        app.background.thumbnail_reused,
+                        app.background.thumbnail_reused_exact,
+                        app.background.thumbnail_reused_fallback,
                         app.background.thumbnail_failed,
                     ),
                 );
@@ -7071,7 +7475,8 @@ fn start_thumbnail_batches(
     app.background.thumbnail_mode = mode;
     app.background.thumbnail_done = 0;
     app.background.thumbnail_generated = 0;
-    app.background.thumbnail_reused = 0;
+    app.background.thumbnail_reused_exact = 0;
+    app.background.thumbnail_reused_fallback = 0;
     app.background.thumbnail_failed = 0;
 
     let mut queued = VecDeque::new();
@@ -7149,6 +7554,20 @@ fn run_next_thumbnail_batch_if_idle(app: &mut Librapix) -> Task<Message> {
     })
 }
 
+fn compatible_detail_thumbnail_for_work_item(
+    thumbnails_dir: &Path,
+    item: &ThumbnailWorkItem,
+) -> Option<PathBuf> {
+    let path = thumbnail_path(
+        thumbnails_dir,
+        &item.absolute_path,
+        item.file_size_bytes,
+        item.modified_unix_seconds,
+        DETAIL_THUMB_SIZE,
+    );
+    path.is_file().then_some(path)
+}
+
 fn do_thumbnail_batch(input: ThumbnailBatchInput) -> ThumbnailBatchResult {
     let mut out = ThumbnailBatchResult {
         generation: input.generation,
@@ -7157,6 +7576,66 @@ fn do_thumbnail_batch(input: ThumbnailBatchInput) -> ThumbnailBatchResult {
     let storage = Storage::open(&input.database_file).ok();
 
     for item in input.items {
+        let item_started_at = Instant::now();
+        let exact_path = thumbnail_path(
+            &input.thumbnails_dir,
+            &item.absolute_path,
+            item.file_size_bytes,
+            item.modified_unix_seconds,
+            GALLERY_THUMB_SIZE,
+        );
+        if exact_path.is_file() {
+            out.reused_exact += 1;
+            if let Some(storage) = storage.as_ref() {
+                let relative_path = relative_artifact_path(&input.thumbnails_dir, &exact_path);
+                if let Err(error) = storage.upsert_derived_artifact(
+                    item.media_id,
+                    DerivedArtifactKind::Thumbnail,
+                    GALLERY_THUMB_VARIANT,
+                    relative_path.as_deref(),
+                    DerivedArtifactStatus::Ready,
+                ) {
+                    out.errors.push(error.to_string());
+                }
+            }
+            if item.media_kind.eq_ignore_ascii_case("video") {
+                startup_log::log_duration(
+                    "startup.thumbnail.video",
+                    item_started_at.elapsed(),
+                    &format!(
+                        "generation={} media_id={} mode=exact_reuse",
+                        input.generation, item.media_id,
+                    ),
+                );
+            }
+            out.outcomes.push(ThumbnailWorkOutcome {
+                media_id: item.media_id,
+                thumbnail_path: Some(exact_path),
+            });
+            continue;
+        }
+
+        if let Some(fallback_path) =
+            compatible_detail_thumbnail_for_work_item(&input.thumbnails_dir, &item)
+        {
+            out.reused_fallback += 1;
+            if item.media_kind.eq_ignore_ascii_case("video") {
+                startup_log::log_duration(
+                    "startup.thumbnail.video",
+                    item_started_at.elapsed(),
+                    &format!(
+                        "generation={} media_id={} mode=fallback_reuse",
+                        input.generation, item.media_id,
+                    ),
+                );
+            }
+            out.outcomes.push(ThumbnailWorkOutcome {
+                media_id: item.media_id,
+                thumbnail_path: Some(fallback_path),
+            });
+            continue;
+        }
+
         let thumbnail_result = if item.media_kind.eq_ignore_ascii_case("image") {
             ensure_image_thumbnail(
                 &input.thumbnails_dir,
@@ -7182,7 +7661,7 @@ fn do_thumbnail_batch(input: ThumbnailBatchInput) -> ThumbnailBatchResult {
                 if thumbnail.generated {
                     out.generated += 1;
                 } else {
-                    out.reused += 1;
+                    out.reused_exact += 1;
                 }
                 if let Some(storage) = storage.as_ref() {
                     let relative_path =
@@ -7201,6 +7680,30 @@ fn do_thumbnail_batch(input: ThumbnailBatchInput) -> ThumbnailBatchResult {
                     media_id: item.media_id,
                     thumbnail_path: Some(thumbnail.thumbnail_path),
                 });
+                let outcome_label = if thumbnail.generated {
+                    "generated"
+                } else {
+                    "exact_reuse"
+                };
+                if item.media_kind.eq_ignore_ascii_case("video") {
+                    startup_log::log_duration(
+                        "startup.thumbnail.video",
+                        item_started_at.elapsed(),
+                        &format!(
+                            "generation={} media_id={} mode={}",
+                            input.generation, item.media_id, outcome_label,
+                        ),
+                    );
+                } else if item_started_at.elapsed() >= Duration::from_millis(150) {
+                    startup_log::log_duration(
+                        "startup.thumbnail.item.slow",
+                        item_started_at.elapsed(),
+                        &format!(
+                            "generation={} media_id={} kind={} mode={}",
+                            input.generation, item.media_id, item.media_kind, outcome_label,
+                        ),
+                    );
+                }
             }
             Err(error) => {
                 if let Some(storage) = storage.as_ref() {
@@ -7218,6 +7721,13 @@ fn do_thumbnail_batch(input: ThumbnailBatchInput) -> ThumbnailBatchResult {
                     media_id: item.media_id,
                     thumbnail_path: None,
                 });
+                startup_log::log_error(
+                    "startup.thumbnail.generate.failed",
+                    &format!(
+                        "generation={} media_id={} kind={} error={error}",
+                        input.generation, item.media_id, item.media_kind,
+                    ),
+                );
             }
         }
     }
@@ -7244,7 +7754,8 @@ fn apply_thumbnail_batch_result(app: &mut Librapix, result: ThumbnailBatchResult
 
     app.background.thumbnail_in_flight = false;
     app.background.thumbnail_generated += result.generated;
-    app.background.thumbnail_reused += result.reused;
+    app.background.thumbnail_reused_exact += result.reused_exact;
+    app.background.thumbnail_reused_fallback += result.reused_fallback;
     app.background.thumbnail_failed += result.failed;
 
     let mut ready_paths = HashMap::<i64, PathBuf>::new();
@@ -7281,7 +7792,7 @@ fn apply_thumbnail_batch_result(app: &mut Librapix, result: ThumbnailBatchResult
     app.thumbnail_status = thumbnail_status_text(
         app.i18n,
         app.background.thumbnail_generated,
-        app.background.thumbnail_reused,
+        app.background.thumbnail_reused_exact + app.background.thumbnail_reused_fallback,
         app.background.thumbnail_failed,
     );
     app.activity_progress.items_total = Some(app.background.thumbnail_total);
@@ -7310,17 +7821,19 @@ fn finalize_background_flow(app: &mut Librapix) -> Task<Message> {
         app.background.pending_projection = false;
         return request_projection_refresh(app, reason);
     }
-    if !app.background.reconcile_in_flight
+    if !app.background.startup_ready && startup_blocking_work_complete(app) {
+        mark_startup_ready(app);
+    }
+    if app.background.startup_ready
         && !app.background.thumbnail_in_flight
-        && !app.background.projection_in_flight
         && app.background.thumbnail_queue.is_empty()
+        && app.background.deferred_thumbnail_due_at.is_none()
+        && !app.background.deferred_thumbnail_queue.is_empty()
     {
-        if app.background.deferred_thumbnail_queue.is_empty() {
-            mark_startup_ready(app);
-        } else {
-            mark_startup_ready(app);
-            schedule_deferred_thumbnail_catchup(app);
-        }
+        schedule_deferred_thumbnail_catchup(app);
+    }
+    if app.background.startup_ready && all_background_work_idle(app) {
+        set_activity_ready(app);
     }
     Task::none()
 }
@@ -7951,6 +8464,135 @@ mod tests {
     }
 
     #[test]
+    fn thumbnail_lookup_reuses_exact_deterministic_gallery_file_without_catalog_row() {
+        let thumbnails_dir = unique_temp_dir("exact-reuse");
+        let row = catalog_row(1, thumbnails_dir.join("source.png"), "image");
+        let gallery_path = thumbnail_path(
+            &thumbnails_dir,
+            &row.absolute_path,
+            row.file_size_bytes,
+            row.modified_unix_seconds,
+            GALLERY_THUMB_SIZE,
+        );
+        write_thumbnail_stub(&gallery_path);
+
+        let lookup = projection_lookup_for_rows(
+            &thumbnails_dir,
+            std::slice::from_ref(&row),
+            &[],
+            &[],
+            Route::Gallery,
+        );
+
+        assert_eq!(
+            lookup.resolved_paths.get(&row.media_id),
+            Some(&gallery_path)
+        );
+        assert_eq!(lookup.summary.exact_deterministic_reused, 1);
+        assert_eq!(lookup.summary.scheduled_generation, 0);
+        assert_eq!(lookup.summary.priority_placeholder, 0);
+    }
+
+    #[test]
+    fn thumbnail_lookup_reuses_exact_gallery_artifact_row() {
+        let thumbnails_dir = unique_temp_dir("exact-catalog");
+        let row = catalog_row(11, thumbnails_dir.join("source.png"), "image");
+        let gallery_relative = PathBuf::from("gallery-exact.png");
+        let gallery_path = thumbnails_dir.join(&gallery_relative);
+        write_thumbnail_stub(&gallery_path);
+        let gallery_artifact = DerivedArtifactRecord {
+            media_id: row.media_id,
+            artifact_kind: DerivedArtifactKind::Thumbnail,
+            artifact_variant: GALLERY_THUMB_VARIANT.to_owned(),
+            relative_path: Some(gallery_relative),
+            status: DerivedArtifactStatus::Ready,
+        };
+
+        let lookup = projection_lookup_for_rows(
+            &thumbnails_dir,
+            std::slice::from_ref(&row),
+            &[gallery_artifact],
+            &[],
+            Route::Gallery,
+        );
+
+        assert_eq!(
+            lookup.resolved_paths.get(&row.media_id),
+            Some(&gallery_path)
+        );
+        assert_eq!(lookup.summary.exact_catalog_reused, 1);
+        assert_eq!(lookup.summary.scheduled_generation, 0);
+    }
+
+    #[test]
+    fn thumbnail_lookup_uses_detail_artifact_as_compatible_fallback() {
+        let thumbnails_dir = unique_temp_dir("fallback-reuse");
+        let row = catalog_row(2, thumbnails_dir.join("source.png"), "image");
+        let fallback_relative = PathBuf::from("detail-fallback.png");
+        let fallback_path = thumbnails_dir.join(&fallback_relative);
+        write_thumbnail_stub(&fallback_path);
+        let detail_artifact = DerivedArtifactRecord {
+            media_id: row.media_id,
+            artifact_kind: DerivedArtifactKind::Thumbnail,
+            artifact_variant: DETAIL_THUMB_VARIANT.to_owned(),
+            relative_path: Some(fallback_relative),
+            status: DerivedArtifactStatus::Ready,
+        };
+
+        let lookup = projection_lookup_for_rows(
+            &thumbnails_dir,
+            std::slice::from_ref(&row),
+            &[],
+            &[detail_artifact],
+            Route::Gallery,
+        );
+
+        assert_eq!(
+            lookup.resolved_paths.get(&row.media_id),
+            Some(&fallback_path)
+        );
+        assert_eq!(lookup.summary.fallback_catalog_reused, 1);
+        assert_eq!(lookup.summary.scheduled_generation, 0);
+    }
+
+    #[test]
+    fn thumbnail_lookup_uses_placeholder_and_schedules_generation_when_unresolved() {
+        let thumbnails_dir = unique_temp_dir("placeholder");
+        let row = catalog_row(3, thumbnails_dir.join("source.png"), "image");
+
+        let lookup = projection_lookup_for_rows(&thumbnails_dir, &[row], &[], &[], Route::Gallery);
+
+        assert!(lookup.resolved_paths.is_empty());
+        assert_eq!(lookup.summary.priority_placeholder, 1);
+        assert_eq!(lookup.summary.scheduled_generation, 1);
+    }
+
+    #[test]
+    fn thumbnail_lookup_rejects_missing_ready_artifact_file() {
+        let thumbnails_dir = unique_temp_dir("artifact-reject");
+        let row = catalog_row(4, thumbnails_dir.join("source.png"), "image");
+        let gallery_artifact = DerivedArtifactRecord {
+            media_id: row.media_id,
+            artifact_kind: DerivedArtifactKind::Thumbnail,
+            artifact_variant: GALLERY_THUMB_VARIANT.to_owned(),
+            relative_path: Some(PathBuf::from("missing-gallery.png")),
+            status: DerivedArtifactStatus::Ready,
+        };
+
+        let lookup = projection_lookup_for_rows(
+            &thumbnails_dir,
+            &[row],
+            &[gallery_artifact],
+            &[],
+            Route::Gallery,
+        );
+
+        assert!(lookup.resolved_paths.is_empty());
+        assert_eq!(lookup.summary.rejected_gallery_missing_file, 1);
+        assert_eq!(lookup.summary.scheduled_generation, 1);
+    }
+
+    #[test]
     fn startup_projection_defers_non_visible_route_refresh() {
         let mut app = test_app();
         app.background.startup_ready = false;
@@ -7976,7 +8618,7 @@ mod tests {
     }
 
     #[test]
-    fn projection_result_with_thumbnail_work_stays_busy() {
+    fn projection_result_with_thumbnail_work_marks_ready_and_stays_busy() {
         let mut app = test_app();
         app.background.projection_generation = 1;
         app.background.projection_in_flight = true;
@@ -8024,10 +8666,88 @@ mod tests {
 
         let _ = apply_projection_job_result(&mut app, result);
 
+        assert!(app.background.startup_ready);
         assert!(app.activity_progress.busy);
         assert_eq!(app.activity_status, "Generating thumbnails");
         assert_eq!(app.background.thumbnail_total, 1);
         assert!(app.background.thumbnail_in_flight);
+    }
+
+    #[test]
+    fn startup_ready_does_not_wait_for_video_thumbnail_batch() {
+        let mut app = test_app();
+        app.background.projection_generation = 1;
+        app.background.projection_in_flight = true;
+
+        let result = ProjectionJobResult {
+            generation: 1,
+            reason: BackgroundWorkReason::UserOrSystem,
+            gallery_items: vec![BrowseItem {
+                media_id: 42,
+                title: "clip.mp4".to_owned(),
+                thumbnail_path: None,
+                media_kind: "video".to_owned(),
+                metadata_line: "Video".to_owned(),
+                is_group_header: false,
+                line: "/tmp/clip.mp4 [video]".to_owned(),
+                aspect_ratio: 1.5,
+                group_image_count: None,
+                group_video_count: None,
+            }],
+            gallery_preview_lines: vec!["/tmp/clip.mp4 [video]".to_owned()],
+            refreshed_gallery: true,
+            media_cache: HashMap::from([(
+                42,
+                CachedDetails {
+                    absolute_path: PathBuf::from("/tmp/clip.mp4"),
+                    media_kind: "video".to_owned(),
+                    file_size_bytes: 10,
+                    modified_unix_seconds: Some(100),
+                    width_px: Some(1920),
+                    height_px: Some(1080),
+                    detail_thumbnail_path: None,
+                },
+            )]),
+            browse_status: "Gallery loaded".to_owned(),
+            thumbnail_candidates: vec![ThumbnailWorkItem {
+                generation: 1,
+                media_id: 42,
+                absolute_path: PathBuf::from("/tmp/clip.mp4"),
+                media_kind: "video".to_owned(),
+                file_size_bytes: 10,
+                modified_unix_seconds: Some(100),
+            }],
+            ..ProjectionJobResult::default()
+        };
+
+        let _ = apply_projection_job_result(&mut app, result);
+
+        assert!(app.background.startup_ready);
+        assert!(app.background.thumbnail_in_flight);
+        assert_eq!(app.activity_status, "Generating thumbnails");
+    }
+
+    #[test]
+    fn projection_refresh_cancels_background_thumbnail_work() {
+        let mut app = test_app();
+        app.background.startup_ready = true;
+        app.background.thumbnail_in_flight = true;
+        app.background.thumbnail_generation = 3;
+        app.background.thumbnail_queue = VecDeque::from([ThumbnailWorkItem {
+            generation: 3,
+            media_id: 9,
+            absolute_path: PathBuf::from("/tmp/9.png"),
+            media_kind: "image".to_owned(),
+            file_size_bytes: 10,
+            modified_unix_seconds: Some(10),
+        }]);
+
+        let _ = request_projection_refresh(&mut app, BackgroundWorkReason::UserOrSystem);
+
+        assert!(app.background.projection_in_flight);
+        assert!(app.background.thumbnail_queue.is_empty());
+        assert!(!app.background.thumbnail_in_flight);
+        assert!(app.background.thumbnail_generation > 3);
     }
 
     fn browse_item(media_id: i64) -> BrowseItem {
@@ -8043,6 +8763,85 @@ mod tests {
             group_image_count: None,
             group_video_count: None,
         }
+    }
+
+    fn catalog_row(media_id: i64, absolute_path: PathBuf, media_kind: &str) -> CatalogMediaRecord {
+        CatalogMediaRecord {
+            media_id,
+            source_root_id: 1,
+            source_root_display_name: Some("Library".to_owned()),
+            absolute_path: absolute_path.clone(),
+            file_name: absolute_path
+                .file_name()
+                .map(|value| value.to_string_lossy().to_string())
+                .unwrap_or_else(|| absolute_path.display().to_string()),
+            file_extension: Some(if media_kind.eq_ignore_ascii_case("video") {
+                "mp4".to_owned()
+            } else {
+                "png".to_owned()
+            }),
+            media_kind: media_kind.to_owned(),
+            file_size_bytes: 32,
+            modified_unix_seconds: Some(100),
+            width_px: Some(400),
+            height_px: Some(300),
+            metadata_status: librapix_storage::IndexedMetadataStatus::Ok,
+            search_text: String::new(),
+            timeline_day_key: Some("1970-01-01".to_owned()),
+            timeline_month_key: Some("1970-01".to_owned()),
+            timeline_year_key: Some("1970".to_owned()),
+            tags: Vec::new(),
+        }
+    }
+
+    fn unique_temp_dir(label: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .expect("time should move forward")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "librapix-app-{label}-{}-{nanos}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&path).expect("temp dir should create");
+        path
+    }
+
+    fn write_thumbnail_stub(path: &Path) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("parent dir should create");
+        }
+        std::fs::write(path, b"stub").expect("thumbnail stub should write");
+    }
+
+    fn projection_lookup_for_rows(
+        thumbnails_dir: &Path,
+        rows: &[CatalogMediaRecord],
+        gallery_artifacts: &[DerivedArtifactRecord],
+        detail_artifacts: &[DerivedArtifactRecord],
+        active_route: Route,
+    ) -> ProjectionThumbnailLookup {
+        let row_lookup = rows
+            .iter()
+            .map(|row| (row.media_id, row))
+            .collect::<HashMap<_, _>>();
+        let gallery_items = rows
+            .iter()
+            .map(|row| browse_item_from_catalog_row(Translator::new(Locale::EnUs), row, None))
+            .collect::<Vec<_>>();
+        resolve_projection_thumbnail_lookup(ProjectionThumbnailLookupInput {
+            generation: 1,
+            all_rows: rows,
+            row_lookup: &row_lookup,
+            gallery_artifacts,
+            detail_artifacts,
+            thumbnails_dir,
+            active_route,
+            search_query: "",
+            gallery_items: &gallery_items,
+            timeline_items: &[],
+            search_items: &[],
+        })
     }
 
     #[derive(Serialize, Deserialize)]

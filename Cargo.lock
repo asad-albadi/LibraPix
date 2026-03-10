@@ -2342,6 +2342,7 @@ dependencies = [
 name = "librapix-storage"
 version = "0.3.1"
 dependencies = [
+ "chrono",
  "rusqlite",
 ]
 

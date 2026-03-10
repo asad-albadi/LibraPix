@@ -1,3 +1,4 @@
+mod catalog;
 mod migration;
 
 use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
@@ -6,6 +7,11 @@ use std::fmt::{Display, Formatter};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+pub use catalog::{
+    CatalogMediaRecord, CatalogRefreshSummary, DerivedArtifactKind, DerivedArtifactRecord,
+    DerivedArtifactStatus,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SourceRootLifecycle {
@@ -1167,7 +1173,7 @@ mod tests {
         let version = storage
             .migration_version()
             .expect("migration version should be queryable");
-        assert_eq!(version, 8);
+        assert_eq!(version, 9);
 
         let _ = std::fs::remove_file(db);
     }
@@ -1492,6 +1498,152 @@ mod tests {
             .expect("all query should work");
         assert_eq!(all_rows.len(), 3);
         assert!(all_rows.iter().any(|row| row.media_kind == "video"));
+
+        let _ = std::fs::remove_file(db);
+    }
+
+    #[test]
+    fn refresh_catalog_materializes_normalized_fields() {
+        let db = temp_db_file("catalog-refresh");
+        let mut storage = Storage::open(&db).expect("database should open");
+        storage
+            .upsert_source_root(Path::new("/tmp/librapix-catalog-root"))
+            .expect("root insert should work");
+        let root = storage
+            .list_source_roots()
+            .expect("roots should list")
+            .into_iter()
+            .next()
+            .expect("root should exist");
+        storage
+            .update_source_root_display_name(root.id, "Screenshots")
+            .expect("display name should update");
+
+        storage
+            .apply_incremental_index(
+                &[IndexedMediaWrite {
+                    source_root_id: root.id,
+                    absolute_path: PathBuf::from("/tmp/librapix-catalog-root/Boss Fight.PNG"),
+                    media_kind: "image".to_owned(),
+                    file_size_bytes: 42,
+                    modified_unix_seconds: Some(1_710_000_000),
+                    width_px: Some(1920),
+                    height_px: Some(1080),
+                    metadata_status: IndexedMetadataStatus::Ok,
+                }],
+                &[root.id],
+            )
+            .expect("index apply should work");
+        storage
+            .ensure_media_kind_tags_attached()
+            .expect("kind tags should attach");
+        let media_id = storage
+            .list_all_media_read_models()
+            .expect("read models should list")
+            .first()
+            .expect("media row should exist")
+            .media_id;
+        storage
+            .attach_tag_name_to_media(media_id, "Boss", TagKind::Game)
+            .expect("tag attach should work");
+
+        let summary = storage
+            .refresh_catalog()
+            .expect("catalog refresh should work");
+        assert_eq!(summary.upserted_count, 1);
+
+        let catalog = storage
+            .list_catalog_media_filtered(None)
+            .expect("catalog rows should list");
+        assert_eq!(catalog.len(), 1);
+        assert_eq!(catalog[0].file_name, "Boss Fight.PNG");
+        assert_eq!(catalog[0].file_extension.as_deref(), Some("PNG"));
+        assert_eq!(
+            catalog[0].source_root_display_name.as_deref(),
+            Some("Screenshots")
+        );
+        assert!(catalog[0].timeline_day_key.is_some());
+        assert!(catalog[0].tags.iter().any(|tag| tag == "Boss"));
+        assert!(catalog[0].search_text.contains("screenshots"));
+
+        let _ = std::fs::remove_file(db);
+    }
+
+    #[test]
+    fn derived_artifact_round_trip_filters_by_variant_and_media() {
+        let db = temp_db_file("derived-artifacts");
+        let mut storage = Storage::open(&db).expect("database should open");
+        storage
+            .upsert_source_root(Path::new("/tmp/librapix-derived-root"))
+            .expect("root insert should work");
+        let root_id = storage
+            .list_source_roots()
+            .expect("roots should list")
+            .first()
+            .expect("one root expected")
+            .id;
+        storage
+            .apply_incremental_index(
+                &[IndexedMediaWrite {
+                    source_root_id: root_id,
+                    absolute_path: PathBuf::from("/tmp/librapix-derived-root/a.png"),
+                    media_kind: "image".to_owned(),
+                    file_size_bytes: 10,
+                    modified_unix_seconds: Some(10),
+                    width_px: Some(10),
+                    height_px: Some(10),
+                    metadata_status: IndexedMetadataStatus::Ok,
+                }],
+                &[root_id],
+            )
+            .expect("index apply should work");
+        let media_id = storage
+            .list_all_media_read_models()
+            .expect("read models should list")
+            .first()
+            .expect("media row should exist")
+            .media_id;
+
+        storage
+            .upsert_derived_artifact(
+                media_id,
+                DerivedArtifactKind::Thumbnail,
+                "gallery-400",
+                Some(Path::new("abc123.png")),
+                DerivedArtifactStatus::Ready,
+            )
+            .expect("artifact upsert should work");
+        storage
+            .upsert_derived_artifact(
+                media_id,
+                DerivedArtifactKind::Thumbnail,
+                "detail-800",
+                None,
+                DerivedArtifactStatus::Failed,
+            )
+            .expect("failed artifact upsert should work");
+
+        let gallery_artifacts = storage
+            .list_ready_derived_artifacts_for_media_ids(
+                &[media_id],
+                DerivedArtifactKind::Thumbnail,
+                "gallery-400",
+            )
+            .expect("gallery artifacts should list");
+        assert_eq!(gallery_artifacts.len(), 1);
+        assert_eq!(
+            gallery_artifacts[0].relative_path,
+            Some(PathBuf::from("abc123.png"))
+        );
+
+        let detail_artifacts = storage
+            .list_ready_derived_artifacts_for_media_ids(
+                &[media_id],
+                DerivedArtifactKind::Thumbnail,
+                "detail-800",
+            )
+            .expect("detail artifacts should list");
+        assert!(detail_artifacts.is_empty());
 
         let _ = std::fs::remove_file(db);
     }

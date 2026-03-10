@@ -5,9 +5,9 @@ use sha2::{Digest, Sha256};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::fs;
-use std::path::{Path, PathBuf};
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
+use std::path::{Path, PathBuf};
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;

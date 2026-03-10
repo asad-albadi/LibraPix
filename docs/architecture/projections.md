@@ -1,18 +1,19 @@
 # Timeline and Gallery Projections
 
-Timeline and gallery views are read projections built from indexed media read models.
+Timeline and gallery views are read projections built from normalized catalog rows.
 
 ## Baseline projection source
 
-- Source rows come from `librapix-storage` read-model queries (`indexed_media` + `tags` joins).
+- Source rows now come from `librapix-storage` catalog queries (`media_catalog`).
 - Projection builders live in `librapix-projections`.
 - UI consumes projection outputs for gallery/timeline card rendering and selection.
-- App orchestration derives `available_filter_tags` from read-model rows (excluding internal `kind:*` tags) for the tag filter axis.
+- App orchestration derives `available_filter_tags` from catalog rows (excluding internal `kind:*` tags) for the tag filter axis.
 
 ## Timeline baseline
 
-- Driving date field: `modified_unix_seconds`.
-- Day/month/year grouping uses local timezone conversion (user-facing local day semantics), not raw UTC calendar buckets.
+- Driving date field: persisted timeline keys when available, otherwise `modified_unix_seconds`.
+- `media_catalog` stores local `timeline_day_key`, `timeline_month_key`, and `timeline_year_key`.
+- Projection falls back to local-time conversion from raw timestamps only when persisted keys are unavailable.
 - Grouping supports:
   - day
   - month
@@ -51,3 +52,4 @@ Anchor construction is projection-driven (`build_timeline_anchors`) and does not
 - Route panels consume projection outputs as selectable media cards wired through explicit app selection state.
 - Projection inputs must not be silently pre-truncated by hard-coded UI caps; gallery/timeline views consume full projected item sets.
 - Fast timeline navigation is projection-backed: scrubber interactions map to `TimelineAnchor` entries, not ad-hoc view geometry probes.
+- Aggregate persisted timeline rollups are deferred; this branch establishes persisted per-media timeline keys first.

@@ -30,10 +30,11 @@ use librapix_projections::timeline::{
 };
 use librapix_search::{FuzzySearchStrategy, SearchDocument, SearchQuery, SearchStrategy};
 use librapix_storage::{
+    CatalogMediaRecord, DerivedArtifactKind, DerivedArtifactRecord, DerivedArtifactStatus,
     IndexedMediaWrite, IndexedMetadataStatus, SourceRootLifecycle, SourceRootStatisticsRecord,
     Storage, TagKind,
 };
-use librapix_thumbnails::{ensure_image_thumbnail, ensure_video_thumbnail};
+use librapix_thumbnails::{ThumbnailOutcome, ensure_image_thumbnail, ensure_video_thumbnail};
 use notify::{EventKind, RecursiveMode, Watcher};
 use semver::Version;
 use serde::Deserialize;
@@ -353,6 +354,8 @@ struct BackgroundWorkInput {
 
 const GALLERY_THUMB_SIZE: u32 = 400;
 const DETAIL_THUMB_SIZE: u32 = 800;
+const GALLERY_THUMB_VARIANT: &str = "gallery-400";
+const DETAIL_THUMB_VARIANT: &str = "detail-800";
 const TARGET_ROW_HEIGHT: f32 = 200.0;
 const MAX_ROW_HEIGHT: f32 = 350.0;
 const MAX_DIAGNOSTICS_EVENTS: usize = 100;
@@ -2033,8 +2036,8 @@ fn render_wrapped_filter_chips(chips: Vec<FilterChipSpec>) -> Element<'static, M
         } else {
             SPACE_SM as f32
         };
-        let would_overflow =
-            !current_row.is_empty() && (current_row_width + spacing + chip_width) > FILTER_DIALOG_CHIP_ROW_MAX_WIDTH;
+        let would_overflow = !current_row.is_empty()
+            && (current_row_width + spacing + chip_width) > FILTER_DIALOG_CHIP_ROW_MAX_WIDTH;
 
         if would_overflow {
             rows.push(current_row);
@@ -4580,19 +4583,15 @@ fn build_card_metadata_line(
     parts.join(" \u{00B7} ")
 }
 
-fn browse_item_from_row(
+fn browse_item_from_catalog_row(
     i18n: Translator,
-    thumbnails_dir: &Path,
-    row: &librapix_storage::MediaReadModel,
+    row: &CatalogMediaRecord,
+    thumbnail_path: Option<PathBuf>,
 ) -> BrowseItem {
     BrowseItem {
         media_id: row.media_id,
-        title: row
-            .absolute_path
-            .file_name()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_else(|| row.absolute_path.display().to_string()),
-        thumbnail_path: resolve_thumbnail(thumbnails_dir, row, GALLERY_THUMB_SIZE),
+        title: row.file_name.clone(),
+        thumbnail_path,
         media_kind: row.media_kind.clone(),
         metadata_line: build_card_metadata_line(
             i18n,
@@ -4614,7 +4613,7 @@ fn is_filterable_tag(tag: &str) -> bool {
     !trimmed.is_empty() && !trimmed.starts_with("kind:")
 }
 
-fn collect_available_filter_tags(rows: &[librapix_storage::MediaReadModel]) -> Vec<String> {
+fn collect_available_filter_tags(rows: &[CatalogMediaRecord]) -> Vec<String> {
     let mut tags = rows
         .iter()
         .flat_map(|row| row.tags.iter())
@@ -4626,15 +4625,43 @@ fn collect_available_filter_tags(rows: &[librapix_storage::MediaReadModel]) -> V
     tags
 }
 
-fn row_matches_tag_filter(
-    row: &librapix_storage::MediaReadModel,
-    tag_filter: Option<&str>,
-) -> bool {
+fn catalog_row_matches_tag_filter(row: &CatalogMediaRecord, tag_filter: Option<&str>) -> bool {
     tag_filter.is_none_or(|selected| {
         row.tags
             .iter()
             .any(|tag| tag.eq_ignore_ascii_case(selected))
     })
+}
+
+fn generate_thumbnail(
+    thumbnails_dir: &Path,
+    absolute_path: &Path,
+    media_kind: &str,
+    file_size_bytes: u64,
+    modified_unix_seconds: Option<i64>,
+    max_edge: u32,
+) -> Option<ThumbnailOutcome> {
+    if media_kind == "image" {
+        ensure_image_thumbnail(
+            thumbnails_dir,
+            absolute_path,
+            file_size_bytes,
+            modified_unix_seconds,
+            max_edge,
+        )
+        .ok()
+    } else if media_kind == "video" {
+        ensure_video_thumbnail(
+            thumbnails_dir,
+            absolute_path,
+            file_size_bytes,
+            modified_unix_seconds,
+            max_edge,
+        )
+        .ok()
+    } else {
+        None
+    }
 }
 
 fn projection_matches_tag_filter(item: &ProjectionMedia, tag_filter: Option<&str>) -> bool {
@@ -4650,39 +4677,120 @@ fn resolve_thumbnail(
     row: &librapix_storage::MediaReadModel,
     max_edge: u32,
 ) -> Option<PathBuf> {
-    if row.media_kind == "image" {
-        ensure_image_thumbnail(
-            thumbnails_dir,
-            &row.absolute_path,
-            row.file_size_bytes,
-            row.modified_unix_seconds,
-            max_edge,
-        )
+    generate_thumbnail(
+        thumbnails_dir,
+        &row.absolute_path,
+        &row.media_kind,
+        row.file_size_bytes,
+        row.modified_unix_seconds,
+        max_edge,
+    )
+    .map(|outcome| outcome.thumbnail_path)
+}
+
+fn ensure_catalog_thumbnail_variant(
+    storage: &Storage,
+    thumbnails_dir: &Path,
+    row: &CatalogMediaRecord,
+    max_edge: u32,
+    variant: &str,
+) -> Option<ThumbnailOutcome> {
+    let outcome = generate_thumbnail(
+        thumbnails_dir,
+        &row.absolute_path,
+        &row.media_kind,
+        row.file_size_bytes,
+        row.modified_unix_seconds,
+        max_edge,
+    );
+
+    match &outcome {
+        Some(result) => {
+            let relative_path = relative_artifact_path(thumbnails_dir, &result.thumbnail_path);
+            let _ = storage.upsert_derived_artifact(
+                row.media_id,
+                DerivedArtifactKind::Thumbnail,
+                variant,
+                relative_path.as_deref(),
+                DerivedArtifactStatus::Ready,
+            );
+        }
+        None => {
+            let _ = storage.upsert_derived_artifact(
+                row.media_id,
+                DerivedArtifactKind::Thumbnail,
+                variant,
+                None,
+                DerivedArtifactStatus::Failed,
+            );
+        }
+    }
+
+    outcome
+}
+
+fn relative_artifact_path(artifact_root: &Path, artifact_path: &Path) -> Option<PathBuf> {
+    artifact_path
+        .strip_prefix(artifact_root)
+        .map(PathBuf::from)
         .ok()
-        .map(|o| o.thumbnail_path)
-    } else if row.media_kind == "video" {
-        ensure_video_thumbnail(
-            thumbnails_dir,
-            &row.absolute_path,
-            row.file_size_bytes,
-            row.modified_unix_seconds,
-            max_edge,
-        )
-        .ok()
-        .map(|o| o.thumbnail_path)
+        .or_else(|| artifact_path.file_name().map(PathBuf::from))
+}
+
+fn resolve_artifact_path(artifact_root: &Path, relative_path: &Path) -> PathBuf {
+    if relative_path.is_absolute() {
+        relative_path.to_path_buf()
     } else {
-        None
+        artifact_root.join(relative_path)
     }
 }
 
+fn build_ready_artifact_map(
+    artifact_root: &Path,
+    artifacts: &[DerivedArtifactRecord],
+) -> std::collections::HashMap<i64, PathBuf> {
+    artifacts
+        .iter()
+        .filter_map(|artifact| {
+            artifact.relative_path.as_deref().map(|path| {
+                (
+                    artifact.media_id,
+                    resolve_artifact_path(artifact_root, path),
+                )
+            })
+        })
+        .collect()
+}
+
 fn populate_media_cache(
+    storage: &Storage,
     cache: &mut std::collections::HashMap<i64, CachedDetails>,
-    rows: &[librapix_storage::MediaReadModel],
+    rows: &[CatalogMediaRecord],
     thumbnails_dir: &std::path::Path,
 ) {
     cache.clear();
+
     for row in rows {
-        let detail_thumbnail_path = resolve_thumbnail(thumbnails_dir, row, DETAIL_THUMB_SIZE);
+        let _ = ensure_catalog_thumbnail_variant(
+            storage,
+            thumbnails_dir,
+            row,
+            DETAIL_THUMB_SIZE,
+            DETAIL_THUMB_VARIANT,
+        );
+    }
+
+    let media_ids = rows.iter().map(|row| row.media_id).collect::<Vec<_>>();
+    let detail_artifacts = storage
+        .list_ready_derived_artifacts_for_media_ids(
+            &media_ids,
+            DerivedArtifactKind::Thumbnail,
+            DETAIL_THUMB_VARIANT,
+        )
+        .unwrap_or_default();
+    let detail_artifact_paths = build_ready_artifact_map(thumbnails_dir, &detail_artifacts);
+
+    for row in rows {
         cache.insert(
             row.media_id,
             CachedDetails {
@@ -4692,7 +4800,7 @@ fn populate_media_cache(
                 modified_unix_seconds: row.modified_unix_seconds,
                 width_px: row.width_px,
                 height_px: row.height_px,
-                detail_thumbnail_path,
+                detail_thumbnail_path: detail_artifact_paths.get(&row.media_id).cloned(),
             },
         );
     }
@@ -4750,7 +4858,7 @@ fn load_media_details_cached(app: &mut Librapix) {
     }
 }
 
-fn rows_to_projection_media(rows: &[librapix_storage::MediaReadModel]) -> Vec<ProjectionMedia> {
+fn rows_to_projection_media(rows: &[CatalogMediaRecord]) -> Vec<ProjectionMedia> {
     rows.iter()
         .map(|row| ProjectionMedia {
             media_id: row.media_id,
@@ -4758,6 +4866,9 @@ fn rows_to_projection_media(rows: &[librapix_storage::MediaReadModel]) -> Vec<Pr
             media_kind: row.media_kind.clone(),
             modified_unix_seconds: row.modified_unix_seconds,
             tags: row.tags.clone(),
+            timeline_day_key: row.timeline_day_key.clone(),
+            timeline_month_key: row.timeline_month_key.clone(),
+            timeline_year_key: row.timeline_year_key.clone(),
         })
         .collect()
 }
@@ -4904,46 +5015,6 @@ fn do_background_work(input: BackgroundWorkInput) -> BackgroundWorkResult {
             let _ = storage.apply_root_auto_tags();
             let _ = storage.refresh_source_root_statistics(&result.scanned_root_ids);
 
-            let read_models = storage.list_all_media_read_models().ok()?;
-
-            let mut generated = 0usize;
-            let mut reused = 0usize;
-            let mut failed = 0usize;
-            for row in &read_models {
-                let thumb = if row.media_kind == "image" {
-                    ensure_image_thumbnail(
-                        &thumbnails_dir,
-                        &row.absolute_path,
-                        row.file_size_bytes,
-                        row.modified_unix_seconds,
-                        GALLERY_THUMB_SIZE,
-                    )
-                } else if row.media_kind == "video" {
-                    ensure_video_thumbnail(
-                        &thumbnails_dir,
-                        &row.absolute_path,
-                        row.file_size_bytes,
-                        row.modified_unix_seconds,
-                        GALLERY_THUMB_SIZE,
-                    )
-                } else {
-                    continue;
-                };
-                match thumb {
-                    Ok(o) if o.generated => generated += 1,
-                    Ok(_) => reused += 1,
-                    Err(_) => failed += 1,
-                }
-            }
-
-            out.thumbnail_status = format!(
-                "{}: {}={generated}, {}={reused}, {}={failed}",
-                i18n.text(TextKey::ThumbnailStatusLabel),
-                i18n.text(TextKey::ThumbnailGeneratedLabel),
-                i18n.text(TextKey::ThumbnailReusedLabel),
-                i18n.text(TextKey::ThumbnailFailedLabel),
-            );
-
             Some(IndexingSummary {
                 scanned_roots: result.summary.scanned_roots,
                 candidate_files: result.summary.candidate_files,
@@ -4953,7 +5024,7 @@ fn do_background_work(input: BackgroundWorkInput) -> BackgroundWorkResult {
                 changed_files: result.summary.changed_files,
                 unchanged_files: result.summary.unchanged_files,
                 missing_marked: apply_summary.missing_marked_count,
-                read_model_count: read_models.len(),
+                read_model_count: 0,
             })
         })();
 
@@ -4965,15 +5036,58 @@ fn do_background_work(input: BackgroundWorkInput) -> BackgroundWorkResult {
         }
     }
 
+    let _ = storage.refresh_catalog();
+    let catalog_rows_all = storage
+        .list_catalog_media_filtered(None)
+        .unwrap_or_default();
+
+    if matches!(mode, BackgroundWorkMode::IndexAndProject) {
+        let mut generated = 0usize;
+        let mut reused = 0usize;
+        let mut failed = 0usize;
+        for row in &catalog_rows_all {
+            match ensure_catalog_thumbnail_variant(
+                &storage,
+                &thumbnails_dir,
+                row,
+                GALLERY_THUMB_SIZE,
+                GALLERY_THUMB_VARIANT,
+            ) {
+                Some(outcome) if outcome.generated => generated += 1,
+                Some(_) => reused += 1,
+                None => failed += 1,
+            }
+        }
+
+        out.thumbnail_status = format!(
+            "{}: {}={generated}, {}={reused}, {}={failed}",
+            i18n.text(TextKey::ThumbnailStatusLabel),
+            i18n.text(TextKey::ThumbnailGeneratedLabel),
+            i18n.text(TextKey::ThumbnailReusedLabel),
+            i18n.text(TextKey::ThumbnailFailedLabel),
+        );
+    }
+
+    if let Some(mut summary) = out.indexing_summary {
+        summary.read_model_count = catalog_rows_all.len();
+        out.indexing_summary = Some(summary);
+    }
+
     let _ = storage.reconcile_source_root_availability();
     out.roots = storage
         .list_source_roots()
         .map(map_roots_from_storage)
         .unwrap_or_default();
 
-    let all_rows = storage
-        .list_all_media_read_models_filtered(filter_source_root_id)
-        .unwrap_or_default();
+    let all_rows = filter_source_root_id
+        .map(|root_id| {
+            catalog_rows_all
+                .iter()
+                .filter(|row| row.source_root_id == root_id)
+                .cloned()
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_else(|| catalog_rows_all.clone());
     out.available_filter_tags = collect_available_filter_tags(&all_rows);
     let active_tag_filter = filter_tag.as_ref().filter(|selected| {
         out.available_filter_tags
@@ -4986,6 +5100,15 @@ fn do_background_work(input: BackgroundWorkInput) -> BackgroundWorkResult {
         .collect::<std::collections::HashMap<_, _>>();
 
     let media = rows_to_projection_media(&all_rows);
+    let media_ids = all_rows.iter().map(|row| row.media_id).collect::<Vec<_>>();
+    let gallery_artifacts = storage
+        .list_ready_derived_artifacts_for_media_ids(
+            &media_ids,
+            DerivedArtifactKind::Thumbnail,
+            GALLERY_THUMB_VARIANT,
+        )
+        .unwrap_or_default();
+    let gallery_artifact_paths = build_ready_artifact_map(&thumbnails_dir, &gallery_artifacts);
 
     let gallery_query = GalleryQuery {
         media_kind: filter_media_kind.clone(),
@@ -5000,7 +5123,11 @@ fn do_background_work(input: BackgroundWorkInput) -> BackgroundWorkResult {
         .map(|item| {
             let matched_row = row_lookup.get(&item.media_id).copied();
             if let Some(row) = matched_row {
-                browse_item_from_row(i18n, &thumbnails_dir, row)
+                browse_item_from_catalog_row(
+                    i18n,
+                    row,
+                    gallery_artifact_paths.get(&row.media_id).cloned(),
+                )
             } else {
                 let original = PathBuf::from(&item.absolute_path);
                 BrowseItem {
@@ -5079,7 +5206,11 @@ fn do_background_work(input: BackgroundWorkInput) -> BackgroundWorkResult {
         for tl_item in bucket.items {
             let matched_row = row_lookup.get(&tl_item.media_id).copied();
             if let Some(row) = matched_row {
-                let mut item = browse_item_from_row(i18n, &thumbnails_dir, row);
+                let mut item = browse_item_from_catalog_row(
+                    i18n,
+                    row,
+                    gallery_artifact_paths.get(&row.media_id).cloned(),
+                );
                 item.line = format!("{} [{}]", tl_item.absolute_path, tl_item.media_kind);
                 timeline_items.push(item);
             } else {
@@ -5116,11 +5247,7 @@ fn do_background_work(input: BackgroundWorkInput) -> BackgroundWorkResult {
             .map(|row| SearchDocument {
                 media_id: row.media_id,
                 absolute_path: row.absolute_path.display().to_string(),
-                file_name: row
-                    .absolute_path
-                    .file_name()
-                    .map(|name| name.to_string_lossy().to_string())
-                    .unwrap_or_default(),
+                file_name: row.file_name.clone(),
                 media_kind: row.media_kind.clone(),
                 tags: row.tags.clone(),
             })
@@ -5150,9 +5277,15 @@ fn do_background_work(input: BackgroundWorkInput) -> BackgroundWorkResult {
                 })
             })
             .filter(|(_, row)| {
-                row_matches_tag_filter(row, active_tag_filter.map(|tag| tag.as_str()))
+                catalog_row_matches_tag_filter(row, active_tag_filter.map(|tag| tag.as_str()))
             })
-            .map(|(_hit, row)| browse_item_from_row(i18n, &thumbnails_dir, row))
+            .map(|(_hit, row)| {
+                browse_item_from_catalog_row(
+                    i18n,
+                    row,
+                    gallery_artifact_paths.get(&row.media_id).cloned(),
+                )
+            })
             .collect::<Vec<_>>();
         out.search_preview_lines = out
             .search_items
@@ -5161,7 +5294,7 @@ fn do_background_work(input: BackgroundWorkInput) -> BackgroundWorkResult {
             .collect();
     }
 
-    populate_media_cache(&mut out.media_cache, &all_rows, &thumbnails_dir);
+    populate_media_cache(&storage, &mut out.media_cache, &all_rows, &thumbnails_dir);
 
     if search_query.trim().is_empty() {
         out.browse_status = if matches!(active_route, Route::Timeline) {
@@ -5472,32 +5605,46 @@ mod tests {
     #[test]
     fn collect_available_filter_tags_skips_kind_tags_and_deduplicates() {
         let rows = vec![
-            librapix_storage::MediaReadModel {
+            CatalogMediaRecord {
                 media_id: 1,
                 source_root_id: 10,
+                source_root_display_name: None,
                 absolute_path: PathBuf::from("/tmp/a.png"),
+                file_name: "a.png".to_owned(),
+                file_extension: Some("png".to_owned()),
                 media_kind: "image".to_owned(),
                 file_size_bytes: 100,
                 modified_unix_seconds: Some(10),
                 width_px: Some(10),
                 height_px: Some(10),
                 metadata_status: librapix_storage::IndexedMetadataStatus::Ok,
+                search_text: String::new(),
+                timeline_day_key: Some("1970-01-01".to_owned()),
+                timeline_month_key: Some("1970-01".to_owned()),
+                timeline_year_key: Some("1970".to_owned()),
                 tags: vec![
                     "kind:image".to_owned(),
                     "Boss".to_owned(),
                     "campaign".to_owned(),
                 ],
             },
-            librapix_storage::MediaReadModel {
+            CatalogMediaRecord {
                 media_id: 2,
                 source_root_id: 10,
+                source_root_display_name: None,
                 absolute_path: PathBuf::from("/tmp/b.mp4"),
+                file_name: "b.mp4".to_owned(),
+                file_extension: Some("mp4".to_owned()),
                 media_kind: "video".to_owned(),
                 file_size_bytes: 100,
                 modified_unix_seconds: Some(20),
                 width_px: None,
                 height_px: None,
                 metadata_status: librapix_storage::IndexedMetadataStatus::Ok,
+                search_text: String::new(),
+                timeline_day_key: Some("1970-01-01".to_owned()),
+                timeline_month_key: Some("1970-01".to_owned()),
+                timeline_year_key: Some("1970".to_owned()),
                 tags: vec!["kind:video".to_owned(), "boss".to_owned()],
             },
         ];

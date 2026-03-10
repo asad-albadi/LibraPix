@@ -6,7 +6,7 @@ Thumbnail generation is an app-owned, non-destructive cache subsystem.
 
 - Generation logic lives in `librapix-thumbnails`.
 - Indexing/application orchestration decides when to generate.
-- Storage remains source of media metadata; thumbnail files are cache artifacts.
+- Storage remains source of media metadata, and `derived_artifacts` records thumbnail readiness by variant.
 - Source media files are read-only and never modified.
 
 ## Supported media
@@ -25,9 +25,25 @@ Thumbnail generation is an app-owned, non-destructive cache subsystem.
 - If a deterministic thumbnail path already exists, it is reused.
 - For images: decodes source and writes a PNG thumbnail using `Lanczos3` filter for high-quality downsampling.
 - For videos: runs `ffmpeg -ss 00:00:01 -frames:v 1 -vf scale=<max>:<max>:force_original_aspect_ratio=decrease` to extract a representative frame.
-- Gallery thumbnails default to 400px max edge; detail previews default to 800px max edge.
+- Gallery thumbnails default to 400px max edge (`gallery-400`); detail previews default to 800px max edge (`detail-800`).
 - Detail-size thumbnails are also reused by the in-app new-file modal dialog preview.
 - Failures are counted for status output but do not abort full indexing flow.
+
+## Artifact catalog status
+
+Implemented:
+
+- ready and failed thumbnail variants are written to `derived_artifacts`
+- browse/search projections resolve gallery thumbnails from the artifact catalog
+
+Partially implemented:
+
+- detail thumbnails are still generated from the background projection flow instead of a dedicated thumbnail job subsystem
+
+Deferred:
+
+- deeper thumbnail pyramids beyond the current two named variants
+- artifact cleanup/rebuild coordination as a separate runtime job family
 
 ## Video thumbnail requirements
 

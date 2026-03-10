@@ -38,15 +38,17 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
   - `librapix-indexer` scans and emits media candidates.
   - App persists candidates incrementally to `indexed_media`, marks missing records, and records indexing summary in state.
   - App refreshes maintained `source_root_statistics` for scanned roots.
-  - App runs thumbnail generation for image read-model rows into app-owned thumbnail cache.
+  - App refreshes `media_catalog` so browse/search/timeline work reads a normalized catalog layer instead of shaping raw source facts directly.
+  - App runs thumbnail generation for catalog rows and records named thumbnail variants in `derived_artifacts`.
 - Run read-model query baseline
   - App schedules projection/search background work via `Task::perform`.
-  - Worker queries read models from storage with optional text filtering over path/tag data.
-  - App executes fuzzy search over the full in-memory read-model document set (no hidden fixed 20-result cap).
+  - Worker queries normalized catalog rows from storage with optional root filtering.
+  - App executes fuzzy search over the full in-memory catalog document set (no hidden fixed 20-result cap).
   - App applies active kind/extension/tag filters to resulting hits.
 - Run timeline projection baseline
   - App schedules projection-only background work.
-  - Worker loads read-model rows, delegates grouping to `librapix-projections`, and applies kind/extension/tag filters.
+  - Worker loads catalog rows, delegates grouping to `librapix-projections`, and applies kind/extension/tag filters.
+  - Projection prefers persisted timeline keys from `media_catalog` and falls back to timestamp conversion only when needed.
   - Worker derives `TimelineAnchor` metadata from timeline buckets (`build_timeline_anchors`).
   - UI renders selectable timeline items grouped by route panel when `BackgroundWorkComplete` is applied.
 - Timeline scrubber interaction
@@ -59,7 +61,7 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
   - Scroll updates emit `MediaViewportChanged`; scrub value tracks viewport offset continuously while anchor selection tracks nearest projection anchor.
 - Run gallery projection baseline
   - App schedules projection-only background work.
-  - Worker loads read-model rows, delegates filtering/sorting to `librapix-projections`, and applies `GalleryQuery`.
+  - Worker loads catalog rows, delegates filtering/sorting to `librapix-projections`, and applies `GalleryQuery`.
   - UI renders selectable gallery items by route panel when `BackgroundWorkComplete` is applied.
 - Direct media selection
   - Selection is explicit app state (`selected_media_id`).
@@ -118,6 +120,7 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
   - Work mode is explicit:
     - `IndexAndProject`: indexing + thumbnails + projections/search
     - `ProjectOnly`: projections/search refresh without filesystem scan/index writes
+  - Current branch foundation: worker still lives in `librapix-app`, but it now relies on storage-owned catalog/artifact seams instead of rebuilding all browse/search state from raw read-model joins.
   - `BackgroundWorkComplete` handler applies all returned state atomically.
   - Multiple handlers share this pattern: `StartupRestore`, `FilesystemChanged`, `RunIndexing`, `ApplyMinFileSize`, library-dialog save operations, manual route refresh, search run, and filter changes.
   - Release checks follow the same non-blocking task model (`Task::perform`) through `start_update_check` -> `UpdateCheckCompleted`.

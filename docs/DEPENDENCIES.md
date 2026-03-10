@@ -95,6 +95,7 @@ This file tracks major direct dependencies that shape architecture and maintenan
 - Notes:
   - `bundled` feature avoids system SQLite dependency variance across platforms.
   - Used in `librapix-storage` with SQL migrations and `schema_migrations` tracking.
+  - Also backs the catalog-first foundation tables `media_catalog` and `derived_artifacts`.
 - Risks/tradeoffs:
   - Bundled SQLite increases compile time.
   - Raw SQL requires disciplined migration/version management.
@@ -161,6 +162,7 @@ This file tracks major direct dependencies that shape architecture and maintenan
   - [https://docs.rs/chrono/latest/chrono/](https://docs.rs/chrono/latest/chrono/)
 - Notes:
   - Timeline grouping uses local timezone day boundaries derived from indexed Unix timestamps.
+  - Catalog materialization now also stores local day/month/year keys in `media_catalog` using `chrono`.
 - Risks/tradeoffs:
   - Local timezone behavior can vary around DST/offset transitions; projection tests cover boundary scenarios.
 

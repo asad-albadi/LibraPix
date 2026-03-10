@@ -7,8 +7,13 @@ All notable changes to this project are documented in this file.
 ### Docs
 - Added `docs/AGENT_KNOWLEDGE_BASE.md` as a single comprehensive, code-verified project knowledge base for future engineering agents, and linked it from `docs/README.md`.
 - Added a catalog-first architecture plan, workstream checklist, and ADR for the new long-lived architecture branch.
+- Updated architecture docs to reflect the implemented catalog-first storage, timeline-key, search, thumbnail, and message-flow foundation.
 
 ### Added
+- Migration `0009_catalog_first_foundation.sql` with:
+  - `media_catalog` for normalized browse/search/timeline facts
+  - `derived_artifacts` for named thumbnail variant readiness
+- Storage APIs for catalog materialization and derived-artifact lookup.
 - GitHub release update-check flow in `librapix-app` using GitHub latest-release endpoint (`/releases/latest`) with explicit state model: `Unknown`, `Checking`, `UpToDate`, `UpdateAvailable { version, url }`, `Failed`.
 - Header update-status chip with click behavior:
   - opens latest release page when a newer release is available
@@ -34,6 +39,9 @@ All notable changes to this project are documented in this file.
 - Removed `packaging/windows/` scripts and packaging README from the repository.
 
 ### Changed
+- Background browse/search/timeline preparation now reads normalized catalog rows instead of rebuilding those surfaces directly from source-fact joins.
+- Timeline projections can consume persisted day/month/year keys from the catalog layer while retaining timestamp fallback compatibility.
+- Thumbnail generation now records ready/failed named variants (`gallery-400`, `detail-800`) in storage-owned derived-artifact metadata.
 - About dialog now shows the current app version from package metadata.
 - Header now includes an update-status chip (`Checking...`, `Up to date`, `New release`) with subtle fallback behavior on failed checks.
 - Startup restore flow now batches background indexing/projection restore with update-check scheduling while keeping UI responsive.

@@ -8,6 +8,7 @@ mod ui;
 use chrono::Local;
 use iced::keyboard;
 use iced::keyboard::key;
+use iced::time;
 use iced::widget::image::FilterMethod;
 use iced::widget::{
     Id, Space, button, column, container, image, mouse_area, operation, progress_bar, responsive,
@@ -152,6 +153,14 @@ enum Message {
     SaveLibraryDialog,
     SaveLibraryAndAddAnother,
     SetFilterLibrary(Option<i64>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum IntervalMessageKind {
+    UpdateCheckTick,
+    StartupReconcileKickoff,
+    SnapshotApplyTick,
+    DeferredThumbnailCatchupKickoff,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -347,6 +356,8 @@ struct ThumbnailBatchResult {
     video_items: usize,
     cancelled: bool,
     worker_elapsed: Duration,
+    worker_finished_at: Option<Instant>,
+    dispatched_to_ui_at: Option<Instant>,
     generated: usize,
     reused_exact: usize,
     reused_fallback: usize,
@@ -814,22 +825,26 @@ struct WatchSubscriptionConfig {
 
 fn subscription(app: &Librapix) -> Subscription<Message> {
     let keyboard_subscription = keyboard::listen().map(Message::KeyboardEvent);
-    let update_tick_subscription = Subscription::run(update_check_tick_stream);
-    let startup_reconcile_subscription = if app.background.startup_reconcile_due_at.is_some() {
-        Subscription::run(startup_reconcile_tick_stream)
-    } else {
-        Subscription::none()
-    };
-    let snapshot_apply_subscription = if app.background.snapshot_apply.is_some() {
-        Subscription::run(snapshot_apply_tick_stream)
-    } else {
-        Subscription::none()
-    };
-    let deferred_thumbnail_subscription = if app.background.deferred_thumbnail_due_at.is_some() {
-        Subscription::run(deferred_thumbnail_tick_stream)
-    } else {
-        Subscription::none()
-    };
+    let update_tick_subscription = interval_subscription(
+        true,
+        UPDATE_CHECK_TICK_INTERVAL,
+        IntervalMessageKind::UpdateCheckTick,
+    );
+    let startup_reconcile_subscription = interval_subscription(
+        app.background.startup_reconcile_due_at.is_some(),
+        STARTUP_RECONCILE_TICK_INTERVAL,
+        IntervalMessageKind::StartupReconcileKickoff,
+    );
+    let snapshot_apply_subscription = interval_subscription(
+        app.background.snapshot_apply.is_some(),
+        SNAPSHOT_APPLY_TICK_INTERVAL,
+        IntervalMessageKind::SnapshotApplyTick,
+    );
+    let deferred_thumbnail_subscription = interval_subscription(
+        app.background.deferred_thumbnail_due_at.is_some(),
+        DEFERRED_THUMBNAIL_TICK_INTERVAL,
+        IntervalMessageKind::DeferredThumbnailCatchupKickoff,
+    );
 
     let roots = app
         .state
@@ -859,52 +874,27 @@ fn subscription(app: &Librapix) -> Subscription<Message> {
     }
 }
 
-fn update_check_tick_stream() -> impl iced::futures::Stream<Item = Message> + use<> {
-    use iced::futures::sink::SinkExt;
-    use iced::stream;
-
-    stream::channel(1, async move |mut output| {
-        loop {
-            std::thread::sleep(UPDATE_CHECK_TICK_INTERVAL);
-            let _ = output.send(Message::UpdateCheckTick).await;
-        }
-    })
+fn interval_subscription(
+    enabled: bool,
+    interval: Duration,
+    message: IntervalMessageKind,
+) -> Subscription<Message> {
+    if enabled {
+        time::every(interval).with(message).map(interval_message)
+    } else {
+        Subscription::none()
+    }
 }
 
-fn startup_reconcile_tick_stream() -> impl iced::futures::Stream<Item = Message> + use<> {
-    use iced::futures::sink::SinkExt;
-    use iced::stream;
-
-    stream::channel(1, async move |mut output| {
-        loop {
-            std::thread::sleep(STARTUP_RECONCILE_TICK_INTERVAL);
-            let _ = output.send(Message::StartupReconcileKickoff).await;
+fn interval_message((message, _instant): (IntervalMessageKind, Instant)) -> Message {
+    match message {
+        IntervalMessageKind::UpdateCheckTick => Message::UpdateCheckTick,
+        IntervalMessageKind::StartupReconcileKickoff => Message::StartupReconcileKickoff,
+        IntervalMessageKind::SnapshotApplyTick => Message::SnapshotApplyTick,
+        IntervalMessageKind::DeferredThumbnailCatchupKickoff => {
+            Message::DeferredThumbnailCatchupKickoff
         }
-    })
-}
-
-fn snapshot_apply_tick_stream() -> impl iced::futures::Stream<Item = Message> + use<> {
-    use iced::futures::sink::SinkExt;
-    use iced::stream;
-
-    stream::channel(1, async move |mut output| {
-        loop {
-            std::thread::sleep(SNAPSHOT_APPLY_TICK_INTERVAL);
-            let _ = output.send(Message::SnapshotApplyTick).await;
-        }
-    })
-}
-
-fn deferred_thumbnail_tick_stream() -> impl iced::futures::Stream<Item = Message> + use<> {
-    use iced::futures::sink::SinkExt;
-    use iced::stream;
-
-    stream::channel(1, async move |mut output| {
-        loop {
-            std::thread::sleep(DEFERRED_THUMBNAIL_TICK_INTERVAL);
-            let _ = output.send(Message::DeferredThumbnailCatchupKickoff).await;
-        }
-    })
+    }
 }
 
 fn watch_filesystem(
@@ -7886,7 +7876,26 @@ fn run_next_thumbnail_batch_if_idle(app: &mut Librapix) -> Task<Message> {
         ),
         items: batch,
     };
-    Task::perform(async move { do_thumbnail_batch(input) }, |result| {
+    Task::perform(async move { do_thumbnail_batch(input) }, |mut result| {
+        let dispatched_to_ui_at = Instant::now();
+        let worker_to_dispatch_ms = result
+            .worker_finished_at
+            .map(|finished_at| dispatched_to_ui_at.duration_since(finished_at).as_millis())
+            .unwrap_or_default();
+        startup_log::log_info(
+            "startup.thumbnail.batch.dispatch_to_ui",
+            &format!(
+                "generation={} batch_id={} mode={} outcomes={} failures={} worker_elapsed_ms={} worker_to_dispatch_ms={}",
+                result.generation,
+                result.batch_id,
+                result.mode.as_str(),
+                result.completed_media_ids.len(),
+                result.failures.len(),
+                result.worker_elapsed.as_millis(),
+                worker_to_dispatch_ms,
+            ),
+        );
+        result.dispatched_to_ui_at = Some(dispatched_to_ui_at);
         Message::ThumbnailBatchComplete(Box::new(result))
     })
 }
@@ -8219,6 +8228,7 @@ fn do_thumbnail_batch(input: ThumbnailBatchInput) -> ThumbnailBatchResult {
     }
 
     out.worker_elapsed = batch_started_at.elapsed();
+    out.worker_finished_at = Some(Instant::now());
     if out.cancelled {
         startup_log::log_duration(
             "startup.thumbnail.batch.cancelled",
@@ -8339,6 +8349,41 @@ fn record_thumbnail_failure(app: &mut Librapix, failure: &ThumbnailFailureEvent)
 
 fn apply_thumbnail_batch_result(app: &mut Librapix, result: ThumbnailBatchResult) -> Task<Message> {
     let apply_started_at = Instant::now();
+    let worker_to_receive_ms = result
+        .worker_finished_at
+        .map(|finished_at| apply_started_at.duration_since(finished_at).as_millis())
+        .unwrap_or_default();
+    let dispatch_to_receive_ms = result
+        .dispatched_to_ui_at
+        .map(|dispatched_at| apply_started_at.duration_since(dispatched_at).as_millis())
+        .unwrap_or_default();
+    startup_log::log_info(
+        "startup.thumbnail.batch.message_received",
+        &format!(
+            "generation={} batch_id={} mode={} outcomes={} failures={} worker_elapsed_ms={} worker_to_receive_ms={} dispatch_to_receive_ms={}",
+            result.generation,
+            result.batch_id,
+            result.mode.as_str(),
+            result.completed_media_ids.len(),
+            result.failures.len(),
+            result.worker_elapsed.as_millis(),
+            worker_to_receive_ms,
+            dispatch_to_receive_ms,
+        ),
+    );
+    if worker_to_receive_ms > 250 {
+        startup_log::log_warn(
+            "startup.thumbnail.batch.handoff.slow",
+            &format!(
+                "generation={} batch_id={} mode={} worker_to_receive_ms={} dispatch_to_receive_ms={}",
+                result.generation,
+                result.batch_id,
+                result.mode.as_str(),
+                worker_to_receive_ms,
+                dispatch_to_receive_ms,
+            ),
+        );
+    }
     if result.generation != app.background.thumbnail_generation {
         app.background.thumbnail_in_flight = false;
         startup_log::log_info(
@@ -8423,11 +8468,24 @@ fn apply_thumbnail_batch_result(app: &mut Librapix, result: ThumbnailBatchResult
         .thumbnail_result_window_failures
         .saturating_add(result.failures.len());
     flush_thumbnail_result_window(app, false);
+    startup_log::log_info(
+        "startup.thumbnail.apply.start",
+        &format!(
+            "generation={} batch_id={} mode={} outcomes={} failures={} worker_to_receive_ms={} dispatch_to_receive_ms={}",
+            result.generation,
+            result.batch_id,
+            result.mode.as_str(),
+            result.completed_media_ids.len(),
+            result.failures.len(),
+            worker_to_receive_ms,
+            dispatch_to_receive_ms,
+        ),
+    );
     startup_log::log_duration(
         "startup.thumbnail.apply",
         apply_started_at.elapsed(),
         &format!(
-            "generation={} batch_id={} mode={} outcomes={} ready_paths={} failures={} worker_elapsed_ms={} queue_remaining={} deferred_remaining={} pending_projection={} pending_reconcile={}",
+            "generation={} batch_id={} mode={} outcomes={} ready_paths={} failures={} worker_elapsed_ms={} worker_to_receive_ms={} dispatch_to_receive_ms={} queue_remaining={} deferred_remaining={} pending_projection={} pending_reconcile={}",
             result.generation,
             result.batch_id,
             result.mode.as_str(),
@@ -8435,6 +8493,8 @@ fn apply_thumbnail_batch_result(app: &mut Librapix, result: ThumbnailBatchResult
             ready_paths.len(),
             result.failures.len(),
             result.worker_elapsed.as_millis(),
+            worker_to_receive_ms,
+            dispatch_to_receive_ms,
             app.background.thumbnail_queue.len(),
             app.background.deferred_thumbnail_queue.len(),
             app.background.pending_projection,

@@ -44,9 +44,13 @@
 - Implemented: startup-ready no longer waits for any thumbnail batch, including startup-priority visible-slice work.
 - Implemented: projection/reconcile refreshes now cancel thumbnail work instead of waiting for thumbnail batches to settle first.
 - Implemented: startup logs now record thumbnail artifact lookup timing, exact/fallback reuse counts, placeholder counts, scheduled-generation counts, rejected-artifact reasons, and video slow/failure events.
+- Implemented: post-ready thumbnail runtime now separates image and video policy so visible videos defer into slower catch-up instead of joining the first post-ready burst.
+- Implemented: background thumbnail batches now throttle video work to one item per batch and make in-flight video extraction cancellation-aware.
+- Implemented: failed thumbnail items now enter runtime backoff, and ffmpeg resolution/spawn failures disable repeated video attempts for the rest of the session.
+- Implemented: thumbnail runtime logs now record batch dispatch/start/end/cancel timing, apply timing, refresh pressure during thumbnail work, result-message rate, and video command/exit/timeout/stderr details.
 - Implemented: route switches can trigger deferred surface refresh when startup intentionally leaves a non-visible surface for later.
 - Implemented: stale delayed startup-reconcile ticks are ignored after their due timestamp is cleared, preventing duplicate startup scan/projection loops.
-- Implemented: targeted regression coverage now covers deferred thumbnail catch-up readiness, startup route deferral, startup thumbnail prioritization, exact thumbnail reuse, compatible fallback reuse, placeholder scheduling, video non-blocking startup, and projection refresh cancellation of thumbnail work.
+- Implemented: targeted regression coverage now covers deferred thumbnail catch-up readiness, startup route deferral, startup thumbnail prioritization, exact thumbnail reuse, compatible fallback reuse, placeholder scheduling, video non-blocking startup, video deferral, session disable/backoff, thumbnail batch cancellation, and projection refresh cancellation of thumbnail work.
 - Implemented: final verification loop (`fmt`, `check`, `clippy`, `test`) passed after the startup completion + instrumentation changes.
 - Implemented: startup smoke runs now confirm log-path emission, legacy snapshot discard, version-2 startup-snapshot persistence, and fast-path version-2 startup restore.
 - Partially implemented: orchestration still enters through `crates/librapix-app/src/main.rs`, even though startup/catch-up boundaries are now materially cleaner.

@@ -56,6 +56,32 @@
   - Keep thumbnails outside the startup-ready boundary.
   - Keep thumbnail scheduling observable in logs so reuse regressions are measurable.
 
+## Background thumbnail work still makes the GUI feel hung after `startup.ready`
+
+- Symptoms
+  - `startup.ready` arrives early enough, but the UI still feels laggy during scrolling, route switches, or immediately after startup.
+  - Windows logs show repeated failing video thumbnail jobs and bursts of ffmpeg work after ready.
+  - The same failing video items can appear again on later projection generations.
+- Affected area
+  - Background thumbnail scheduling/runtime policy in `crates/librapix-app/src/main.rs`.
+  - Video subprocess execution in `crates/librapix-thumbnails/src/lib.rs`.
+- Confirmed cause
+  - Failed thumbnail items were entering `derived_artifacts` as `failed`, but projection scheduling only consulted `ready` artifacts, so later projections could immediately retry the same bad items.
+  - Video thumbnail failures were logged as one generic message, hiding the real ffmpeg path, command, exit code, timeout, and stderr.
+  - Visible videos could still join the first post-ready thumbnail burst instead of staying placeholder-first and deferred.
+  - Queue cancellation cleared future work, but stale in-flight batches were not cancellation-aware enough.
+- Resolution
+  - Visible videos are now deferred into slower background catch-up instead of joining the first startup-priority thumbnail burst.
+  - Background batches now throttle video work to one item per batch.
+  - Video extraction is now timeout-bound and cancellation-aware while waiting on ffmpeg.
+  - Failed items now enter session backoff and are not immediately requeued on the next projection refresh.
+  - ffmpeg resolution/spawn failures now disable repeated video attempts for the rest of the session.
+  - Logs now record thumbnail batch dispatch/start/end/cancel timing, apply timing, refresh pressure during thumbnail work, and detailed video failure context.
+- Prevention guidance
+  - Keep image and video thumbnail policy separate.
+  - Never let known-bad items re-enter the hot path without backoff.
+  - Keep background thumbnail logs rich enough to distinguish worker time from app-state apply time.
+
 ## Startup logs are hard to find
 
 - Symptoms

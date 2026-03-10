@@ -209,3 +209,26 @@ Must never block startup or post-ready interactivity:
 - Image catch-up remains light and non-disruptive.
 - Video work becomes throttled, cancellable, and backoff-aware.
 - Repeated video failures no longer flood the app or make the GUI feel hung.
+
+## Implemented outcome
+
+Implemented on this branch:
+
+- visible image thumbnails may still run in the startup-priority background queue
+- visible video thumbnails are now deferred into slower background catch-up instead of joining the first post-ready burst
+- thumbnail worker batches now log dispatch/start/end/cancel timing
+- video failures now log resolved ffmpeg path, effective command, exit code, timeout, and stderr summary when available
+- route/projection refreshes now record when they interrupt thumbnail work
+- in-flight video extraction is now cancellation-aware and checks the active generation while waiting on ffmpeg
+- failed items now enter session backoff and are not immediately requeued on the next projection refresh
+- ffmpeg tool-resolution failures now disable repeated video attempts for the rest of the session instead of spawning the same broken command over and over
+- thumbnail apply/message-rate logs now separate worker time from main-state apply time so future post-ready lag can be measured instead of guessed
+
+Measured before/after evidence:
+
+- Before: the Windows log showed generation `1` failing 13 items and generation `2` immediately scheduling the same 13 items again.
+- After: the runtime now has explicit suppression points for both item-level cooldown and session-level video disable, so that retry loop is removed from the scheduling path.
+
+Remaining caveat:
+
+- this terminal environment can validate the new policy, logs, and regression tests, but the final product judgment still requires a manual Windows large-library GUI pass on the user machine.

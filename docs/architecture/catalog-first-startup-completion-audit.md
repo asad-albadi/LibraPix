@@ -226,8 +226,14 @@ Implemented in code:
   - deterministic `detail-800` fallback for visible-priority items
 - startup logging now records thumbnail artifact lookup start/end timing, exact/fallback reuse counts, placeholder counts, scheduled-generation counts, rejected-artifact reasons, and video slow/failure events
 - startup-ready no longer waits for startup-priority thumbnail batches
-- later projection/reconcile refreshes cancel thumbnail work instead of waiting for thumbnail batches to settle
+- later projection/reconcile refreshes cancel queued thumbnail work and invalidate stale in-flight batches instead of waiting for thumbnail batches to settle
 - deferred thumbnail catch-up starts after startup ready-enough and runs in lighter batches
+- post-ready background thumbnail work now separates image and video policy:
+  - visible images may still run in the startup-priority background lane
+  - visible videos are deferred into slower catch-up with one-video batches
+- failing thumbnails now enter runtime backoff instead of being retried immediately on the next projection refresh
+- ffmpeg resolution/spawn failures now disable repeated video attempts for the rest of the session instead of flooding the app with broken subprocess launches
+- thumbnail runtime logs now distinguish worker batch timing, apply timing, refresh pressure during thumbnail work, and video failure command/exit/timeout details
 - route switches can request a deferred surface refresh when startup intentionally skipped the non-visible route
 - no new splash screen was added in this pass; the existing staged activity UI remains the honest startup indicator after the critical path reduction
 

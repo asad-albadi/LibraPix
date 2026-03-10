@@ -107,23 +107,29 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
     - compatible `detail-800` fallback rows
     - deterministic `detail-800` fallback for visible-priority items
   - Thumbnail work is now split:
-    - startup-priority background thumbnail work for the first visible slice
-    - delayed background catch-up for the remaining browse-tier backlog
+    - startup-priority background thumbnail work for the first visible image slice
+    - delayed background catch-up for visible videos and the remaining browse-tier backlog
   - Startup/runtime instrumentation now writes a timestamped log file with:
     - bootstrap config-load timing
     - storage open + migration timing
     - snapshot hydrate/apply timing
     - reconcile/projection timing
     - thumbnail start/end timing
+    - thumbnail batch dispatch/start/end/cancel timing
+    - thumbnail apply timing in the app state
+    - thumbnail result-message rate during active background work
     - artifact lookup start/end timing
     - exact/fallback reuse counts
     - placeholder and scheduled-generation counts
     - rejected-artifact reasons
+    - video command/exit/timeout/stderr details on failure
     - startup-ready and first-usable-gallery milestones
   - UI remains interactive while background work proceeds; sidebar activity state reflects the real stage currently in flight.
   - Ready-enough state is restored after snapshot apply, reconcile, and current-surface projection; thumbnail work continues honestly in background instead of blocking startup-ready.
   - Deferred thumbnail catch-up remains visible as honest background work without keeping the whole app in startup-busy state.
-  - Later projection or reconcile requests cancel in-flight thumbnail batches instead of waiting for them to settle first.
+  - Later projection or reconcile requests cancel queued thumbnail work and invalidate stale in-flight batches instead of waiting for them to settle first.
+  - Failed thumbnails now enter runtime backoff so later projection refreshes do not immediately retry the same known-bad items.
+  - ffmpeg resolution/spawn failures disable repeated video attempts for the rest of the session instead of flooding the app with broken subprocess launches.
 - Release update check flow
   - State is explicit in app orchestration: `Unknown`, `Checking`, `UpToDate`, `UpdateAvailable { version, url }`, `Failed`.
   - Header chip click emits `UpdateChipPressed`.
@@ -164,6 +170,9 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
   - Ready-enough and background catch-up are now distinct runtime concepts:
     - startup completion no longer waits for any thumbnail batch
     - deferred thumbnail catch-up is delayed and batched more lightly after startup becomes usable
+  - Background thumbnail policy is no longer uniform:
+    - images can remain higher-priority background work
+    - videos are throttled more aggressively, with one-item batches plus backoff/cancellation
   - Current branch limitation: the staged coordinator still lives in `librapix-app/src/main.rs` and has not yet been extracted into smaller orchestration modules.
   - Release checks continue to follow the same non-blocking task model (`Task::perform`) through `start_update_check` -> `UpdateCheckCompleted`.
 

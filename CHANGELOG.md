@@ -5,8 +5,9 @@ All notable changes to this project are documented in this file.
 ## [Unreleased]
 
 ### Docs
+- Added a dedicated background thumbnail responsiveness audit covering the Windows post-ready lag path, retry loop, and the corrected video/background policy.
 - Added a dedicated startup thumbnail reuse audit covering the exact DB-first reuse failure, the compatible-fallback policy, and the corrected startup-ready boundary.
-- Updated thumbnail, message-flow, startup audit, troubleshooting, and catalog-first checklist docs to reflect projection-time exact/fallback thumbnail reuse and non-blocking startup-ready.
+- Updated thumbnail, message-flow, startup audit, troubleshooting, and catalog-first checklist docs to reflect projection-time exact/fallback thumbnail reuse, non-blocking startup-ready, and the final background video-throttling/backoff policy.
 - Updated the catalog-first startup audit, message-flow docs, troubleshooting guide, and roadmap checklist to describe the final startup-snapshot policy, startup instrumentation/logging, and deferred catch-up behavior.
 - Added `docs/AGENT_KNOWLEDGE_BASE.md` as a single comprehensive, code-verified project knowledge base for future engineering agents, and linked it from `docs/README.md`.
 - Added a catalog-first architecture plan, workstream checklist, and ADR for the new long-lived architecture branch.
@@ -46,6 +47,9 @@ All notable changes to this project are documented in this file.
 - Removed `packaging/windows/` scripts and packaging README from the repository.
 
 ### Changed
+- Background thumbnail runtime now treats images and videos differently: visible videos defer into slower catch-up, video batches run one item at a time, and in-flight video extraction is cancellation-aware.
+- Thumbnail failures now feed runtime backoff/session-disable policy instead of immediately re-entering the next projection refresh.
+- Thumbnail runtime logs now record batch dispatch/start/end/cancel timing, apply timing, refresh pressure during thumbnail work, result-message rate, and detailed ffmpeg command/exit/timeout/stderr failure context.
 - Startup projection now performs explicit thumbnail reuse lookup before scheduling generation, preferring exact `gallery-400` artifacts, deterministic on-disk browse files, and compatible `detail-800` fallbacks.
 - Startup and runtime logs now record thumbnail artifact lookup timing, exact/fallback reuse counts, placeholder counts, scheduled-generation counts, rejected-artifact reasons, and video slow/failure events.
 - Reconcile/projection refresh requests now cancel thumbnail work instead of waiting behind thumbnail batches.
@@ -91,6 +95,10 @@ All notable changes to this project are documented in this file.
 - Windows EXE and Linux AppImage release artifacts now render in-app icons/logo without companion asset packages.
 - Fixed startup responsiveness regression after embedded-asset migration by caching image/SVG handles in static lazy storage instead of rebuilding handles in render paths.
 - New-file detected dialog now uses the same content-sized modal behavior as other dialogs, removing extra bottom gap below actions.
+
+### Fixed
+- Post-ready background thumbnail failures no longer aggressively retry the same known-bad items on later projection generations in the same session.
+- Failing Windows video thumbnail work no longer stays opaque; logs now show the real ffmpeg failure path needed to debug startup and post-ready lag.
 
 ### Added
 - Branding integration: blue logo in app header, GitHub link button, asset-based icons throughout UI.

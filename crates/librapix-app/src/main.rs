@@ -47,8 +47,8 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
 use ui::*;
 
@@ -110,13 +110,18 @@ enum Message {
     TimelineScrubChanged(f32),
     TimelineScrubReleased,
     JumpToTimelineAnchor(usize),
-    MediaViewportChanged { absolute_y: f32, max_y: f32 },
+    MediaViewportChanged {
+        absolute_y: f32,
+        max_y: f32,
+        viewport_height: f32,
+    },
     KeyboardEvent(keyboard::Event),
     HydrateSnapshotComplete(Box<SnapshotHydrateResult>),
     SnapshotApplyTick,
     ScanJobComplete(Box<ScanJobResult>),
     ProjectionJobComplete(Box<ProjectionJobResult>),
     ThumbnailBatchComplete(Box<ThumbnailBatchResult>),
+    StartupGalleryContinuationKickoff,
     DeferredThumbnailCatchupKickoff,
     OpenMediaById(i64),
     CopyMediaFileById(i64),
@@ -159,6 +164,7 @@ enum IntervalMessageKind {
     UpdateCheckTick,
     StartupReconcileKickoff,
     SnapshotApplyTick,
+    StartupGalleryContinuationKickoff,
     DeferredThumbnailCatchupKickoff,
 }
 
@@ -473,6 +479,7 @@ struct BackgroundCoordinator {
     startup_ready: bool,
     startup_deferred_gallery_refresh: bool,
     startup_deferred_timeline_refresh: bool,
+    startup_gallery_continuation_due_at: Option<Instant>,
     reconcile_in_flight: bool,
     projection_in_flight: bool,
     thumbnail_in_flight: bool,
@@ -582,6 +589,8 @@ struct Librapix {
     background: BackgroundCoordinator,
     diagnostics_lines: Vec<String>,
     diagnostics_events: Vec<String>,
+    media_scroll_absolute_y: f32,
+    media_viewport_height: f32,
     timeline_scrub_value: f32,
     timeline_scrubbing: bool,
     timeline_scrub_anchor_index: Option<usize>,
@@ -699,6 +708,8 @@ const GITHUB_RELEASES_PAGE_URL: &str = "https://github.com/asad-albadi/LibraPix/
 const UPDATE_CHECK_TICK_INTERVAL: Duration = Duration::from_secs(60);
 const STARTUP_RECONCILE_DELAY_MS: u64 = 550;
 const STARTUP_RECONCILE_TICK_INTERVAL: Duration = Duration::from_millis(120);
+const STARTUP_GALLERY_CONTINUATION_DELAY_MS: u64 = 350;
+const STARTUP_GALLERY_CONTINUATION_TICK_INTERVAL: Duration = Duration::from_millis(120);
 const SNAPSHOT_APPLY_TICK_INTERVAL: Duration = Duration::from_millis(12);
 const DEFERRED_THUMBNAIL_DELAY_MS: u64 = 800;
 const DEFERRED_THUMBNAIL_TICK_INTERVAL: Duration = Duration::from_millis(140);
@@ -717,6 +728,9 @@ const PROJECTION_SNAPSHOT_KEY: &str = "default";
 const PROJECTION_SNAPSHOT_VERSION: u32 = 2;
 const AUTO_UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 const MANUAL_UPDATE_CHECK_COOLDOWN: Duration = Duration::from_secs(5 * 60);
+const MEDIA_VIRTUAL_OVERSCAN_PX: f32 = 1200.0;
+const TIMELINE_GROUP_HEADER_HEIGHT: f32 = 40.0;
+static LARGE_SURFACE_RENDER_LOGS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
 #[derive(Debug, Clone)]
 struct RuntimeContext {
@@ -773,6 +787,8 @@ impl Default for Librapix {
             background: BackgroundCoordinator::default(),
             diagnostics_lines: Vec::new(),
             diagnostics_events: Vec::new(),
+            media_scroll_absolute_y: 0.0,
+            media_viewport_height: 0.0,
             timeline_scrub_value: 0.0,
             timeline_scrubbing: false,
             timeline_scrub_anchor_index: None,
@@ -836,6 +852,11 @@ fn subscription(app: &Librapix) -> Subscription<Message> {
         STARTUP_RECONCILE_TICK_INTERVAL,
         IntervalMessageKind::StartupReconcileKickoff,
     );
+    let startup_gallery_continuation_subscription = interval_subscription(
+        app.background.startup_gallery_continuation_due_at.is_some(),
+        STARTUP_GALLERY_CONTINUATION_TICK_INTERVAL,
+        IntervalMessageKind::StartupGalleryContinuationKickoff,
+    );
     let snapshot_apply_subscription = interval_subscription(
         app.background.snapshot_apply.is_some(),
         SNAPSHOT_APPLY_TICK_INTERVAL,
@@ -860,6 +881,7 @@ fn subscription(app: &Librapix) -> Subscription<Message> {
             keyboard_subscription,
             update_tick_subscription,
             startup_reconcile_subscription,
+            startup_gallery_continuation_subscription,
             snapshot_apply_subscription,
             deferred_thumbnail_subscription,
         ])
@@ -868,6 +890,7 @@ fn subscription(app: &Librapix) -> Subscription<Message> {
             keyboard_subscription,
             update_tick_subscription,
             startup_reconcile_subscription,
+            startup_gallery_continuation_subscription,
             snapshot_apply_subscription,
             deferred_thumbnail_subscription,
             Subscription::run_with(WatchSubscriptionConfig { roots }, watch_filesystem),
@@ -891,6 +914,9 @@ fn interval_message((message, _instant): (IntervalMessageKind, Instant)) -> Mess
     match message {
         IntervalMessageKind::UpdateCheckTick => Message::UpdateCheckTick,
         IntervalMessageKind::StartupReconcileKickoff => Message::StartupReconcileKickoff,
+        IntervalMessageKind::StartupGalleryContinuationKickoff => {
+            Message::StartupGalleryContinuationKickoff
+        }
         IntervalMessageKind::SnapshotApplyTick => Message::SnapshotApplyTick,
         IntervalMessageKind::DeferredThumbnailCatchupKickoff => {
             Message::DeferredThumbnailCatchupKickoff
@@ -989,8 +1015,12 @@ fn message_event_label(msg: &Message) -> String {
         Message::TimelineScrubChanged(value) => format!("TimelineScrubChanged({value:.3})"),
         Message::TimelineScrubReleased => "TimelineScrubReleased".into(),
         Message::JumpToTimelineAnchor(index) => format!("JumpToTimelineAnchor({index})"),
-        Message::MediaViewportChanged { absolute_y, max_y } => {
-            format!("MediaViewportChanged({absolute_y:.1}/{max_y:.1})")
+        Message::MediaViewportChanged {
+            absolute_y,
+            max_y,
+            viewport_height,
+        } => {
+            format!("MediaViewportChanged({absolute_y:.1}/{max_y:.1}/{viewport_height:.1})")
         }
         Message::KeyboardEvent(_) => "KeyboardEvent".into(),
         Message::HydrateSnapshotComplete(_) => "HydrateSnapshotComplete".into(),
@@ -998,6 +1028,7 @@ fn message_event_label(msg: &Message) -> String {
         Message::ScanJobComplete(_) => "ScanJobComplete".into(),
         Message::ProjectionJobComplete(_) => "ProjectionJobComplete".into(),
         Message::ThumbnailBatchComplete(_) => "ThumbnailBatchComplete".into(),
+        Message::StartupGalleryContinuationKickoff => "StartupGalleryContinuationKickoff".into(),
         Message::DeferredThumbnailCatchupKickoff => "DeferredThumbnailCatchupKickoff".into(),
         Message::OpenMediaById(id) => format!("OpenMediaById({id})"),
         Message::CopyMediaFileById(id) => format!("CopyMediaFileById({id})"),
@@ -1464,6 +1495,7 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
             app.background.startup_ready = false;
             app.background.startup_deferred_gallery_refresh = false;
             app.background.startup_deferred_timeline_refresh = false;
+            app.background.startup_gallery_continuation_due_at = None;
             app.background.startup_reconcile_queued = false;
             tasks.push(start_snapshot_hydrate(app));
 
@@ -1489,6 +1521,9 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
                 return Task::none();
             }
             return request_reconcile(app, BackgroundWorkReason::UserOrSystem);
+        }
+        Message::StartupGalleryContinuationKickoff => {
+            return start_startup_gallery_continuation(app);
         }
         Message::FilesystemChanged => {
             return request_reconcile(app, BackgroundWorkReason::FilesystemWatch);
@@ -1591,7 +1626,13 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
         Message::JumpToTimelineAnchor(index) => {
             return jump_to_timeline_anchor(app, index);
         }
-        Message::MediaViewportChanged { absolute_y, max_y } => {
+        Message::MediaViewportChanged {
+            absolute_y,
+            max_y,
+            viewport_height,
+        } => {
+            app.media_scroll_absolute_y = absolute_y.max(0.0);
+            app.media_viewport_height = viewport_height.max(0.0);
             sync_timeline_scrub_from_viewport(app, absolute_y, max_y);
         }
         Message::KeyboardEvent(event) => {
@@ -1935,7 +1976,10 @@ fn projection_refresh_policy(
         return ProjectionRefreshPolicy::CurrentSurface;
     }
     if matches!(reason, BackgroundWorkReason::FilesystemWatch)
-        || matches!(trigger, "route_switch" | "filter_change" | "search_query")
+        || matches!(
+            trigger,
+            "route_switch" | "filter_change" | "search_query" | "startup_continuation"
+        )
     {
         ProjectionRefreshPolicy::CurrentSurface
     } else {
@@ -2329,18 +2373,13 @@ fn view(app: &Librapix) -> Element<'_, Message> {
         .direction(scrollable::Direction::Vertical(
             scrollable::Scrollbar::default().spacing(MEDIA_SCROLLBAR_SPACING),
         ))
+        .on_scroll(|viewport| Message::MediaViewportChanged {
+            absolute_y: viewport.absolute_offset().y,
+            max_y: (viewport.content_bounds().height - viewport.bounds().height).max(0.0),
+            viewport_height: viewport.bounds().height.max(0.0),
+        })
         .height(Length::Fill);
-    let media_scrollable: Element<'_, Message> =
-        if matches!(app.state.active_route, Route::Timeline) {
-            base_media_scrollable
-                .on_scroll(|viewport| Message::MediaViewportChanged {
-                    absolute_y: viewport.absolute_offset().y,
-                    max_y: (viewport.content_bounds().height - viewport.bounds().height).max(0.0),
-                })
-                .into()
-        } else {
-            base_media_scrollable.into()
-        };
+    let media_scrollable: Element<'_, Message> = base_media_scrollable.into();
     let media_body: Element<'_, Message> = if matches!(app.state.active_route, Route::Timeline) {
         row![
             container(media_scrollable)
@@ -2510,7 +2549,12 @@ fn render_media_panel(app: &Librapix) -> (Element<'_, Message>, Element<'_, Mess
 
             column![
                 search_header,
-                render_justified_gallery(&app.search_items, app.state.selected_media_id),
+                render_justified_gallery(
+                    &app.search_items,
+                    app.state.selected_media_id,
+                    app.media_scroll_absolute_y,
+                    app.media_viewport_height,
+                ),
             ]
             .spacing(SPACE_SM)
             .into()
@@ -2532,8 +2576,18 @@ fn render_media_panel(app: &Librapix) -> (Element<'_, Message>, Element<'_, Mess
             .into()
     } else {
         match app.state.active_route {
-            Route::Gallery => render_justified_gallery(browse_items, app.state.selected_media_id),
-            Route::Timeline => render_timeline_view(browse_items, app.state.selected_media_id),
+            Route::Gallery => render_justified_gallery(
+                browse_items,
+                app.state.selected_media_id,
+                app.media_scroll_absolute_y,
+                app.media_viewport_height,
+            ),
+            Route::Timeline => render_timeline_view(
+                browse_items,
+                app.state.selected_media_id,
+                app.media_scroll_absolute_y,
+                app.media_viewport_height,
+            ),
         }
     };
 
@@ -2544,9 +2598,83 @@ fn render_media_panel(app: &Librapix) -> (Element<'_, Message>, Element<'_, Mess
     (header, scrollable_content)
 }
 
+#[derive(Debug, Clone, Copy)]
+struct JustifiedRowLayout {
+    start: usize,
+    end: usize,
+    height: f32,
+}
+
+fn build_justified_row_layouts(
+    items: &[&BrowseItem],
+    available_width: f32,
+) -> Vec<JustifiedRowLayout> {
+    let mut layouts = Vec::new();
+    let gap = GALLERY_GAP as f32;
+    let mut row_start = 0;
+
+    while row_start < items.len() {
+        let mut ar_sum = 0.0f32;
+        let mut row_end = row_start;
+
+        while row_end < items.len() {
+            ar_sum += items[row_end].aspect_ratio;
+            row_end += 1;
+            let n_gaps = (row_end - row_start).saturating_sub(1) as f32;
+            let row_h = (available_width - gap * n_gaps) / ar_sum;
+            if row_h <= TARGET_ROW_HEIGHT {
+                break;
+            }
+        }
+
+        let n_gaps = (row_end - row_start).saturating_sub(1) as f32;
+        let row_height = ((available_width - gap * n_gaps) / ar_sum).clamp(100.0, MAX_ROW_HEIGHT);
+        layouts.push(JustifiedRowLayout {
+            start: row_start,
+            end: row_end,
+            height: row_height,
+        });
+        row_start = row_end;
+    }
+
+    layouts
+}
+
+fn log_large_surface_render_once(
+    surface: &str,
+    total_items: usize,
+    total_rows: usize,
+    visible_rows: usize,
+    viewport_absolute_y: f32,
+    viewport_height: f32,
+) {
+    if total_items < 1_000 {
+        return;
+    }
+
+    let signature = format!(
+        "{surface}:{total_items}:{total_rows}:{visible_rows}:{:.0}:{:.0}",
+        viewport_absolute_y, viewport_height
+    );
+    let seen = LARGE_SURFACE_RENDER_LOGS.get_or_init(|| Mutex::new(HashSet::new()));
+    let mut seen = seen.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if !seen.insert(signature) {
+        return;
+    }
+
+    startup_log::log_info(
+        "interaction.surface_render.window",
+        &format!(
+            "surface={surface} total_items={total_items} total_rows={total_rows} visible_rows={visible_rows} viewport_y={viewport_absolute_y:.1} viewport_height={viewport_height:.1}"
+        ),
+    );
+}
+
 fn render_justified_gallery<'a>(
     items: &'a [BrowseItem],
     selected_id: Option<i64>,
+    viewport_absolute_y: f32,
+    viewport_height: f32,
 ) -> Element<'a, Message> {
     let media: Vec<&BrowseItem> = items.iter().filter(|i| !i.is_group_header).collect();
     if media.is_empty() {
@@ -2554,39 +2682,68 @@ fn render_justified_gallery<'a>(
     }
 
     responsive(move |size: Size| {
-        let available_width = size.width;
-        let gap = GALLERY_GAP as f32;
-        let mut grid = column![].spacing(GALLERY_GAP);
-        let mut row_start = 0;
+        let layouts = build_justified_row_layouts(&media, size.width);
+        let viewport_height = if viewport_height > 0.0 {
+            viewport_height
+        } else {
+            size.height.clamp(600.0, 900.0)
+        };
+        let window_top = (viewport_absolute_y - MEDIA_VIRTUAL_OVERSCAN_PX).max(0.0);
+        let window_bottom = viewport_absolute_y + viewport_height + MEDIA_VIRTUAL_OVERSCAN_PX;
+        let mut grid = column![];
+        let mut pending_spacer = 0.0f32;
+        let mut cursor_y = 0.0f32;
+        let mut visible_rows = 0usize;
 
-        while row_start < media.len() {
-            let mut ar_sum = 0.0f32;
-            let mut row_end = row_start;
+        for (index, layout) in layouts.iter().enumerate() {
+            let row_top = cursor_y;
+            let row_bottom = row_top + layout.height;
+            let gap_after = if index + 1 < layouts.len() {
+                GALLERY_GAP as f32
+            } else {
+                0.0
+            };
+            let segment_height = layout.height + gap_after;
+            let intersects_window = row_bottom >= window_top && row_top <= window_bottom;
 
-            while row_end < media.len() {
-                ar_sum += media[row_end].aspect_ratio;
-                row_end += 1;
-                let n_gaps = (row_end - row_start).saturating_sub(1) as f32;
-                let row_h = (available_width - gap * n_gaps) / ar_sum;
-                if row_h <= TARGET_ROW_HEIGHT {
-                    break;
-                }
+            if !intersects_window {
+                pending_spacer += segment_height;
+                cursor_y += segment_height;
+                continue;
             }
 
-            let n = row_end - row_start;
-            let n_gaps = n.saturating_sub(1) as f32;
-            let row_height =
-                ((available_width - gap * n_gaps) / ar_sum).clamp(100.0, MAX_ROW_HEIGHT);
+            if pending_spacer > 0.0 {
+                grid = grid.push(Space::new().height(Length::Fixed(pending_spacer)));
+                pending_spacer = 0.0;
+            }
 
             let mut row_widget = row![].spacing(GALLERY_GAP);
-            for item in &media[row_start..row_end] {
+            for item in &media[layout.start..layout.end] {
                 let portion = (item.aspect_ratio * 1000.0).max(1.0) as u16;
-                let card = render_media_card(item, selected_id == Some(item.media_id), row_height);
+                let card =
+                    render_media_card(item, selected_id == Some(item.media_id), layout.height);
                 row_widget = row_widget.push(container(card).width(Length::FillPortion(portion)));
             }
+            visible_rows = visible_rows.saturating_add(1);
             grid = grid.push(row_widget);
-            row_start = row_end;
+            if gap_after > 0.0 {
+                grid = grid.push(Space::new().height(Length::Fixed(gap_after)));
+            }
+            cursor_y += segment_height;
         }
+
+        if pending_spacer > 0.0 {
+            grid = grid.push(Space::new().height(Length::Fixed(pending_spacer)));
+        }
+
+        log_large_surface_render_once(
+            "gallery",
+            media.len(),
+            layouts.len(),
+            visible_rows,
+            viewport_absolute_y,
+            viewport_height,
+        );
 
         grid.into()
     })
@@ -2677,15 +2834,72 @@ fn compute_browse_stats(items: &[BrowseItem]) -> BrowseStats {
 fn render_timeline_view<'a>(
     items: &'a [BrowseItem],
     selected_id: Option<i64>,
+    viewport_absolute_y: f32,
+    viewport_height: f32,
 ) -> Element<'a, Message> {
-    let mut sections = column![].spacing(SPACE_MD);
-    let mut i = 0;
-    let limit = items.len();
+    responsive(move |size: Size| {
+        let viewport_height = if viewport_height > 0.0 {
+            viewport_height
+        } else {
+            size.height.clamp(600.0, 900.0)
+        };
+        let window_top = (viewport_absolute_y - MEDIA_VIRTUAL_OVERSCAN_PX).max(0.0);
+        let window_bottom = viewport_absolute_y + viewport_height + MEDIA_VIRTUAL_OVERSCAN_PX;
+        let mut sections = column![];
+        let mut pending_spacer = 0.0f32;
+        let mut cursor_y = 0.0f32;
+        let mut i = 0usize;
+        let limit = items.len();
+        let mut visible_rows = 0usize;
 
-    while i < limit {
-        if items[i].is_group_header {
+        while i < limit {
+            if !items[i].is_group_header {
+                i += 1;
+                continue;
+            }
+
             let header_item = &items[i];
             i += 1;
+            let group_start = i;
+            while i < limit && !items[i].is_group_header {
+                i += 1;
+            }
+
+            let group_media = items[group_start..i].iter().collect::<Vec<_>>();
+            let row_layouts = build_justified_row_layouts(&group_media, size.width);
+            let rows_height = row_layouts
+                .iter()
+                .enumerate()
+                .map(|(index, layout)| {
+                    layout.height
+                        + if index + 1 < row_layouts.len() {
+                            GALLERY_GAP as f32
+                        } else {
+                            0.0
+                        }
+                })
+                .sum::<f32>();
+            let body_spacing = if row_layouts.is_empty() {
+                0.0
+            } else {
+                SPACE_XS as f32
+            };
+            let section_gap = if i < limit { SPACE_MD as f32 } else { 0.0 };
+            let section_height = TIMELINE_GROUP_HEADER_HEIGHT + body_spacing + rows_height;
+            let section_top = cursor_y;
+            let section_bottom = section_top + section_height;
+            let intersects_window = section_bottom >= window_top && section_top <= window_bottom;
+
+            if !intersects_window {
+                pending_spacer += section_height + section_gap;
+                cursor_y += section_height + section_gap;
+                continue;
+            }
+
+            if pending_spacer > 0.0 {
+                sections = sections.push(Space::new().height(Length::Fixed(pending_spacer)));
+                pending_spacer = 0.0;
+            }
 
             let count_chips: Element<'_, Message> = if let (Some(img), Some(vid)) =
                 (header_item.group_image_count, header_item.group_video_count)
@@ -2726,65 +2940,51 @@ fn render_timeline_view<'a>(
                 .align_y(iced::Alignment::Center),
             )
             .padding([SPACE_SM as u16, 0]);
+            sections = sections.push(group_header);
 
-            let mut group_media: Vec<&BrowseItem> = Vec::new();
-            while i < limit && !items[i].is_group_header {
-                group_media.push(&items[i]);
-                i += 1;
+            if !row_layouts.is_empty() {
+                sections = sections.push(Space::new().height(Length::Fixed(SPACE_XS as f32)));
             }
 
-            if group_media.is_empty() {
-                sections = sections.push(group_header);
-                continue;
-            }
-
-            let group_grid: Element<'_, Message> = responsive(move |size: Size| {
-                let available_width = size.width;
-                let gap = GALLERY_GAP as f32;
-                let mut grid = column![].spacing(GALLERY_GAP);
-                let mut row_start = 0;
-
-                while row_start < group_media.len() {
-                    let mut ar_sum = 0.0f32;
-                    let mut row_end = row_start;
-
-                    while row_end < group_media.len() {
-                        ar_sum += group_media[row_end].aspect_ratio;
-                        row_end += 1;
-                        let n_gaps = (row_end - row_start).saturating_sub(1) as f32;
-                        let row_h = (available_width - gap * n_gaps) / ar_sum;
-                        if row_h <= TARGET_ROW_HEIGHT {
-                            break;
-                        }
-                    }
-
-                    let n_gaps = (row_end - row_start).saturating_sub(1) as f32;
-                    let row_height =
-                        ((available_width - gap * n_gaps) / ar_sum).clamp(100.0, MAX_ROW_HEIGHT);
-
-                    let mut row_widget = row![].spacing(GALLERY_GAP);
-                    for item in &group_media[row_start..row_end] {
-                        let portion = (item.aspect_ratio * 1000.0).max(1.0) as u16;
-                        let card =
-                            render_media_card(item, selected_id == Some(item.media_id), row_height);
-                        row_widget =
-                            row_widget.push(container(card).width(Length::FillPortion(portion)));
-                    }
-                    grid = grid.push(row_widget);
-                    row_start = row_end;
+            for (index, layout) in row_layouts.iter().enumerate() {
+                let mut row_widget = row![].spacing(GALLERY_GAP);
+                for item in &group_media[layout.start..layout.end] {
+                    let portion = (item.aspect_ratio * 1000.0).max(1.0) as u16;
+                    let card =
+                        render_media_card(item, selected_id == Some(item.media_id), layout.height);
+                    row_widget =
+                        row_widget.push(container(card).width(Length::FillPortion(portion)));
                 }
+                visible_rows = visible_rows.saturating_add(1);
+                sections = sections.push(row_widget);
+                if index + 1 < row_layouts.len() {
+                    sections =
+                        sections.push(Space::new().height(Length::Fixed(GALLERY_GAP as f32)));
+                }
+            }
 
-                grid.into()
-            })
-            .into();
-
-            sections = sections.push(column![group_header, group_grid].spacing(SPACE_XS));
-        } else {
-            i += 1;
+            if section_gap > 0.0 {
+                sections = sections.push(Space::new().height(Length::Fixed(section_gap)));
+            }
+            cursor_y += section_height + section_gap;
         }
-    }
 
-    sections.into()
+        if pending_spacer > 0.0 {
+            sections = sections.push(Space::new().height(Length::Fixed(pending_spacer)));
+        }
+
+        log_large_surface_render_once(
+            "timeline",
+            items.iter().filter(|item| !item.is_group_header).count(),
+            visible_rows,
+            visible_rows,
+            viewport_absolute_y,
+            viewport_height,
+        );
+
+        sections.into()
+    })
+    .into()
 }
 
 fn render_timeline_scrubber(app: &Librapix) -> Element<'_, Message> {
@@ -6299,6 +6499,7 @@ fn start_snapshot_hydrate(app: &mut Librapix) -> Task<Message> {
     app.background.deferred_thumbnail_queue.clear();
     app.background.startup_deferred_gallery_refresh = false;
     app.background.startup_deferred_timeline_refresh = false;
+    app.background.startup_gallery_continuation_due_at = None;
     app.background.snapshot_generation = app.background.snapshot_generation.saturating_add(1);
     let generation = app.background.snapshot_generation;
     app.startup_metrics.snapshot_hydrate_started_at = Some(Instant::now());
@@ -6671,6 +6872,96 @@ fn should_skip_startup_projection(app: &Librapix, summary: IndexingSummary) -> b
     }
 
     summary.new_files == 0 && summary.changed_files == 0 && summary.missing_marked == 0
+}
+
+fn schedule_startup_gallery_continuation(app: &mut Librapix, total_items: usize) {
+    if total_items <= app.gallery_items.len() {
+        startup_log::log_info(
+            "startup.gallery_continuation.skipped",
+            &format!(
+                "reason=already_complete rendered_items={} total_items={}",
+                app.gallery_items.len(),
+                total_items,
+            ),
+        );
+        return;
+    }
+    if app.background.startup_gallery_continuation_due_at.is_some() {
+        startup_log::log_info(
+            "startup.gallery_continuation.skipped",
+            &format!(
+                "reason=already_scheduled rendered_items={} total_items={}",
+                app.gallery_items.len(),
+                total_items,
+            ),
+        );
+        return;
+    }
+
+    app.background.startup_deferred_gallery_refresh = true;
+    app.background.startup_gallery_continuation_due_at =
+        Some(Instant::now() + Duration::from_millis(STARTUP_GALLERY_CONTINUATION_DELAY_MS));
+    startup_log::log_info(
+        "startup.gallery_continuation.scheduled",
+        &format!(
+            "rendered_items={} total_items={} due_in_ms={}",
+            app.gallery_items.len(),
+            total_items,
+            STARTUP_GALLERY_CONTINUATION_DELAY_MS,
+        ),
+    );
+}
+
+fn start_startup_gallery_continuation(app: &mut Librapix) -> Task<Message> {
+    let Some(due_at) = app.background.startup_gallery_continuation_due_at else {
+        return Task::none();
+    };
+    if Instant::now() < due_at {
+        return Task::none();
+    }
+
+    app.background.startup_gallery_continuation_due_at = None;
+    if !matches!(app.state.active_route, Route::Gallery) {
+        startup_log::log_info(
+            "startup.gallery_continuation.skipped",
+            &format!(
+                "reason=route_not_gallery route={}",
+                route_name(app.state.active_route)
+            ),
+        );
+        return Task::none();
+    }
+    if !app.state.search_query.trim().is_empty()
+        || app.filter_media_kind.is_some()
+        || app.filter_extension.is_some()
+        || app.filter_tag.is_some()
+        || app.filter_source_root_id.is_some()
+    {
+        startup_log::log_info(
+            "startup.gallery_continuation.skipped",
+            &format!(
+                "reason=non_default_gallery route={} {}",
+                route_name(app.state.active_route),
+                filter_state_summary(app),
+            ),
+        );
+        return Task::none();
+    }
+
+    startup_log::log_info(
+        "startup.gallery_continuation.kickoff",
+        &format!(
+            "route={} rendered_items={} {}",
+            route_name(app.state.active_route),
+            app.gallery_items.len(),
+            filter_state_summary(app),
+        ),
+    );
+    request_projection_refresh_with_context(
+        app,
+        BackgroundWorkReason::UserOrSystem,
+        "startup_continuation",
+    )
 }
 
 fn all_background_work_idle(app: &Librapix) -> bool {
@@ -7855,17 +8146,21 @@ fn apply_scan_job_result(app: &mut Librapix, result: ScanJobResult) -> Task<Mess
     if let Some(summary) = indexing_summary
         && should_skip_startup_projection(app, summary)
     {
+        let read_model_count = summary.read_model_count;
         app.background.startup_deferred_timeline_refresh = true;
+        schedule_startup_gallery_continuation(app, read_model_count);
         startup_log::log_info(
             "startup.projection.skipped",
             &format!(
-                "reason=unchanged_snapshot_gallery generation={} route={:?} new_files={} changed_files={} missing_marked={} gallery_items={} timeline_deferred=true",
+                "reason=unchanged_snapshot_gallery generation={} route={:?} new_files={} changed_files={} missing_marked={} gallery_items={} gallery_total={} gallery_deferred={} timeline_deferred=true",
                 result.generation,
                 app.state.active_route,
                 summary.new_files,
                 summary.changed_files,
                 summary.missing_marked,
                 app.gallery_items.len(),
+                read_model_count,
+                app.background.startup_deferred_gallery_refresh,
             ),
         );
         return finalize_background_flow(app);
@@ -7958,6 +8253,7 @@ fn apply_projection_job_result(app: &mut Librapix, result: ProjectionJobResult) 
             .replace_gallery_preview(result.gallery_preview_lines);
         app.gallery_items = result.gallery_items;
         app.background.startup_deferred_gallery_refresh = false;
+        app.background.startup_gallery_continuation_due_at = None;
         note_first_usable_gallery(app, "projection");
     }
 
@@ -9394,6 +9690,8 @@ mod tests {
             background: BackgroundCoordinator::default(),
             diagnostics_lines: Vec::new(),
             diagnostics_events: Vec::new(),
+            media_scroll_absolute_y: 0.0,
+            media_viewport_height: 0.0,
             timeline_scrub_value: 0.0,
             timeline_scrubbing: false,
             timeline_scrub_anchor_index: None,
@@ -10028,6 +10326,14 @@ mod tests {
             ProjectionRefreshPolicy::CurrentSurface
         );
         assert_eq!(
+            projection_refresh_policy(
+                &app,
+                BackgroundWorkReason::UserOrSystem,
+                "startup_continuation",
+            ),
+            ProjectionRefreshPolicy::CurrentSurface
+        );
+        assert_eq!(
             projection_refresh_policy(&app, BackgroundWorkReason::FilesystemWatch, "system"),
             ProjectionRefreshPolicy::CurrentSurface
         );
@@ -10111,14 +10417,14 @@ mod tests {
                 scanned_root_ids: vec![1],
                 indexing_summary: Some(IndexingSummary {
                     scanned_roots: 1,
-                    candidate_files: 2,
+                    candidate_files: 5,
                     ignored_entries: 0,
                     unreadable_entries: 0,
                     new_files: 0,
                     changed_files: 0,
                     unchanged_files: 2,
                     missing_marked: 0,
-                    read_model_count: 2,
+                    read_model_count: 5,
                 }),
                 indexing_status: "Indexing complete".to_owned(),
                 error: None,
@@ -10127,9 +10433,26 @@ mod tests {
 
         assert!(!app.background.projection_in_flight);
         assert!(app.background.startup_ready);
+        assert!(app.background.startup_deferred_gallery_refresh);
         assert!(app.background.startup_deferred_timeline_refresh);
+        assert!(app.background.startup_gallery_continuation_due_at.is_some());
         assert!(!app.activity_progress.busy);
         assert_eq!(app.activity_status, "Ready");
+    }
+
+    #[test]
+    fn startup_gallery_continuation_kicks_off_current_surface_projection() {
+        let mut app = test_app();
+        app.background.startup_ready = true;
+        app.background.startup_deferred_gallery_refresh = true;
+        app.background.startup_gallery_continuation_due_at =
+            Some(Instant::now() - Duration::from_millis(1));
+        app.gallery_items = (1..=160).map(browse_item).collect();
+
+        let _ = start_startup_gallery_continuation(&mut app);
+
+        assert!(app.background.projection_in_flight);
+        assert!(app.background.startup_gallery_continuation_due_at.is_none());
     }
 
     #[test]

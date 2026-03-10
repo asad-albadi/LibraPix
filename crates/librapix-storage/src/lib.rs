@@ -1241,6 +1241,18 @@ mod tests {
         std::env::temp_dir().join(unique)
     }
 
+    fn temp_root_path(name: &str) -> PathBuf {
+        let unique = format!(
+            "librapix-storage-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time should be after epoch")
+                .as_nanos()
+        );
+        std::env::temp_dir().join(unique)
+    }
+
     #[test]
     fn opens_and_applies_baseline_migration() {
         let db = temp_db_file("migration");
@@ -1281,13 +1293,13 @@ mod tests {
     fn upsert_source_root_is_idempotent() {
         let db = temp_db_file("sources");
         let storage = Storage::open(&db).expect("database should open");
-        let path = Path::new("/tmp/librapix-library");
+        let path = temp_root_path("library");
 
         storage
-            .upsert_source_root(path)
+            .upsert_source_root(&path)
             .expect("first insert should succeed");
         storage
-            .upsert_source_root(path)
+            .upsert_source_root(&path)
             .expect("second insert should succeed");
 
         let roots = storage.list_source_roots().expect("roots should be listed");
@@ -1302,8 +1314,9 @@ mod tests {
     fn lifecycle_changes_and_reconciliation_work() {
         let db = temp_db_file("lifecycle");
         let storage = Storage::open(&db).expect("database should open");
+        let path = temp_root_path("should-not-exist");
         storage
-            .upsert_source_root(Path::new("/path/that/should/not/exist"))
+            .upsert_source_root(&path)
             .expect("insert should work");
 
         storage
@@ -1327,9 +1340,9 @@ mod tests {
     fn incremental_apply_marks_missing_entries() {
         let db = temp_db_file("incremental");
         let mut storage = Storage::open(&db).expect("database should open");
-        let root = Path::new("/tmp/librapix-incremental-root");
+        let root = temp_root_path("incremental-root");
         storage
-            .upsert_source_root(root)
+            .upsert_source_root(&root)
             .expect("root insert should work");
         let root_id = storage
             .list_source_roots()
@@ -1340,7 +1353,7 @@ mod tests {
 
         let first = vec![IndexedMediaWrite {
             source_root_id: root_id,
-            absolute_path: PathBuf::from("/tmp/librapix-incremental-root/a.png"),
+            absolute_path: root.join("a.png"),
             media_kind: "image".to_owned(),
             file_size_bytes: 10,
             modified_unix_seconds: Some(100),
@@ -1368,8 +1381,9 @@ mod tests {
     fn refresh_source_root_statistics_persists_expected_totals() {
         let db = temp_db_file("root-stats");
         let mut storage = Storage::open(&db).expect("database should open");
+        let root = temp_root_path("root-stats");
         storage
-            .upsert_source_root(Path::new("/tmp/librapix-root-stats"))
+            .upsert_source_root(&root)
             .expect("root insert should work");
         let root_id = storage
             .list_source_roots()
@@ -1383,7 +1397,7 @@ mod tests {
                 &[
                     IndexedMediaWrite {
                         source_root_id: root_id,
-                        absolute_path: PathBuf::from("/tmp/librapix-root-stats/a.png"),
+                        absolute_path: root.join("a.png"),
                         media_kind: "image".to_owned(),
                         file_size_bytes: 100,
                         modified_unix_seconds: Some(1000),
@@ -1393,7 +1407,7 @@ mod tests {
                     },
                     IndexedMediaWrite {
                         source_root_id: root_id,
-                        absolute_path: PathBuf::from("/tmp/librapix-root-stats/b.mp4"),
+                        absolute_path: root.join("b.mp4"),
                         media_kind: "video".to_owned(),
                         file_size_bytes: 300,
                         modified_unix_seconds: Some(2000),
@@ -1409,7 +1423,7 @@ mod tests {
             .apply_incremental_index(
                 &[IndexedMediaWrite {
                     source_root_id: root_id,
-                    absolute_path: PathBuf::from("/tmp/librapix-root-stats/a.png"),
+                    absolute_path: root.join("a.png"),
                     media_kind: "image".to_owned(),
                     file_size_bytes: 100,
                     modified_unix_seconds: Some(1000),
@@ -1445,8 +1459,9 @@ mod tests {
     fn read_model_search_matches_tag() {
         let db = temp_db_file("read-model-tags");
         let mut storage = Storage::open(&db).expect("database should open");
+        let root = temp_root_path("read-model");
         storage
-            .upsert_source_root(Path::new("/tmp/librapix-read-model"))
+            .upsert_source_root(&root)
             .expect("root insert should work");
         let root_id = storage
             .list_source_roots()
@@ -1457,7 +1472,7 @@ mod tests {
 
         let writes = vec![IndexedMediaWrite {
             source_root_id: root_id,
-            absolute_path: PathBuf::from("/tmp/librapix-read-model/a.png"),
+            absolute_path: root.join("a.png"),
             media_kind: "image".to_owned(),
             file_size_bytes: 12,
             modified_unix_seconds: Some(200),
@@ -1484,8 +1499,9 @@ mod tests {
     fn attach_and_detach_tag_by_name() {
         let db = temp_db_file("tag-attach-detach");
         let mut storage = Storage::open(&db).expect("database should open");
+        let root = temp_root_path("tag-root");
         storage
-            .upsert_source_root(Path::new("/tmp/librapix-tag-root"))
+            .upsert_source_root(&root)
             .expect("root insert should work");
         let root_id = storage
             .list_source_roots()
@@ -1497,7 +1513,7 @@ mod tests {
             .apply_incremental_index(
                 &[IndexedMediaWrite {
                     source_root_id: root_id,
-                    absolute_path: PathBuf::from("/tmp/librapix-tag-root/a.png"),
+                    absolute_path: root.join("a.png"),
                     media_kind: "image".to_owned(),
                     file_size_bytes: 1,
                     modified_unix_seconds: Some(1),
@@ -1540,8 +1556,9 @@ mod tests {
     fn list_all_media_read_models_does_not_truncate() {
         let db = temp_db_file("read-model-all");
         let mut storage = Storage::open(&db).expect("database should open");
+        let root = temp_root_path("read-model-all");
         storage
-            .upsert_source_root(Path::new("/tmp/librapix-read-model-all"))
+            .upsert_source_root(&root)
             .expect("root insert should work");
         let root_id = storage
             .list_source_roots()
@@ -1553,7 +1570,7 @@ mod tests {
         let writes = vec![
             IndexedMediaWrite {
                 source_root_id: root_id,
-                absolute_path: PathBuf::from("/tmp/librapix-read-model-all/new-image.png"),
+                absolute_path: root.join("new-image.png"),
                 media_kind: "image".to_owned(),
                 file_size_bytes: 12,
                 modified_unix_seconds: Some(300),
@@ -1563,7 +1580,7 @@ mod tests {
             },
             IndexedMediaWrite {
                 source_root_id: root_id,
-                absolute_path: PathBuf::from("/tmp/librapix-read-model-all/old-video.mp4"),
+                absolute_path: root.join("old-video.mp4"),
                 media_kind: "video".to_owned(),
                 file_size_bytes: 14,
                 modified_unix_seconds: Some(100),
@@ -1573,7 +1590,7 @@ mod tests {
             },
             IndexedMediaWrite {
                 source_root_id: root_id,
-                absolute_path: PathBuf::from("/tmp/librapix-read-model-all/mid-image.jpg"),
+                absolute_path: root.join("mid-image.jpg"),
                 media_kind: "image".to_owned(),
                 file_size_bytes: 10,
                 modified_unix_seconds: Some(200),
@@ -1605,8 +1622,9 @@ mod tests {
     fn refresh_catalog_materializes_normalized_fields() {
         let db = temp_db_file("catalog-refresh");
         let mut storage = Storage::open(&db).expect("database should open");
+        let root_path = temp_root_path("catalog-root");
         storage
-            .upsert_source_root(Path::new("/tmp/librapix-catalog-root"))
+            .upsert_source_root(&root_path)
             .expect("root insert should work");
         let root = storage
             .list_source_roots()
@@ -1622,7 +1640,7 @@ mod tests {
             .apply_incremental_index(
                 &[IndexedMediaWrite {
                     source_root_id: root.id,
-                    absolute_path: PathBuf::from("/tmp/librapix-catalog-root/Boss Fight.PNG"),
+                    absolute_path: root_path.join("Boss Fight.PNG"),
                     media_kind: "image".to_owned(),
                     file_size_bytes: 42,
                     modified_unix_seconds: Some(1_710_000_000),
@@ -1672,8 +1690,9 @@ mod tests {
     fn derived_artifact_round_trip_filters_by_variant_and_media() {
         let db = temp_db_file("derived-artifacts");
         let mut storage = Storage::open(&db).expect("database should open");
+        let root = temp_root_path("derived-root");
         storage
-            .upsert_source_root(Path::new("/tmp/librapix-derived-root"))
+            .upsert_source_root(&root)
             .expect("root insert should work");
         let root_id = storage
             .list_source_roots()
@@ -1685,7 +1704,7 @@ mod tests {
             .apply_incremental_index(
                 &[IndexedMediaWrite {
                     source_root_id: root_id,
-                    absolute_path: PathBuf::from("/tmp/librapix-derived-root/a.png"),
+                    absolute_path: root.join("a.png"),
                     media_kind: "image".to_owned(),
                     file_size_bytes: 10,
                     modified_unix_seconds: Some(10),

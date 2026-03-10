@@ -2,6 +2,7 @@
 
 mod assets;
 mod format;
+mod startup_log;
 mod ui;
 
 use chrono::Local;
@@ -32,7 +33,7 @@ use librapix_search::{FuzzySearchStrategy, SearchDocument, SearchQuery, SearchSt
 use librapix_storage::{
     CatalogMediaRecord, DerivedArtifactKind, DerivedArtifactRecord, DerivedArtifactStatus,
     IndexedMediaWrite, IndexedMetadataStatus, SourceRootLifecycle, SourceRootStatisticsRecord,
-    Storage, TagKind,
+    Storage, StorageOpenMetrics, TagKind,
 };
 use librapix_thumbnails::{ThumbnailOutcome, ensure_image_thumbnail, ensure_video_thumbnail};
 use notify::{EventKind, RecursiveMode, Watcher};
@@ -46,6 +47,8 @@ use std::time::{Duration, Instant, SystemTime};
 use ui::*;
 
 fn main() -> iced::Result {
+    let _ = startup_log::init_process_logging();
+    startup_log::log_info("app.launch.start", "startup requested");
     iced::application(init, update, view)
         .title(title)
         .theme(theme)
@@ -181,6 +184,18 @@ struct ActivityProgressState {
     last_error: Option<String>,
 }
 
+#[derive(Debug, Clone, Default)]
+struct StartupFlowMetrics {
+    snapshot_hydrate_started_at: Option<Instant>,
+    snapshot_apply_started_at: Option<Instant>,
+    reconcile_started_at: Option<Instant>,
+    projection_started_at: Option<Instant>,
+    startup_thumbnail_started_at: Option<Instant>,
+    deferred_thumbnail_started_at: Option<Instant>,
+    first_usable_gallery_recorded: bool,
+    startup_ready_recorded: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ActivityIndicatorMode {
     Idle,
@@ -192,6 +207,7 @@ enum ActivityIndicatorMode {
 struct SnapshotHydrateInput {
     generation: u64,
     database_file: PathBuf,
+    configured_library_roots: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -200,6 +216,8 @@ struct SnapshotHydrateResult {
     roots: Vec<LibraryRootView>,
     ignore_rules: Vec<librapix_storage::IgnoreRuleRecord>,
     snapshot: Option<PersistedProjectionSnapshot>,
+    snapshot_bytes: usize,
+    snapshot_version: Option<u32>,
     snapshot_error: Option<String>,
 }
 
@@ -207,12 +225,9 @@ struct SnapshotHydrateResult {
 struct PendingSnapshotApply {
     generation: u64,
     gallery_total: usize,
-    timeline_total: usize,
+    gallery_total_items: usize,
     gallery_loaded: usize,
-    timeline_loaded: usize,
     gallery_iter: std::vec::IntoIter<BrowseItem>,
-    timeline_iter: std::vec::IntoIter<BrowseItem>,
-    timeline_anchors: Vec<TimelineAnchor>,
     available_filter_tags: Vec<String>,
 }
 
@@ -343,23 +358,11 @@ struct BackgroundCoordinator {
     thumbnail_mode: ThumbnailWorkMode,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct PersistedTimelineAnchor {
-    group_index: usize,
-    label: String,
-    year: Option<i32>,
-    month: Option<u32>,
-    day: Option<u32>,
-    item_count: usize,
-    normalized_position: f32,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct PersistedProjectionSnapshot {
     version: u32,
     gallery_items: Vec<BrowseItem>,
-    timeline_items: Vec<BrowseItem>,
-    timeline_anchors: Vec<PersistedTimelineAnchor>,
+    gallery_total_items: usize,
     available_filter_tags: Vec<String>,
     updated_unix_seconds: i64,
 }
@@ -400,6 +403,7 @@ struct Librapix {
     i18n: Translator,
     theme_preference: ThemePreference,
     runtime: RuntimeContext,
+    startup_log_path: Option<PathBuf>,
     thumbnail_status: String,
     details_tag_input: String,
     details_lines: Vec<String>,
@@ -456,6 +460,7 @@ struct Librapix {
     last_successful_update_check: Option<SystemTime>,
     last_manual_update_check: Option<SystemTime>,
     last_auto_update_check_attempt: Option<SystemTime>,
+    startup_metrics: StartupFlowMetrics,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -552,12 +557,13 @@ const SNAPSHOT_APPLY_TICK_INTERVAL: Duration = Duration::from_millis(12);
 const DEFERRED_THUMBNAIL_DELAY_MS: u64 = 800;
 const DEFERRED_THUMBNAIL_TICK_INTERVAL: Duration = Duration::from_millis(140);
 const SNAPSHOT_APPLY_CHUNK_SIZE: usize = 240;
+const STARTUP_SNAPSHOT_GALLERY_LIMIT: usize = 160;
 const THUMBNAIL_BATCH_SIZE: usize = 24;
 const BACKGROUND_THUMBNAIL_BATCH_SIZE: usize = 8;
 const STARTUP_THUMBNAIL_PRIORITY_LIMIT: usize = 96;
 const STARTUP_CACHE_WARM_LIMIT: usize = 160;
 const PROJECTION_SNAPSHOT_KEY: &str = "default";
-const PROJECTION_SNAPSHOT_VERSION: u32 = 1;
+const PROJECTION_SNAPSHOT_VERSION: u32 = 2;
 const AUTO_UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 const MANUAL_UPDATE_CHECK_COOLDOWN: Duration = Duration::from_secs(5 * 60);
 
@@ -566,23 +572,23 @@ struct RuntimeContext {
     database_file: PathBuf,
     thumbnails_dir: PathBuf,
     config_file: PathBuf,
+    configured_library_roots: Vec<PathBuf>,
 }
 
 impl Default for Librapix {
     fn default() -> Self {
         let bootstrap = bootstrap_runtime();
         let mut app = Self {
-            state: AppState {
-                library_roots: bootstrap.roots,
-                ..AppState::default()
-            },
+            state: AppState::default(),
             i18n: Translator::new(bootstrap.locale),
             theme_preference: bootstrap.theme_preference,
             runtime: RuntimeContext {
                 database_file: bootstrap.database_file,
                 thumbnails_dir: bootstrap.thumbnails_dir,
                 config_file: bootstrap.config_file,
+                configured_library_roots: bootstrap.configured_library_roots,
             },
+            startup_log_path: startup_log::active_log_path(),
             thumbnail_status: String::new(),
             details_tag_input: String::new(),
             details_lines: Vec::new(),
@@ -639,6 +645,7 @@ impl Default for Librapix {
             last_successful_update_check: None,
             last_manual_update_check: None,
             last_auto_update_check_attempt: None,
+            startup_metrics: StartupFlowMetrics::default(),
         };
         refresh_ignore_rules(&mut app);
         set_activity_ready(&mut app);
@@ -1099,13 +1106,8 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
             app.background.startup_ready = false;
             app.background.startup_deferred_gallery_refresh = false;
             app.background.startup_deferred_timeline_refresh = false;
+            app.background.startup_reconcile_queued = false;
             tasks.push(start_snapshot_hydrate(app));
-            if !app.state.library_roots.is_empty() {
-                app.background.startup_reconcile_queued = true;
-            } else {
-                app.background.startup_ready = true;
-                set_activity_ready(app);
-            }
 
             if !matches!(app.update_check_state, UpdateCheckState::Checking) {
                 tasks.push(start_update_check(app, UpdateCheckTrigger::Startup));
@@ -1117,9 +1119,10 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
             return Task::batch(tasks);
         }
         Message::StartupReconcileKickoff => {
-            if let Some(due_at) = app.background.startup_reconcile_due_at
-                && Instant::now() < due_at
-            {
+            let Some(due_at) = app.background.startup_reconcile_due_at else {
+                return Task::none();
+            };
+            if Instant::now() < due_at {
                 return Task::none();
             }
             app.background.startup_reconcile_due_at = None;
@@ -1402,9 +1405,83 @@ fn set_activity_ready(app: &mut Librapix) {
     app.activity_progress.last_error = None;
 }
 
+fn log_storage_open_metrics(context: &str, database_file: &Path, metrics: &StorageOpenMetrics) {
+    startup_log::log_duration(
+        "storage.open.complete",
+        metrics.total_duration,
+        &format!(
+            "context={context} path={} existed={} connection_open_ms={} pragma_ms={} migration_ms={} migration_from={} migration_to={} applied_migrations={}",
+            database_file.display(),
+            metrics.file_exists,
+            metrics.connection_open_duration.as_millis(),
+            metrics.pragma_duration.as_millis(),
+            metrics.migration.total_duration.as_millis(),
+            metrics.migration.previous_version,
+            metrics.migration.final_version,
+            metrics.migration.applied.len(),
+        ),
+    );
+    for migration in &metrics.migration.applied {
+        startup_log::log_duration(
+            "storage.migration.applied",
+            migration.duration,
+            &format!(
+                "context={context} version={} name={}",
+                migration.version, migration.name
+            ),
+        );
+    }
+}
+
+fn extract_snapshot_version(payload: &str) -> Option<u32> {
+    let version_key = "\"version\"";
+    let start = payload.find(version_key)?;
+    let rest = &payload[start + version_key.len()..];
+    let colon_index = rest.find(':')?;
+    let digits = rest[colon_index + 1..]
+        .chars()
+        .skip_while(|ch| ch.is_whitespace())
+        .take_while(|ch| ch.is_ascii_digit())
+        .collect::<String>();
+    digits.parse().ok()
+}
+
+fn note_first_usable_gallery(app: &mut Librapix, source: &str) {
+    if app.startup_metrics.first_usable_gallery_recorded || app.gallery_items.is_empty() {
+        return;
+    }
+
+    app.startup_metrics.first_usable_gallery_recorded = true;
+    let elapsed_ms = startup_log::elapsed_since_launch()
+        .map(|duration| duration.as_millis())
+        .unwrap_or_default();
+    startup_log::log_info(
+        "startup.first_usable_gallery",
+        &format!(
+            "source={source} items={} elapsed_ms={elapsed_ms}",
+            app.gallery_items.len()
+        ),
+    );
+}
+
 fn mark_startup_ready(app: &mut Librapix) {
     app.background.startup_ready = true;
     set_activity_ready(app);
+    if !app.startup_metrics.startup_ready_recorded {
+        app.startup_metrics.startup_ready_recorded = true;
+        let elapsed_ms = startup_log::elapsed_since_launch()
+            .map(|duration| duration.as_millis())
+            .unwrap_or_default();
+        startup_log::log_info(
+            "startup.ready",
+            &format!(
+                "elapsed_ms={elapsed_ms} deferred_thumbnail_backlog={} gallery_items={} timeline_items={}",
+                app.background.deferred_thumbnail_queue.len(),
+                app.gallery_items.len(),
+                app.timeline_items.len(),
+            ),
+        );
+    }
 }
 
 fn projection_refresh_policy(app: &Librapix) -> ProjectionRefreshPolicy {
@@ -3943,23 +4020,34 @@ struct BootstrapRuntime {
     database_file: PathBuf,
     thumbnails_dir: PathBuf,
     config_file: PathBuf,
-    roots: Vec<LibraryRootView>,
+    configured_library_roots: Vec<PathBuf>,
 }
 
 fn bootstrap_runtime() -> BootstrapRuntime {
+    let bootstrap_started_at = Instant::now();
     let mut runtime = BootstrapRuntime {
         locale: Locale::EnUs,
         theme_preference: ThemePreference::System,
         database_file: PathBuf::from("librapix.db"),
         thumbnails_dir: PathBuf::from("thumbnails"),
         config_file: PathBuf::new(),
-        roots: Vec::new(),
+        configured_library_roots: Vec::new(),
     };
 
+    startup_log::log_info("bootstrap.config_load.start", "");
+    let config_started_at = Instant::now();
     let loaded = match load_or_create() {
         Ok(config) => config,
-        Err(_) => return runtime,
+        Err(error) => {
+            startup_log::log_error("bootstrap.config_load.failed", &error.to_string());
+            return runtime;
+        }
     };
+    startup_log::log_duration(
+        "bootstrap.config_load.end",
+        config_started_at.elapsed(),
+        &format!("config_file={}", loaded.paths.config_file.display()),
+    );
 
     runtime.locale = match loaded.config.locale {
         LocalePreference::EnUs => Locale::EnUs,
@@ -3980,24 +4068,22 @@ fn bootstrap_runtime() -> BootstrapRuntime {
         .clone()
         .unwrap_or(loaded.paths.thumbnails_dir);
     runtime.config_file = loaded.paths.config_file.clone();
-
-    let storage = match Storage::open(&database_file) {
-        Ok(storage) => storage,
-        Err(_) => return runtime,
-    };
-
-    let existing_roots = storage.list_source_roots().unwrap_or_default();
-    if existing_roots.is_empty() {
-        for source in &loaded.config.library_source_roots {
-            let _ = storage.upsert_source_root(&source.path);
-        }
-    }
-    let _ = storage.ensure_default_ignore_rules();
-    let _ = storage.reconcile_source_root_availability();
-
-    runtime.roots = storage
-        .list_source_roots()
-        .map_or_else(|_| Vec::new(), map_roots_from_storage);
+    runtime.configured_library_roots = loaded
+        .config
+        .library_source_roots
+        .into_iter()
+        .map(|source| source.path)
+        .collect();
+    startup_log::log_duration(
+        "bootstrap.complete",
+        bootstrap_started_at.elapsed(),
+        &format!(
+            "database_file={} thumbnails_dir={} configured_roots={}",
+            runtime.database_file.display(),
+            runtime.thumbnails_dir.display(),
+            runtime.configured_library_roots.len(),
+        ),
+    );
     runtime
 }
 
@@ -5357,8 +5443,6 @@ fn thumbnail_status_text(
 
 fn snapshot_payload_from_projection(
     gallery_items: &[BrowseItem],
-    timeline_items: &[BrowseItem],
-    timeline_anchors: &[TimelineAnchor],
     available_filter_tags: &[String],
 ) -> Option<String> {
     let updated_unix_seconds = SystemTime::now()
@@ -5368,20 +5452,12 @@ fn snapshot_payload_from_projection(
         .unwrap_or_default();
     let payload = PersistedProjectionSnapshot {
         version: PROJECTION_SNAPSHOT_VERSION,
-        gallery_items: gallery_items.to_vec(),
-        timeline_items: timeline_items.to_vec(),
-        timeline_anchors: timeline_anchors
+        gallery_items: gallery_items
             .iter()
-            .map(|anchor| PersistedTimelineAnchor {
-                group_index: anchor.group_index,
-                label: anchor.label.clone(),
-                year: anchor.year,
-                month: anchor.month,
-                day: anchor.day,
-                item_count: anchor.item_count,
-                normalized_position: anchor.normalized_position,
-            })
+            .take(STARTUP_SNAPSHOT_GALLERY_LIMIT)
+            .cloned()
             .collect(),
+        gallery_total_items: gallery_items.len(),
         available_filter_tags: available_filter_tags.to_vec(),
         updated_unix_seconds,
     };
@@ -5397,15 +5473,28 @@ fn start_snapshot_hydrate(app: &mut Librapix) -> Task<Message> {
     app.background.startup_deferred_timeline_refresh = false;
     app.background.snapshot_generation = app.background.snapshot_generation.saturating_add(1);
     let generation = app.background.snapshot_generation;
+    app.startup_metrics.snapshot_hydrate_started_at = Some(Instant::now());
+    app.startup_metrics.snapshot_apply_started_at = None;
+    app.startup_metrics.reconcile_started_at = None;
+    app.startup_metrics.projection_started_at = None;
+    app.startup_metrics.startup_thumbnail_started_at = None;
+    app.startup_metrics.deferred_thumbnail_started_at = None;
+    app.startup_metrics.first_usable_gallery_recorded = false;
+    app.startup_metrics.startup_ready_recorded = false;
     set_activity_stage(app, TextKey::StageLoadingSnapshotLabel, String::new(), true);
     app.activity_progress.items_done = 0;
     app.activity_progress.items_total = None;
     app.activity_progress.queue_depth = 0;
     app.activity_progress.last_error = None;
+    startup_log::log_info(
+        "startup.snapshot_hydrate.start",
+        &format!("generation={generation}"),
+    );
 
     let input = SnapshotHydrateInput {
         generation,
         database_file: app.runtime.database_file.clone(),
+        configured_library_roots: app.runtime.configured_library_roots.clone(),
     };
     Task::perform(async move { do_snapshot_hydrate(input) }, |result| {
         Message::HydrateSnapshotComplete(Box::new(result))
@@ -5413,39 +5502,170 @@ fn start_snapshot_hydrate(app: &mut Librapix) -> Task<Message> {
 }
 
 fn do_snapshot_hydrate(input: SnapshotHydrateInput) -> SnapshotHydrateResult {
+    let hydrate_started_at = Instant::now();
     let mut out = SnapshotHydrateResult {
         generation: input.generation,
         ..Default::default()
     };
-    let Ok(storage) = Storage::open(&input.database_file) else {
-        return out;
+    let (storage, storage_metrics) = match Storage::open_with_metrics(&input.database_file) {
+        Ok(value) => value,
+        Err(error) => {
+            startup_log::log_error(
+                "startup.snapshot_hydrate.storage_open.failed",
+                &format!(
+                    "generation={} path={} error={error}",
+                    input.generation,
+                    input.database_file.display(),
+                ),
+            );
+            return out;
+        }
     };
+    log_storage_open_metrics("snapshot_hydrate", &input.database_file, &storage_metrics);
 
+    if storage
+        .list_source_roots()
+        .map(|roots| roots.is_empty())
+        .unwrap_or(false)
+    {
+        let seed_started_at = Instant::now();
+        for configured_root in &input.configured_library_roots {
+            if let Err(error) = storage.upsert_source_root(configured_root) {
+                startup_log::log_error(
+                    "startup.snapshot_hydrate.seed_root.failed",
+                    &format!(
+                        "generation={} root={} error={error}",
+                        input.generation,
+                        configured_root.display(),
+                    ),
+                );
+            }
+        }
+        startup_log::log_duration(
+            "startup.snapshot_hydrate.seed_roots",
+            seed_started_at.elapsed(),
+            &format!(
+                "generation={} configured_roots={}",
+                input.generation,
+                input.configured_library_roots.len(),
+            ),
+        );
+    }
+
+    let ignore_setup_started_at = Instant::now();
+    let _ = storage.ensure_default_ignore_rules();
+    let _ = storage.reconcile_source_root_availability();
+    startup_log::log_duration(
+        "startup.snapshot_hydrate.root_reconcile",
+        ignore_setup_started_at.elapsed(),
+        &format!("generation={}", input.generation),
+    );
+
+    let roots_started_at = Instant::now();
     out.roots = storage
         .list_source_roots()
         .map(map_roots_from_storage)
         .unwrap_or_default();
+    startup_log::log_duration(
+        "startup.snapshot_hydrate.load_roots",
+        roots_started_at.elapsed(),
+        &format!("generation={} roots={}", input.generation, out.roots.len()),
+    );
+
+    let ignore_rules_started_at = Instant::now();
     out.ignore_rules = storage.list_ignore_rules("global").unwrap_or_default();
-    if let Some(json) = storage
+    startup_log::log_duration(
+        "startup.snapshot_hydrate.load_ignore_rules",
+        ignore_rules_started_at.elapsed(),
+        &format!(
+            "generation={} ignore_rules={}",
+            input.generation,
+            out.ignore_rules.len(),
+        ),
+    );
+
+    let snapshot_load_started_at = Instant::now();
+    let snapshot_json = storage
         .load_projection_snapshot(PROJECTION_SNAPSHOT_KEY)
         .ok()
-        .flatten()
-    {
-        match serde_json::from_str::<PersistedProjectionSnapshot>(&json) {
-            Ok(snapshot) if snapshot.version == PROJECTION_SNAPSHOT_VERSION => {
-                out.snapshot = Some(snapshot);
+        .flatten();
+    startup_log::log_duration(
+        "startup.snapshot_hydrate.load_snapshot_payload",
+        snapshot_load_started_at.elapsed(),
+        &format!(
+            "generation={} present={}",
+            input.generation,
+            snapshot_json.is_some(),
+        ),
+    );
+
+    if let Some(json) = snapshot_json {
+        out.snapshot_bytes = json.len();
+        out.snapshot_version = extract_snapshot_version(&json);
+        match out.snapshot_version {
+            Some(PROJECTION_SNAPSHOT_VERSION) => {
+                let parse_started_at = Instant::now();
+                match serde_json::from_str::<PersistedProjectionSnapshot>(&json) {
+                    Ok(snapshot) => {
+                        startup_log::log_duration(
+                            "startup.snapshot_hydrate.parse_snapshot",
+                            parse_started_at.elapsed(),
+                            &format!(
+                                "generation={} bytes={} gallery_items={} gallery_total_items={}",
+                                input.generation,
+                                out.snapshot_bytes,
+                                snapshot.gallery_items.len(),
+                                snapshot.gallery_total_items,
+                            ),
+                        );
+                        out.snapshot = Some(snapshot);
+                    }
+                    Err(error) => {
+                        out.snapshot_error = Some(format!("snapshot parse failed: {error}"));
+                        startup_log::log_error(
+                            "startup.snapshot_hydrate.parse_snapshot.failed",
+                            &format!(
+                                "generation={} bytes={} error={error}",
+                                input.generation, out.snapshot_bytes,
+                            ),
+                        );
+                    }
+                }
             }
-            Ok(snapshot) => {
-                out.snapshot_error = Some(format!(
-                    "snapshot version mismatch: expected {}, got {}",
-                    PROJECTION_SNAPSHOT_VERSION, snapshot.version
-                ));
+            Some(version) => {
+                startup_log::log_info(
+                    "startup.snapshot_hydrate.snapshot_discarded",
+                    &format!(
+                        "generation={} bytes={} reason=version_mismatch expected={} actual={version}",
+                        input.generation, out.snapshot_bytes, PROJECTION_SNAPSHOT_VERSION,
+                    ),
+                );
             }
-            Err(error) => {
-                out.snapshot_error = Some(format!("snapshot parse failed: {error}"));
+            None => {
+                out.snapshot_error = Some("snapshot version missing".to_owned());
+                startup_log::log_error(
+                    "startup.snapshot_hydrate.snapshot_discarded",
+                    &format!(
+                        "generation={} bytes={} reason=version_missing",
+                        input.generation, out.snapshot_bytes,
+                    ),
+                );
             }
         }
     }
+
+    startup_log::log_duration(
+        "startup.snapshot_hydrate.complete",
+        hydrate_started_at.elapsed(),
+        &format!(
+            "generation={} roots={} ignore_rules={} snapshot_loaded={} snapshot_bytes={}",
+            input.generation,
+            out.roots.len(),
+            out.ignore_rules.len(),
+            out.snapshot.is_some(),
+            out.snapshot_bytes,
+        ),
+    );
 
     out
 }
@@ -5458,6 +5678,22 @@ fn apply_snapshot_hydrate_result(
         return Task::none();
     }
 
+    if let Some(started_at) = app.startup_metrics.snapshot_hydrate_started_at.take() {
+        startup_log::log_duration(
+            "startup.snapshot_hydrate.end",
+            started_at.elapsed(),
+            &format!(
+                "generation={} roots={} ignore_rules={} snapshot_loaded={} snapshot_bytes={} snapshot_version={:?}",
+                result.generation,
+                result.roots.len(),
+                result.ignore_rules.len(),
+                result.snapshot.is_some(),
+                result.snapshot_bytes,
+                result.snapshot_version,
+            ),
+        );
+    }
+
     app.background.snapshot_apply = None;
     app.state.apply(AppMessage::ReplaceLibraryRoots);
     app.state.replace_library_roots(result.roots);
@@ -5465,6 +5701,7 @@ fn apply_snapshot_hydrate_result(
     app.ignore_rules = result.ignore_rules;
     app.background.snapshot_loaded = true;
     app.activity_progress.last_error = result.snapshot_error;
+    app.background.startup_reconcile_queued = !app.state.library_roots.is_empty();
 
     if let Some(snapshot) = result.snapshot {
         return begin_snapshot_apply(app, result.generation, snapshot);
@@ -5479,8 +5716,7 @@ fn begin_snapshot_apply(
     snapshot: PersistedProjectionSnapshot,
 ) -> Task<Message> {
     let gallery_total = snapshot.gallery_items.len();
-    let timeline_total = snapshot.timeline_items.len();
-    let total_items = gallery_total + timeline_total;
+    let total_items = gallery_total;
 
     app.gallery_items.clear();
     app.timeline_items.clear();
@@ -5498,36 +5734,30 @@ fn begin_snapshot_apply(
     set_activity_stage(
         app,
         TextKey::StageLoadingSnapshotLabel,
-        String::new(),
+        format!(
+            "Restoring {} recent gallery items ({} available in snapshot)",
+            gallery_total, snapshot.gallery_total_items,
+        ),
         false,
     );
     app.activity_progress.items_total = Some(total_items);
     app.activity_progress.items_done = 0;
     app.activity_progress.queue_depth = 0;
-
-    let timeline_anchors = snapshot
-        .timeline_anchors
-        .into_iter()
-        .map(|anchor| TimelineAnchor {
-            group_index: anchor.group_index,
-            label: anchor.label,
-            year: anchor.year,
-            month: anchor.month,
-            day: anchor.day,
-            item_count: anchor.item_count,
-            normalized_position: anchor.normalized_position,
-        })
-        .collect();
+    app.startup_metrics.snapshot_apply_started_at = Some(Instant::now());
+    startup_log::log_info(
+        "startup.snapshot_apply.start",
+        &format!(
+            "generation={generation} gallery_slice_items={} gallery_total_items={}",
+            gallery_total, snapshot.gallery_total_items,
+        ),
+    );
 
     app.background.snapshot_apply = Some(PendingSnapshotApply {
         generation,
         gallery_total,
-        timeline_total,
+        gallery_total_items: snapshot.gallery_total_items,
         gallery_loaded: 0,
-        timeline_loaded: 0,
         gallery_iter: snapshot.gallery_items.into_iter(),
-        timeline_iter: snapshot.timeline_items.into_iter(),
-        timeline_anchors,
         available_filter_tags: snapshot.available_filter_tags,
     });
 
@@ -5549,18 +5779,9 @@ fn apply_snapshot_chunk(app: &mut Librapix) -> Task<Message> {
         pending.gallery_loaded = pending.gallery_loaded.saturating_add(1);
         app.gallery_items.push(item);
     }
-    for _ in 0..SNAPSHOT_APPLY_CHUNK_SIZE {
-        let Some(item) = pending.timeline_iter.next() else {
-            break;
-        };
-        pending.timeline_loaded = pending.timeline_loaded.saturating_add(1);
-        app.timeline_items.push(item);
-    }
 
-    let total = pending.gallery_total.saturating_add(pending.timeline_total);
-    let done = pending
-        .gallery_loaded
-        .saturating_add(pending.timeline_loaded);
+    let total = pending.gallery_total;
+    let done = pending.gallery_loaded;
     app.activity_progress.items_total = Some(total);
     app.activity_progress.items_done = done;
     app.activity_progress.queue_depth = 0;
@@ -5570,20 +5791,25 @@ fn apply_snapshot_chunk(app: &mut Librapix) -> Task<Message> {
         return Task::none();
     }
 
-    app.timeline_anchors = pending.timeline_anchors;
     app.available_filter_tags = pending.available_filter_tags;
-    sync_timeline_scrub_selection(app, app.timeline_scrub_value);
     app.state.apply(AppMessage::ReplaceGalleryPreview);
     app.state
         .replace_gallery_preview(collect_preview_lines(&app.gallery_items));
     app.state.apply(AppMessage::ReplaceTimelinePreview);
     app.state
         .replace_timeline_preview(collect_preview_lines(&app.timeline_items));
-    app.browse_status = if matches!(app.state.active_route, Route::Timeline) {
-        app.i18n.text(TextKey::TimelineCompletedLabel).to_owned()
-    } else {
-        app.i18n.text(TextKey::GalleryCompletedLabel).to_owned()
-    };
+    app.browse_status = app.i18n.text(TextKey::GalleryCompletedLabel).to_owned();
+    note_first_usable_gallery(app, "snapshot");
+    if let Some(started_at) = app.startup_metrics.snapshot_apply_started_at.take() {
+        startup_log::log_duration(
+            "startup.snapshot_apply.end",
+            started_at.elapsed(),
+            &format!(
+                "generation={} gallery_slice_items={} gallery_total_items={}",
+                pending.generation, pending.gallery_total, pending.gallery_total_items,
+            ),
+        );
+    }
 
     continue_startup_after_snapshot_hydrate(app)
 }
@@ -5659,6 +5885,7 @@ fn request_reconcile(app: &mut Librapix, reason: BackgroundWorkReason) -> Task<M
     app.background.thumbnail_reused = 0;
     app.background.thumbnail_failed = 0;
     app.background.thumbnail_mode = ThumbnailWorkMode::StartupCritical;
+    app.startup_metrics.reconcile_started_at = Some(Instant::now());
 
     set_activity_stage(
         app,
@@ -5673,6 +5900,15 @@ fn request_reconcile(app: &mut Librapix, reason: BackgroundWorkReason) -> Task<M
     app.activity_progress.queue_depth = 0;
     app.activity_progress.last_error = None;
     app.indexing_status = app.i18n.text(TextKey::LoadingIndexingLabel).to_owned();
+    startup_log::log_info(
+        "startup.reconcile.start",
+        &format!(
+            "generation={} reason={:?} roots={}",
+            app.background.reconcile_generation,
+            reason,
+            app.state.library_roots.len(),
+        ),
+    );
 
     let input = ScanJobInput {
         generation: app.background.reconcile_generation,
@@ -5687,34 +5923,77 @@ fn request_reconcile(app: &mut Librapix, reason: BackgroundWorkReason) -> Task<M
 }
 
 fn do_scan_job(input: ScanJobInput) -> ScanJobResult {
+    let scan_started_at = Instant::now();
     let mut out = ScanJobResult {
         generation: input.generation,
         reason: input.reason,
         ..Default::default()
     };
 
-    let mut storage = match Storage::open(&input.database_file) {
-        Ok(storage) => storage,
+    let (mut storage, storage_metrics) = match Storage::open_with_metrics(&input.database_file) {
+        Ok(value) => value,
         Err(error) => {
             out.error = Some(error.to_string());
             out.indexing_status = input
                 .i18n
                 .text(TextKey::ErrorIndexingFailedLabel)
                 .to_owned();
+            startup_log::log_error(
+                "startup.reconcile.storage_open.failed",
+                &format!(
+                    "generation={} path={} error={error}",
+                    input.generation,
+                    input.database_file.display(),
+                ),
+            );
             return out;
         }
     };
+    log_storage_open_metrics("scan_job", &input.database_file, &storage_metrics);
 
+    let root_reconcile_started_at = Instant::now();
     let _ = storage.reconcile_source_root_availability();
     let _ = storage.ensure_default_ignore_rules();
+    startup_log::log_duration(
+        "startup.reconcile.root_reconcile",
+        root_reconcile_started_at.elapsed(),
+        &format!("generation={}", input.generation),
+    );
+
+    let ignore_rules_started_at = Instant::now();
     out.ignore_rules = storage.list_ignore_rules("global").unwrap_or_default();
+    startup_log::log_duration(
+        "startup.reconcile.load_ignore_rules",
+        ignore_rules_started_at.elapsed(),
+        &format!(
+            "generation={} ignore_rules={}",
+            input.generation,
+            out.ignore_rules.len(),
+        ),
+    );
+
+    let roots_started_at = Instant::now();
     out.roots = storage
         .list_source_roots()
         .map(map_roots_from_storage)
         .unwrap_or_default();
+    startup_log::log_duration(
+        "startup.reconcile.load_roots",
+        roots_started_at.elapsed(),
+        &format!("generation={} roots={}", input.generation, out.roots.len()),
+    );
 
+    let eligible_roots_started_at = Instant::now();
     let eligible_roots = storage.list_eligible_source_roots().unwrap_or_default();
     out.root_count = eligible_roots.len();
+    startup_log::log_duration(
+        "startup.reconcile.load_eligible_roots",
+        eligible_roots_started_at.elapsed(),
+        &format!(
+            "generation={} eligible_roots={}",
+            input.generation, out.root_count
+        ),
+    );
     let roots_for_scan = eligible_roots
         .iter()
         .map(|root| ScanRoot {
@@ -5723,9 +6002,19 @@ fn do_scan_job(input: ScanJobInput) -> ScanJobResult {
         })
         .collect::<Vec<_>>();
 
+    let ignore_pattern_started_at = Instant::now();
     let patterns = storage
         .list_enabled_ignore_patterns("global")
         .unwrap_or_default();
+    startup_log::log_duration(
+        "startup.reconcile.load_ignore_patterns",
+        ignore_pattern_started_at.elapsed(),
+        &format!(
+            "generation={} patterns={}",
+            input.generation,
+            patterns.len(),
+        ),
+    );
     let ignore = match IgnoreEngine::new(&patterns) {
         Ok(ignore) => ignore,
         Err(error) => {
@@ -5742,9 +6031,20 @@ fn do_scan_job(input: ScanJobInput) -> ScanJobResult {
         .iter()
         .map(|root| root.source_root_id)
         .collect::<Vec<_>>();
+    let existing_started_at = Instant::now();
     let existing = storage
         .list_existing_indexed_media_snapshots(&root_ids)
         .unwrap_or_default();
+    startup_log::log_duration(
+        "startup.reconcile.load_existing_media_snapshots",
+        existing_started_at.elapsed(),
+        &format!(
+            "generation={} roots={} existing_entries={}",
+            input.generation,
+            root_ids.len(),
+            existing.len(),
+        ),
+    );
     let existing_for_indexer = existing
         .into_iter()
         .map(|entry| librapix_indexer::ExistingIndexedEntry {
@@ -5756,6 +6056,7 @@ fn do_scan_job(input: ScanJobInput) -> ScanJobResult {
             height_px: entry.height_px,
         })
         .collect::<Vec<_>>();
+    let scan_roots_started_at = Instant::now();
     let scan_result = scan_roots(
         &roots_for_scan,
         &ignore,
@@ -5763,6 +6064,21 @@ fn do_scan_job(input: ScanJobInput) -> ScanJobResult {
         &ScanOptions {
             min_file_size_bytes: input.min_file_size_bytes,
         },
+    );
+    startup_log::log_duration(
+        "startup.reconcile.scan_roots",
+        scan_roots_started_at.elapsed(),
+        &format!(
+            "generation={} scanned_roots={} candidates={} ignored={} unreadable={} changed={} new={} unchanged={}",
+            input.generation,
+            scan_result.summary.scanned_roots,
+            scan_result.summary.candidate_files,
+            scan_result.summary.ignored_entries,
+            scan_result.summary.unreadable_entries,
+            scan_result.summary.changed_files,
+            scan_result.summary.new_files,
+            scan_result.summary.unchanged_files,
+        ),
     );
     out.scanned_root_ids = scan_result.scanned_root_ids.clone();
 
@@ -5785,6 +6101,7 @@ fn do_scan_job(input: ScanJobInput) -> ScanJobResult {
         })
         .collect::<Vec<_>>();
 
+    let apply_index_started_at = Instant::now();
     let apply_summary =
         match storage.apply_incremental_index(&writes, &scan_result.scanned_root_ids) {
             Ok(summary) => summary,
@@ -5797,13 +6114,42 @@ fn do_scan_job(input: ScanJobInput) -> ScanJobResult {
                 return out;
             }
         };
+    startup_log::log_duration(
+        "startup.reconcile.apply_index",
+        apply_index_started_at.elapsed(),
+        &format!(
+            "generation={} writes={} missing_marked={}",
+            input.generation,
+            writes.len(),
+            apply_summary.missing_marked_count,
+        ),
+    );
 
+    let post_index_started_at = Instant::now();
     let _ = storage.ensure_media_kind_tags_attached();
     let _ = storage.ensure_root_tags_exist();
     let _ = storage.apply_root_auto_tags();
     let _ = storage.refresh_source_root_statistics(&scan_result.scanned_root_ids);
+    startup_log::log_duration(
+        "startup.reconcile.post_index_maintenance",
+        post_index_started_at.elapsed(),
+        &format!(
+            "generation={} scanned_root_ids={}",
+            input.generation,
+            scan_result.scanned_root_ids.len(),
+        ),
+    );
 
+    let count_started_at = Instant::now();
     let read_model_count = storage.count_indexed_media().unwrap_or(-1).max(0) as usize;
+    startup_log::log_duration(
+        "startup.reconcile.count_indexed_media",
+        count_started_at.elapsed(),
+        &format!(
+            "generation={} read_model_count={read_model_count}",
+            input.generation,
+        ),
+    );
     out.indexing_summary = Some(IndexingSummary {
         scanned_roots: scan_result.summary.scanned_roots,
         candidate_files: scan_result.summary.candidate_files,
@@ -5816,6 +6162,14 @@ fn do_scan_job(input: ScanJobInput) -> ScanJobResult {
         read_model_count,
     });
     out.indexing_status = input.i18n.text(TextKey::IndexingCompletedLabel).to_owned();
+    startup_log::log_duration(
+        "startup.reconcile.complete",
+        scan_started_at.elapsed(),
+        &format!(
+            "generation={} roots={} read_model_count={read_model_count}",
+            input.generation, out.root_count,
+        ),
+    );
     out
 }
 
@@ -5844,6 +6198,7 @@ fn start_projection_refresh(app: &mut Librapix, reason: BackgroundWorkReason) ->
     app.background.pending_projection = false;
     app.background.pending_projection_reason = reason;
     app.background.projection_generation = app.background.projection_generation.saturating_add(1);
+    app.startup_metrics.projection_started_at = Some(Instant::now());
     if matches!(policy, ProjectionRefreshPolicy::StartupCurrentSurface) {
         app.background.startup_deferred_gallery_refresh =
             !matches!(app.state.active_route, Route::Gallery);
@@ -5863,6 +6218,20 @@ fn start_projection_refresh(app: &mut Librapix, reason: BackgroundWorkReason) ->
     app.activity_progress.queue_depth = 0;
     app.activity_progress.last_error = None;
     app.browse_status = projection_loading_label(app).to_owned();
+    startup_log::log_info(
+        "startup.projection.start",
+        &format!(
+            "generation={} reason={:?} policy={policy:?} route={:?} search_len={} filter_kind={:?} filter_extension={:?} filter_tag={:?} filter_root_id={:?}",
+            app.background.projection_generation,
+            reason,
+            app.state.active_route,
+            app.state.search_query.trim().len(),
+            app.filter_media_kind,
+            app.filter_extension,
+            app.filter_tag,
+            app.filter_source_root_id,
+        ),
+    );
 
     let input = ProjectionJobInput {
         generation: app.background.projection_generation,
@@ -5884,41 +6253,111 @@ fn start_projection_refresh(app: &mut Librapix, reason: BackgroundWorkReason) ->
 }
 
 fn do_projection_job(input: ProjectionJobInput) -> ProjectionJobResult {
+    let projection_started_at = Instant::now();
     let mut out = ProjectionJobResult {
         generation: input.generation,
         reason: input.reason,
         ..Default::default()
     };
 
-    let mut storage = match Storage::open(&input.database_file) {
-        Ok(storage) => storage,
+    let (mut storage, storage_metrics) = match Storage::open_with_metrics(&input.database_file) {
+        Ok(value) => value,
         Err(error) => {
             out.error = Some(error.to_string());
+            startup_log::log_error(
+                "startup.projection.storage_open.failed",
+                &format!(
+                    "generation={} path={} error={error}",
+                    input.generation,
+                    input.database_file.display(),
+                ),
+            );
             return out;
         }
     };
+    log_storage_open_metrics("projection_job", &input.database_file, &storage_metrics);
+
+    let preflight_started_at = Instant::now();
     let _ = storage.reconcile_source_root_availability();
     let _ = storage.ensure_default_ignore_rules();
+    startup_log::log_duration(
+        "startup.projection.preflight",
+        preflight_started_at.elapsed(),
+        &format!("generation={}", input.generation),
+    );
+
+    let ignore_rules_started_at = Instant::now();
     out.ignore_rules = storage.list_ignore_rules("global").unwrap_or_default();
+    startup_log::log_duration(
+        "startup.projection.load_ignore_rules",
+        ignore_rules_started_at.elapsed(),
+        &format!(
+            "generation={} ignore_rules={}",
+            input.generation,
+            out.ignore_rules.len(),
+        ),
+    );
+
+    let roots_started_at = Instant::now();
     out.roots = storage
         .list_source_roots()
         .map(map_roots_from_storage)
         .unwrap_or_default();
+    startup_log::log_duration(
+        "startup.projection.load_roots",
+        roots_started_at.elapsed(),
+        &format!("generation={} roots={}", input.generation, out.roots.len()),
+    );
 
+    let refresh_catalog_started_at = Instant::now();
     if let Err(error) = storage.refresh_catalog() {
         out.error = Some(error.to_string());
+        startup_log::log_error(
+            "startup.projection.refresh_catalog.failed",
+            &format!("generation={} error={error}", input.generation),
+        );
         return out;
     }
+    startup_log::log_duration(
+        "startup.projection.refresh_catalog",
+        refresh_catalog_started_at.elapsed(),
+        &format!("generation={}", input.generation),
+    );
 
+    let list_rows_started_at = Instant::now();
     let all_rows = match storage.list_catalog_media_filtered(input.filter_source_root_id) {
         Ok(rows) => rows,
         Err(error) => {
             out.error = Some(error.to_string());
+            startup_log::log_error(
+                "startup.projection.list_catalog_rows.failed",
+                &format!("generation={} error={error}", input.generation),
+            );
             return out;
         }
     };
+    startup_log::log_duration(
+        "startup.projection.list_catalog_rows",
+        list_rows_started_at.elapsed(),
+        &format!(
+            "generation={} rows={} filter_root_id={:?}",
+            input.generation,
+            all_rows.len(),
+            input.filter_source_root_id,
+        ),
+    );
 
+    let available_tags_started_at = Instant::now();
     out.available_filter_tags = collect_available_filter_tags(&all_rows);
+    startup_log::log_duration(
+        "startup.projection.collect_available_tags",
+        available_tags_started_at.elapsed(),
+        &format!(
+            "generation={} tags={}",
+            input.generation,
+            out.available_filter_tags.len(),
+        ),
+    );
     let active_tag_filter = input.filter_tag.as_ref().filter(|selected| {
         out.available_filter_tags
             .iter()
@@ -5937,6 +6376,7 @@ fn do_projection_job(input: ProjectionJobInput) -> ProjectionJobResult {
     out.refreshed_gallery = refresh_gallery;
     out.refreshed_timeline = refresh_timeline;
     let media_ids = all_rows.iter().map(|row| row.media_id).collect::<Vec<_>>();
+    let gallery_artifacts_started_at = Instant::now();
     let gallery_artifacts = match storage.list_ready_derived_artifacts_for_media_ids(
         &media_ids,
         DerivedArtifactKind::Thumbnail,
@@ -5945,13 +6385,28 @@ fn do_projection_job(input: ProjectionJobInput) -> ProjectionJobResult {
         Ok(artifacts) => artifacts,
         Err(error) => {
             out.error = Some(error.to_string());
+            startup_log::log_error(
+                "startup.projection.list_gallery_artifacts.failed",
+                &format!("generation={} error={error}", input.generation),
+            );
             return out;
         }
     };
+    startup_log::log_duration(
+        "startup.projection.list_gallery_artifacts",
+        gallery_artifacts_started_at.elapsed(),
+        &format!(
+            "generation={} media_ids={} ready_artifacts={}",
+            input.generation,
+            media_ids.len(),
+            gallery_artifacts.len(),
+        ),
+    );
     let gallery_artifact_paths =
         build_ready_artifact_map(&input.thumbnails_dir, &gallery_artifacts);
 
     if refresh_gallery {
+        let gallery_started_at = Instant::now();
         let gallery_query = GalleryQuery {
             media_kind: input.filter_media_kind.clone(),
             extension: input.filter_extension.clone(),
@@ -5999,9 +6454,19 @@ fn do_projection_job(input: ProjectionJobInput) -> ProjectionJobResult {
             })
             .collect();
         out.gallery_preview_lines = collect_preview_lines(&out.gallery_items);
+        startup_log::log_duration(
+            "startup.projection.project_gallery",
+            gallery_started_at.elapsed(),
+            &format!(
+                "generation={} items={}",
+                input.generation,
+                out.gallery_items.len(),
+            ),
+        );
     }
 
     if refresh_timeline {
+        let timeline_started_at = Instant::now();
         let filtered_media = media
             .iter()
             .filter(|item| {
@@ -6092,9 +6557,20 @@ fn do_projection_job(input: ProjectionJobInput) -> ProjectionJobResult {
         }
         out.timeline_items = timeline_items;
         out.timeline_preview_lines = timeline_preview_lines;
+        startup_log::log_duration(
+            "startup.projection.project_timeline",
+            timeline_started_at.elapsed(),
+            &format!(
+                "generation={} items={} anchors={}",
+                input.generation,
+                out.timeline_items.len(),
+                out.timeline_anchors.len(),
+            ),
+        );
     }
 
     if !input.search_query.trim().is_empty() {
+        let search_started_at = Instant::now();
         let docs = all_rows
             .iter()
             .map(|row| SearchDocument {
@@ -6142,6 +6618,16 @@ fn do_projection_job(input: ProjectionJobInput) -> ProjectionJobResult {
             })
             .collect();
         out.search_preview_lines = collect_preview_lines(&out.search_items);
+        startup_log::log_duration(
+            "startup.projection.project_search",
+            search_started_at.elapsed(),
+            &format!(
+                "generation={} items={} query_len={}",
+                input.generation,
+                out.search_items.len(),
+                input.search_query.trim().len(),
+            ),
+        );
     }
 
     let cache_media_ids = if matches!(input.policy, ProjectionRefreshPolicy::Full) {
@@ -6173,6 +6659,7 @@ fn do_projection_job(input: ProjectionJobInput) -> ProjectionJobResult {
         ordered
     };
 
+    let media_cache_started_at = Instant::now();
     populate_media_cache(
         &storage,
         &mut out.media_cache,
@@ -6180,11 +6667,22 @@ fn do_projection_job(input: ProjectionJobInput) -> ProjectionJobResult {
         &cache_media_ids,
         &input.thumbnails_dir,
     );
+    startup_log::log_duration(
+        "startup.projection.populate_media_cache",
+        media_cache_started_at.elapsed(),
+        &format!(
+            "generation={} cached_media={} requested_media={}",
+            input.generation,
+            out.media_cache.len(),
+            cache_media_ids.len(),
+        ),
+    );
 
     let ready_gallery_ids = gallery_artifact_paths
         .keys()
         .copied()
         .collect::<HashSet<_>>();
+    let thumbnail_candidates_started_at = Instant::now();
     out.thumbnail_candidates = all_rows
         .iter()
         .filter(|row| !ready_gallery_ids.contains(&row.media_id))
@@ -6201,14 +6699,25 @@ fn do_projection_job(input: ProjectionJobInput) -> ProjectionJobResult {
             modified_unix_seconds: row.modified_unix_seconds,
         })
         .collect();
+    startup_log::log_duration(
+        "startup.projection.collect_thumbnail_candidates",
+        thumbnail_candidates_started_at.elapsed(),
+        &format!(
+            "generation={} candidates={}",
+            input.generation,
+            out.thumbnail_candidates.len(),
+        ),
+    );
 
-    if refresh_gallery && refresh_timeline {
-        out.snapshot_payload = snapshot_payload_from_projection(
-            &out.gallery_items,
-            &out.timeline_items,
-            &out.timeline_anchors,
-            &out.available_filter_tags,
-        );
+    if refresh_gallery
+        && input.search_query.trim().is_empty()
+        && input.filter_media_kind.is_none()
+        && input.filter_extension.is_none()
+        && active_tag_filter.is_none()
+        && input.filter_source_root_id.is_none()
+    {
+        out.snapshot_payload =
+            snapshot_payload_from_projection(&out.gallery_items, &out.available_filter_tags);
     }
     out.browse_status = if input.search_query.trim().is_empty() {
         if matches!(input.active_route, Route::Timeline) {
@@ -6219,6 +6728,20 @@ fn do_projection_job(input: ProjectionJobInput) -> ProjectionJobResult {
     } else {
         input.i18n.text(TextKey::SearchCompletedLabel).to_owned()
     };
+    startup_log::log_duration(
+        "startup.projection.complete",
+        projection_started_at.elapsed(),
+        &format!(
+            "generation={} refreshed_gallery={} refreshed_timeline={} gallery_items={} timeline_items={} search_items={} thumbnail_candidates={}",
+            input.generation,
+            out.refreshed_gallery,
+            out.refreshed_timeline,
+            out.gallery_items.len(),
+            out.timeline_items.len(),
+            out.search_items.len(),
+            out.thumbnail_candidates.len(),
+        ),
+    );
 
     out
 }
@@ -6242,6 +6765,18 @@ fn apply_scan_job_result(app: &mut Librapix, result: ScanJobResult) -> Task<Mess
     if let Some(error) = result.error {
         app.activity_progress.last_error = Some(error);
         app.background.reconcile_in_flight = false;
+        if let Some(started_at) = app.startup_metrics.reconcile_started_at.take() {
+            startup_log::log_duration(
+                "startup.reconcile.end",
+                started_at.elapsed(),
+                &format!(
+                    "generation={} success=false roots_scanned={} read_model_count={}",
+                    result.generation,
+                    result.scanned_root_ids.len(),
+                    app.state.indexing_summary.read_model_count,
+                ),
+            );
+        }
         return finalize_background_flow(app);
     }
     if app.library_stats_dialog_open
@@ -6255,6 +6790,18 @@ fn apply_scan_job_result(app: &mut Librapix, result: ScanJobResult) -> Task<Mess
     }
 
     app.background.reconcile_in_flight = false;
+    if let Some(started_at) = app.startup_metrics.reconcile_started_at.take() {
+        startup_log::log_duration(
+            "startup.reconcile.end",
+            started_at.elapsed(),
+            &format!(
+                "generation={} success=true roots_scanned={} read_model_count={}",
+                result.generation,
+                result.scanned_root_ids.len(),
+                app.state.indexing_summary.read_model_count,
+            ),
+        );
+    }
     request_projection_refresh(app, result.reason)
 }
 
@@ -6266,6 +6813,13 @@ fn apply_projection_job_result(app: &mut Librapix, result: ProjectionJobResult) 
 
     if let Some(error) = result.error {
         app.activity_progress.last_error = Some(error);
+        if let Some(started_at) = app.startup_metrics.projection_started_at.take() {
+            startup_log::log_duration(
+                "startup.projection.end",
+                started_at.elapsed(),
+                &format!("generation={} success=false", result.generation),
+            );
+        }
         return finalize_background_flow(app);
     }
 
@@ -6299,6 +6853,7 @@ fn apply_projection_job_result(app: &mut Librapix, result: ProjectionJobResult) 
             .replace_gallery_preview(result.gallery_preview_lines);
         app.gallery_items = result.gallery_items;
         app.background.startup_deferred_gallery_refresh = false;
+        note_first_usable_gallery(app, "projection");
     }
 
     if result.refreshed_timeline {
@@ -6334,6 +6889,10 @@ fn apply_projection_job_result(app: &mut Librapix, result: ProjectionJobResult) 
         let _ = with_storage(&app.runtime, |storage| {
             storage.upsert_projection_snapshot(PROJECTION_SNAPSHOT_KEY, &payload)
         });
+        startup_log::log_info(
+            "startup.snapshot.persisted",
+            &format!("generation={} bytes={}", result.generation, payload.len()),
+        );
     }
     if app.library_stats_dialog_open
         && let Some(root_id) = app.library_stats_root_id
@@ -6349,6 +6908,21 @@ fn apply_projection_job_result(app: &mut Librapix, result: ProjectionJobResult) 
         split_startup_thumbnail_work(app, result.thumbnail_candidates);
     app.background.deferred_thumbnail_queue =
         deferred_thumbnails.into_iter().collect::<VecDeque<_>>();
+    if let Some(started_at) = app.startup_metrics.projection_started_at.take() {
+        startup_log::log_duration(
+            "startup.projection.end",
+            started_at.elapsed(),
+            &format!(
+                "generation={} success=true gallery_items={} timeline_items={} search_items={} startup_thumbnail_queue={} deferred_thumbnail_queue={}",
+                result.generation,
+                app.gallery_items.len(),
+                app.timeline_items.len(),
+                app.search_items.len(),
+                immediate_thumbnails.len(),
+                app.background.deferred_thumbnail_queue.len(),
+            ),
+        );
+    }
 
     start_thumbnail_batches(
         app,
@@ -6393,6 +6967,57 @@ fn split_startup_thumbnail_work(
         }
     }
     (immediate, deferred)
+}
+
+fn log_thumbnail_stage_start(app: &mut Librapix, mode: ThumbnailWorkMode, total: usize) {
+    match mode {
+        ThumbnailWorkMode::StartupCritical => {
+            app.startup_metrics.startup_thumbnail_started_at = Some(Instant::now());
+            startup_log::log_info(
+                "startup.thumbnail_priority.start",
+                &format!("items={total}"),
+            );
+        }
+        ThumbnailWorkMode::BackgroundCatchUp => {
+            app.startup_metrics.deferred_thumbnail_started_at = Some(Instant::now());
+            startup_log::log_info("startup.thumbnail_catchup.start", &format!("items={total}"));
+        }
+    }
+}
+
+fn log_thumbnail_stage_end(app: &mut Librapix) {
+    match app.background.thumbnail_mode {
+        ThumbnailWorkMode::StartupCritical => {
+            if let Some(started_at) = app.startup_metrics.startup_thumbnail_started_at.take() {
+                startup_log::log_duration(
+                    "startup.thumbnail_priority.end",
+                    started_at.elapsed(),
+                    &format!(
+                        "total={} generated={} reused={} failed={}",
+                        app.background.thumbnail_total,
+                        app.background.thumbnail_generated,
+                        app.background.thumbnail_reused,
+                        app.background.thumbnail_failed,
+                    ),
+                );
+            }
+        }
+        ThumbnailWorkMode::BackgroundCatchUp => {
+            if let Some(started_at) = app.startup_metrics.deferred_thumbnail_started_at.take() {
+                startup_log::log_duration(
+                    "startup.thumbnail_catchup.end",
+                    started_at.elapsed(),
+                    &format!(
+                        "total={} generated={} reused={} failed={}",
+                        app.background.thumbnail_total,
+                        app.background.thumbnail_generated,
+                        app.background.thumbnail_reused,
+                        app.background.thumbnail_failed,
+                    ),
+                );
+            }
+        }
+    }
 }
 
 fn schedule_deferred_thumbnail_catchup(app: &mut Librapix) {
@@ -6462,8 +7087,10 @@ fn start_thumbnail_batches(
     app.background.thumbnail_queued_ids = queued_ids;
     app.activity_progress.queue_depth = app.background.thumbnail_queue.len();
     app.thumbnail_status = thumbnail_status_text(app.i18n, 0, 0, 0);
+    log_thumbnail_stage_start(app, mode, app.background.thumbnail_total);
 
     if app.background.thumbnail_total == 0 {
+        log_thumbnail_stage_end(app);
         return finalize_background_flow(app);
     }
 
@@ -6665,6 +7292,7 @@ fn apply_thumbnail_batch_result(app: &mut Librapix, result: ThumbnailBatchResult
         return run_next_thumbnail_batch_if_idle(app);
     }
 
+    log_thumbnail_stage_end(app);
     finalize_background_flow(app)
 }
 
@@ -6715,6 +7343,13 @@ fn refresh_diagnostics(app: &mut Librapix) {
         "roots: {} total, {} eligible",
         roots_total, roots_eligible
     ));
+    if let Some(path) = app.startup_log_path.as_ref() {
+        lines.push(format!("startup log: {}", path.display()));
+    }
+    lines.push(format!(
+        "configured roots: {}",
+        app.runtime.configured_library_roots.len()
+    ));
     lines.push(format!("indexed media: {}", indexed_count));
     lines.push(format!("gallery items: {}", app.gallery_items.len()));
     lines.push(format!("timeline items: {}", app.timeline_items.len()));
@@ -6737,6 +7372,14 @@ fn refresh_diagnostics(app: &mut Librapix) {
     lines.push(format!(
         "updates: {}",
         update_check_status_label(&app.update_check_state)
+    ));
+    lines.push(format!(
+        "startup ready recorded: {}",
+        app.startup_metrics.startup_ready_recorded
+    ));
+    lines.push(format!(
+        "first usable gallery recorded: {}",
+        app.startup_metrics.first_usable_gallery_recorded
     ));
     lines.push(format!("browse status: {}", app.browse_status));
 
@@ -6829,7 +7472,9 @@ mod tests {
                 database_file: PathBuf::from("/tmp/librapix-test.db"),
                 thumbnails_dir: PathBuf::from("/tmp/librapix-thumbnails"),
                 config_file: PathBuf::from("/tmp/librapix-config.toml"),
+                configured_library_roots: Vec::new(),
             },
+            startup_log_path: None,
             thumbnail_status: String::new(),
             details_tag_input: String::new(),
             details_lines: Vec::new(),
@@ -6886,6 +7531,7 @@ mod tests {
             last_successful_update_check: None,
             last_manual_update_check: None,
             last_auto_update_check_attempt: None,
+            startup_metrics: StartupFlowMetrics::default(),
         }
     }
 
@@ -7382,5 +8028,98 @@ mod tests {
         assert_eq!(app.activity_status, "Generating thumbnails");
         assert_eq!(app.background.thumbnail_total, 1);
         assert!(app.background.thumbnail_in_flight);
+    }
+
+    fn browse_item(media_id: i64) -> BrowseItem {
+        BrowseItem {
+            media_id,
+            title: format!("shot-{media_id}.png"),
+            thumbnail_path: None,
+            media_kind: "image".to_owned(),
+            metadata_line: "Image".to_owned(),
+            is_group_header: false,
+            line: format!("/tmp/shot-{media_id}.png [image]"),
+            aspect_ratio: 1.5,
+            group_image_count: None,
+            group_video_count: None,
+        }
+    }
+
+    #[derive(Serialize, Deserialize)]
+    struct LegacySnapshotPayload {
+        version: u32,
+        gallery_items: Vec<BrowseItem>,
+        timeline_items: Vec<BrowseItem>,
+        available_filter_tags: Vec<String>,
+        updated_unix_seconds: i64,
+    }
+
+    #[test]
+    fn startup_snapshot_payload_is_capped_to_recent_gallery_slice() {
+        let gallery_items = (1..=5_000).map(browse_item).collect::<Vec<_>>();
+        let timeline_items = (10_001..=15_000).map(browse_item).collect::<Vec<_>>();
+
+        let legacy_payload = serde_json::to_string(&LegacySnapshotPayload {
+            version: 1,
+            gallery_items: gallery_items.clone(),
+            timeline_items,
+            available_filter_tags: vec!["boss".to_owned()],
+            updated_unix_seconds: 1,
+        })
+        .expect("legacy payload should serialize");
+        let startup_payload =
+            snapshot_payload_from_projection(&gallery_items, &["boss".to_owned()])
+                .expect("startup payload should serialize");
+        let legacy_parse_started_at = Instant::now();
+        let legacy_snapshot = serde_json::from_str::<LegacySnapshotPayload>(&legacy_payload)
+            .expect("legacy payload should deserialize");
+        let legacy_parse_duration = legacy_parse_started_at.elapsed();
+        let startup_parse_started_at = Instant::now();
+        let startup_snapshot =
+            serde_json::from_str::<PersistedProjectionSnapshot>(&startup_payload)
+                .expect("startup payload should deserialize");
+        let startup_parse_duration = startup_parse_started_at.elapsed();
+
+        eprintln!(
+            "legacy_bytes={} startup_bytes={} legacy_parse_ms={} startup_parse_ms={}",
+            legacy_payload.len(),
+            startup_payload.len(),
+            legacy_parse_duration.as_millis(),
+            startup_parse_duration.as_millis(),
+        );
+
+        assert_eq!(legacy_snapshot.gallery_items.len(), gallery_items.len());
+        assert_eq!(
+            startup_snapshot.gallery_items.len(),
+            STARTUP_SNAPSHOT_GALLERY_LIMIT
+        );
+        assert_eq!(startup_snapshot.gallery_total_items, gallery_items.len());
+        assert_eq!(
+            startup_snapshot.available_filter_tags,
+            vec!["boss".to_owned()]
+        );
+        assert!(startup_payload.len() < legacy_payload.len());
+    }
+
+    #[test]
+    fn snapshot_apply_restores_only_gallery_slice() {
+        let mut app = test_app();
+        app.background.snapshot_generation = 1;
+        let snapshot = PersistedProjectionSnapshot {
+            version: PROJECTION_SNAPSHOT_VERSION,
+            gallery_items: vec![browse_item(1), browse_item(2), browse_item(3)],
+            gallery_total_items: 25,
+            available_filter_tags: vec!["boss".to_owned()],
+            updated_unix_seconds: 1,
+        };
+
+        let _ = begin_snapshot_apply(&mut app, 1, snapshot);
+        let _ = apply_snapshot_chunk(&mut app);
+
+        assert_eq!(app.gallery_items.len(), 3);
+        assert!(app.timeline_items.is_empty());
+        assert!(app.timeline_anchors.is_empty());
+        assert_eq!(app.available_filter_tags, vec!["boss".to_owned()]);
+        assert!(app.startup_metrics.first_usable_gallery_recorded);
     }
 }

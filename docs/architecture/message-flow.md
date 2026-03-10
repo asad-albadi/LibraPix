@@ -87,9 +87,11 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
   - Ignored-only subscription prevents conflicts with focused text input widgets.
 - Startup restore
   - `Task::done(Message::StartupRestore)` fires after the first render.
-  - Startup restore first hydrates the persisted projection snapshot on a background task.
-  - If a compatible snapshot exists, app applies it incrementally through `SnapshotApplyTick` so initial browse state can appear without blocking the UI thread.
-  - Startup then schedules a delayed reconcile kickoff (`StartupReconcileKickoff`) when roots exist.
+  - Bootstrap now loads config/theme/path overrides only; storage open and migrations were removed from the pre-render path.
+  - Startup restore first hydrates the persisted startup snapshot on a background task.
+  - If a compatible snapshot exists, app applies it incrementally through `SnapshotApplyTick`, but only for a bounded recent-gallery slice instead of the full gallery+timeline browse state.
+  - Incompatible legacy snapshots are discarded and rebuilt after the next successful unfiltered gallery projection instead of being eagerly rehydrated.
+  - Startup then schedules a delayed reconcile kickoff (`StartupReconcileKickoff`) when hydrated roots exist.
   - Reconcile and projection now run as explicit staged jobs:
     - `ScanJobComplete`
     - `ProjectionJobComplete`
@@ -102,6 +104,13 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
   - Thumbnail work is now split:
     - startup-priority thumbnail work for the first visible slice
     - delayed background catch-up for the remaining browse-tier backlog
+  - Startup/runtime instrumentation now writes a timestamped log file with:
+    - bootstrap config-load timing
+    - storage open + migration timing
+    - snapshot hydrate/apply timing
+    - reconcile/projection timing
+    - thumbnail start/end timing
+    - startup-ready and first-usable-gallery milestones
   - UI remains interactive while background work proceeds; sidebar activity state reflects the real stage currently in flight.
   - Ready-enough state is restored after snapshot apply, reconcile, current-surface projection, and any startup-priority thumbnail work settle.
   - Deferred thumbnail catch-up remains visible as honest background work without keeping the whole app in startup-busy state.

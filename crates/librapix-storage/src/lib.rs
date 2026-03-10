@@ -6,12 +6,13 @@ use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub use catalog::{
     CatalogMediaRecord, CatalogRefreshSummary, DerivedArtifactKind, DerivedArtifactRecord,
     DerivedArtifactStatus,
 };
+pub use migration::{AppliedMigrationMetric, MigrationMetrics};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SourceRootLifecycle {
@@ -192,6 +193,15 @@ pub struct IgnoreRuleRecord {
     pub is_enabled: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StorageOpenMetrics {
+    pub file_exists: bool,
+    pub connection_open_duration: Duration,
+    pub pragma_duration: Duration,
+    pub migration: MigrationMetrics,
+    pub total_duration: Duration,
+}
+
 #[derive(Debug)]
 pub enum StorageError {
     InvalidSourcePath(PathBuf),
@@ -235,15 +245,38 @@ pub struct Storage {
 
 impl Storage {
     pub fn open(database_file: &Path) -> Result<Self, StorageError> {
-        if let Some(parent) = database_file.parent() {
+        Self::open_with_metrics(database_file).map(|(storage, _)| storage)
+    }
+
+    pub fn open_with_metrics(
+        database_file: &Path,
+    ) -> Result<(Self, StorageOpenMetrics), StorageError> {
+        let total_started_at = Instant::now();
+        if let Some(parent) = database_file.parent()
+            && !parent.as_os_str().is_empty()
+        {
             fs::create_dir_all(parent)?;
         }
 
+        let file_exists = database_file.exists();
+        let connection_open_started_at = Instant::now();
         let connection = Connection::open(database_file)?;
-        connection.execute_batch("PRAGMA foreign_keys = ON;")?;
-        migration::apply_migrations(&connection)?;
+        let connection_open_duration = connection_open_started_at.elapsed();
 
-        Ok(Self { connection })
+        let pragma_started_at = Instant::now();
+        connection.execute_batch("PRAGMA foreign_keys = ON;")?;
+        let pragma_duration = pragma_started_at.elapsed();
+
+        let migration = migration::apply_migrations(&connection)?;
+        let metrics = StorageOpenMetrics {
+            file_exists,
+            connection_open_duration,
+            pragma_duration,
+            migration,
+            total_duration: total_started_at.elapsed(),
+        };
+
+        Ok((Self { connection }, metrics))
     }
 
     pub fn migration_version(&self) -> Result<u32, StorageError> {

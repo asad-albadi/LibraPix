@@ -80,6 +80,7 @@ This file tracks major direct dependencies that shape architecture and maintenan
   - [https://docs.rs/directories/latest/directories/](https://docs.rs/directories/latest/directories/)
 - Notes:
   - `ProjectDirs` is used to compute config/data/cache defaults.
+  - Startup logging now uses `ProjectDirs::state_dir()` when available and falls back to `data_local_dir()` for the platform-default log directory.
 - Risks/tradeoffs:
   - Directory conventions differ by platform; docs must define behavior clearly.
 

@@ -5,6 +5,7 @@ All notable changes to this project are documented in this file.
 ## [Unreleased]
 
 ### Docs
+- Updated the catalog-first startup audit, message-flow docs, troubleshooting guide, and roadmap checklist to describe the final startup-snapshot policy, startup instrumentation/logging, and deferred catch-up behavior.
 - Added `docs/AGENT_KNOWLEDGE_BASE.md` as a single comprehensive, code-verified project knowledge base for future engineering agents, and linked it from `docs/README.md`.
 - Added a catalog-first architecture plan, workstream checklist, and ADR for the new long-lived architecture branch.
 - Added a dedicated catalog-first startup completion audit documenting the current runtime critical path, remaining eager startup work, and the corrected ready-enough policy for finishing this branch.
@@ -43,6 +44,10 @@ All notable changes to this project are documented in this file.
 - Removed `packaging/windows/` scripts and packaging README from the repository.
 
 ### Changed
+- Bootstrap startup no longer opens storage or runs migrations before the first render; those steps now run in the staged background startup flow with timing instrumentation.
+- Persisted startup snapshots now store only a bounded recent-gallery slice plus filter-tag metadata (`projection_snapshots.version = 2`) instead of full gallery+timeline browse state.
+- Startup snapshot application now restores only that bounded gallery slice, allowing `Loading library snapshot` to complete earlier and leaving non-visible browse state to later projection refresh.
+- Startup logging now writes a timestamped log file with stage start/end timing, migration timing, counts, first-usable-gallery, startup-ready, and deferred-thumbnail catch-up milestones.
 - Background browse/search/timeline preparation now reads normalized catalog rows instead of rebuilding those surfaces directly from source-fact joins.
 - Timeline projections can consume persisted day/month/year keys from the catalog layer while retaining timestamp fallback compatibility.
 - Thumbnail generation now records ready/failed named variants (`gallery-400`, `detail-800`) in storage-owned derived-artifact metadata.
@@ -212,6 +217,9 @@ All notable changes to this project are documented in this file.
 - i18n keys for auto-tag UI labels.
 
 ### Fixed
+- `Loading library snapshot` no longer deserializes and reapplies a full gallery+timeline browse snapshot before the app can continue startup.
+- Existing incompatible broad startup snapshots are now discarded and rebuilt instead of being eagerly rehydrated on the new startup path.
+- Stale delayed startup-reconcile ticks no longer trigger duplicate scan/projection passes after the app has already reached ready-enough state.
 - Existing real databases from the older runtime line now receive catalog/artifact tables through compatibility migrations, preventing silent empty startup projections on the catalog-first branch.
 - Startup activity text/loading indicators are restored on the catalog-first branch and now remain visible until snapshot, reconcile, projection, and thumbnail work actually settle.
 - Startup no longer waits for the full browse-tier thumbnail backlog before returning to a real ready-enough state.

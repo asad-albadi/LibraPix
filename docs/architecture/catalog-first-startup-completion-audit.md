@@ -14,76 +14,75 @@ This audit documents the exact startup pipeline on the current branch, identifie
 
 ## Current Startup Sequence
 
-The current branch follows this sequence:
+The current branch now follows this sequence:
 
-1. `init()` returns `Task::done(Message::StartupRestore)`.
-2. `StartupRestore`:
+1. `main()` initializes timestamped process logging before the Iced runtime starts.
+2. `bootstrap_runtime()` loads config/theme/path overrides only.
+   - storage open, migrations, and root reconciliation are no longer on the pre-render path
+3. `init()` returns `Task::done(Message::StartupRestore)`.
+4. `StartupRestore`:
    - starts `start_snapshot_hydrate(app)`
-   - marks startup reconcile as queued when roots exist
    - starts the non-blocking release update check
-3. `do_snapshot_hydrate(...)`:
-   - opens storage
-   - loads source roots and ignore rules
-   - loads the persisted projection snapshot when present
-4. `apply_snapshot_hydrate_result(...)`:
+5. `do_snapshot_hydrate(...)`:
+   - opens storage and records storage-open + migration timings
+   - seeds configured roots only when the database has no roots yet
+   - reconciles root availability and loads source roots / ignore rules
+   - loads the persisted startup snapshot payload when present
+   - only accepts snapshot version `2`; incompatible legacy snapshots are discarded without broad rehydration
+6. `apply_snapshot_hydrate_result(...)`:
    - replaces roots and ignore rules in app state
-   - starts `begin_snapshot_apply(...)` when a compatible snapshot exists
-   - otherwise continues startup immediately
-5. `begin_snapshot_apply(...)` and `apply_snapshot_chunk(...)`:
+   - queues reconcile when hydrated roots exist
+   - starts `begin_snapshot_apply(...)` when a compatible startup snapshot exists
+7. `begin_snapshot_apply(...)` and `apply_snapshot_chunk(...)`:
    - clear browse/search/cache state
-   - incrementally apply the full saved gallery snapshot
-   - incrementally apply the full saved timeline snapshot
-   - restore saved timeline anchors and available filter tags
-6. `continue_startup_after_snapshot_hydrate(...)`:
-   - schedules the delayed startup reconcile only after snapshot apply is done
-7. `request_reconcile(...)`:
-   - blocks on active snapshot apply / projection / thumbnail work
-   - starts `do_scan_job(...)`
-8. `do_scan_job(...)`:
-   - reconciles root availability
-   - loads ignore rules
-   - scans every eligible root
-   - applies incremental index writes
-   - refreshes root tags and statistics
-9. `apply_scan_job_result(...)`:
-   - applies root/indexing summary updates
-   - immediately requests a projection refresh
+   - incrementally apply only the bounded recent gallery slice stored in the startup snapshot
+   - restore available filter tags from that snapshot
+   - do not rebuild timeline/search browse state from the snapshot
+8. `continue_startup_after_snapshot_hydrate(...)`:
+   - schedules the delayed startup reconcile only after the bounded snapshot apply is done
+9. `request_reconcile(...)` / `do_scan_job(...)`:
+   - reconcile root availability
+   - scan eligible roots
+   - apply incremental index writes
+   - refresh root tags and statistics
 10. `do_projection_job(...)`:
     - refreshes the full catalog
-    - queries all filtered catalog rows
-    - derives available filter tags from all rows
-    - builds the full gallery projection
-    - builds the full timeline projection
-    - optionally builds the search result set
-    - hydrates the media cache for all rows
-    - prepares a projection snapshot payload
-    - schedules thumbnail work for every missing browse-tier thumbnail
+    - queries catalog rows
+    - refreshes the current startup-critical surface first
+    - bounds startup cache warm-up to a visible slice
+    - prepares a bounded gallery startup snapshot payload for future launches when the projection is unfiltered
 11. `apply_projection_job_result(...)`:
     - replaces gallery/timeline/search state
     - updates details/cache/filter state
-    - persists the new projection snapshot
-    - starts thumbnail batches for the entire queued thumbnail set
+    - persists the bounded startup snapshot payload
+    - splits thumbnail work into startup-priority items and deferred catch-up
 12. `do_thumbnail_batch(...)` and `apply_thumbnail_batch_result(...)`:
     - generate or reuse browse-tier thumbnails in batches
     - upsert ready/failed artifact rows
     - patch browse cards as thumbnails become ready
 13. `finalize_background_flow(...)`:
-    - only sets `Ready` after reconcile, projection, and the thumbnail queue are all fully settled
+    - marks startup ready once snapshot apply, reconcile, current-surface projection, and startup-priority thumbnails settle
+    - schedules deferred thumbnail catch-up after ready-enough instead of keeping the app in startup-busy state
 
 ## What Is On The Current Startup Critical Path
 
-Today, the effective startup critical path is larger than it should be:
+The effective startup critical path is now:
 
 - shell render
-- snapshot hydrate
-- full snapshot apply
-- startup reconcile / full-library scan
-- full catalog refresh
-- full projection shaping for gallery and timeline
-- full media-cache warmup
-- full browse-tier thumbnail queue drain before `Ready`
+- config load
+- background storage open + migrations
+- startup snapshot hydrate
+- bounded startup snapshot apply (recent gallery slice only)
+- startup reconcile / scan
+- current-surface projection refresh
+- startup-priority thumbnail batches only
 
-The shell is technically responsive because heavy work runs through `Task::perform`, but the product still feels heavy because the runtime policy treats deep catch-up as startup work.
+The path intentionally no longer includes:
+
+- synchronous pre-render storage open
+- full gallery snapshot rehydration
+- any timeline snapshot rehydration
+- full browse-tier thumbnail backlog drain before `Ready`
 
 ## Non-Critical Work That Is Currently Too Eager
 
@@ -123,9 +122,15 @@ That is correct data, but it is broader than the first visible surface needs dur
 
 `start_thumbnail_batches(...)` currently queues every missing browse-tier thumbnail immediately after projection. That preserves correctness, but it front-loads CPU, disk, and ffmpeg/image work at the exact moment the shell should be becoming comfortably interactive.
 
-### 4. Snapshot apply is still broad
+### 4. Snapshot apply was still broad
 
-The snapshot system is directionally correct and already chunked, but it still restores both browse surfaces before startup reconcile can begin. This is less severe than projection/thumb generation, but it still contributes to a broader-than-necessary startup path.
+The remaining blocker was the persisted projection snapshot itself:
+
+- it carried full gallery browse state
+- it carried full timeline browse state
+- startup eagerly deserialized and re-applied both before reconcile could continue
+
+That broad snapshot payload was the last major reason `Loading library snapshot` still felt heavy on large libraries.
 
 ## Recommended Corrected Startup Policy
 
@@ -199,13 +204,21 @@ After ready enough is reached:
 Implemented in code:
 
 - startup now has an explicit ready-enough boundary
+- bootstrap no longer opens storage or runs migrations before the first render
+- startup logging now writes a timestamped log file with stage start/end timing, migration timing, counts, errors, first-usable-gallery, startup-ready, and deferred-catch-up milestones
+- startup log placement now prefers a dev/portable `logs/` directory when appropriate and otherwise falls back to a platform-appropriate app log directory
+- startup snapshot persistence is now a bounded gallery-only payload (`version = 2`) instead of a full gallery+timeline browse snapshot
+- legacy broad snapshots are discarded and rebuilt after the next compatible projection refresh
+- snapshot apply now restores only the recent gallery slice needed for early interaction instead of rebuilding both browse surfaces
 - startup projection refresh is narrowed to the currently visible browse surface while startup is still incomplete
 - startup cache warm-up is bounded to a visible slice instead of the full catalog
+- stale delayed-startup reconcile ticks are now ignored after their due timestamp is cleared, preventing duplicate startup scan/projection loops
 - startup browse-tier thumbnail work is split into:
   - startup-priority items
   - delayed background catch-up
 - deferred thumbnail catch-up starts after startup ready-enough and runs in lighter batches
 - route switches can request a deferred surface refresh when startup intentionally skipped the non-visible route
+- no new splash screen was added in this pass; the existing staged activity UI remains the honest startup indicator after the critical path reduction
 
 Still intentionally true:
 

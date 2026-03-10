@@ -4,28 +4,43 @@
 
 - Symptoms
   - Startup shows honest activity state, but the app still feels too heavy before it becomes comfortably usable.
-  - Gallery is eventually correct, yet startup still appears to front-load projection and thumbnail work across the whole library.
+  - `Loading library snapshot` takes a noticeable amount of time before the user gets useful interaction.
+  - Gallery is eventually correct, yet startup still appears to front-load broad restore work.
 - Affected area
   - Startup/runtime policy in `crates/librapix-app/src/main.rs`.
 - Likely cause
-  - The staged coordinator restored activity reporting, but still treated too much work as startup-critical:
-    - full browse-tier thumbnail backlog
-    - full media-cache warm-up
-    - non-visible route preparation
+  - The staged coordinator restored activity reporting, but the persisted startup snapshot was still too broad.
 - Confirmed cause
-  - Startup had no explicit ready-enough boundary separate from deferred catch-up.
-  - Catalog-backed projection still over-prepared data for startup.
-  - Thumbnail scheduling still queued the full missing browse-tier backlog immediately after projection.
+  - Startup previously opened storage in bootstrap before the first render.
+  - The persisted projection snapshot still stored full gallery and full timeline browse models, so startup eagerly deserialized and reapplied both during `Loading library snapshot`.
+  - Thumbnail scheduling still queued the full missing browse-tier backlog immediately after projection until the deferred catch-up split was completed.
 - Resolution
-  - Add an explicit startup-ready state.
-  - Narrow startup projection to the currently visible surface and bound cache warm-up to a visible slice.
-  - Split thumbnail work into:
-    - startup-priority thumbnails
-    - delayed background catch-up
-  - Restore `Ready` after startup-critical work settles instead of waiting for the full thumbnail backlog.
+  - Remove storage open/migration work from the pre-render bootstrap path.
+  - Persist a bounded startup snapshot (`projection_snapshots.version = 2`) that restores only a recent gallery slice plus filter-tag metadata.
+  - Discard older broad snapshots instead of eagerly rehydrating them.
+  - Keep startup-ready separate from deferred thumbnail catch-up.
+  - Add timestamped startup logs so the next regression is measurable instead of inferred.
 - Prevention guidance
+  - Keep the startup snapshot intentionally small and limited to the first useful surface.
   - When runtime activity becomes staged, also classify work by startup-critical vs deferred catch-up.
+  - Do not reintroduce storage open/migration work on the pre-render bootstrap path.
   - Do not treat non-visible route preparation or full-library thumbnail backfill as mandatory startup completion work.
+
+## Startup logs are hard to find
+
+- Symptoms
+  - Startup instrumentation exists, but it is unclear where the active log file was written.
+- Affected area
+  - Startup logging bootstrap in `crates/librapix-app/src/startup_log.rs`.
+- Confirmed behavior
+  - In development or portable-style runs, LibraPix first attempts to write logs to a nearby `logs/` directory.
+  - Otherwise it falls back to the app log directory resolved from `directories::ProjectDirs`.
+  - The active path is written to the log itself, printed to stderr on startup, and exposed in the in-app diagnostics panel.
+- Resolution
+  - Open Diagnostics and inspect the `startup log:` line.
+  - If running from a terminal, check the startup stderr line beginning with `Librapix log:`.
+- Prevention guidance
+  - Keep active log-path visibility in diagnostics whenever logging bootstrap changes.
 
 ## Startup shows no loading/activity state on catalog-first branch
 

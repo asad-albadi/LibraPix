@@ -77,6 +77,7 @@ pub fn load_or_create() -> Result<LoadedConfig, ConfigError> {
     fs::create_dir_all(&paths.config_dir)?;
     fs::create_dir_all(&paths.data_dir)?;
     fs::create_dir_all(&paths.cache_dir)?;
+    fs::create_dir_all(&paths.logs_dir)?;
     fs::create_dir_all(&paths.thumbnails_dir)?;
 
     let config = if paths.config_file.exists() {

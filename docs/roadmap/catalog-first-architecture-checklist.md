@@ -12,7 +12,7 @@
 - [x] Thumbnail milestone
 - [x] Search/projection milestone
 - [ ] UI adaptation milestone
-- [ ] Validation milestone
+- [x] Validation milestone
 - [x] Documentation completion milestone
 
 ## Current Slice
@@ -31,12 +31,19 @@
   - kept ready-state transitions honest until all staged work is idle
 - Implemented: targeted regression tests for startup activity state, ready-state finalization, and thumbnail-stage handoff.
 - Implemented: startup runtime completion pass now distinguishes startup-critical work from deferred catch-up.
+- Implemented: startup bootstrap no longer opens storage or runs migrations before the first render.
+- Implemented: startup instrumentation now writes a timestamped log file and records bootstrap/storage/snapshot/reconcile/projection/thumbnail timings plus first-usable/startup-ready milestones.
+- Implemented: startup log placement now supports nearby `logs/` directories for dev/portable runs and falls back to a platform-appropriate app log directory otherwise.
+- Implemented: the persisted startup snapshot now stores only a bounded recent-gallery slice (`projection_snapshots.version = 2`) instead of full gallery+timeline browse state.
+- Implemented: legacy broad startup snapshots are discarded and rebuilt on the next compatible projection refresh instead of being eagerly rehydrated.
 - Implemented: startup projection refresh prioritizes the current surface and bounds startup cache warm-up to a visible slice.
 - Implemented: startup browse-tier thumbnail work is now split into startup-priority items plus delayed background catch-up.
 - Implemented: ready state no longer waits for the full browse-tier thumbnail backlog.
 - Implemented: route switches can trigger deferred surface refresh when startup intentionally leaves a non-visible surface for later.
+- Implemented: stale delayed startup-reconcile ticks are ignored after their due timestamp is cleared, preventing duplicate startup scan/projection loops.
 - Implemented: targeted regression coverage now covers deferred thumbnail catch-up readiness, startup route deferral, and startup thumbnail prioritization.
-- Implemented: final verification loop (`fmt`, `check`, `clippy`, `test`) passed after the startup completion changes.
+- Implemented: final verification loop (`fmt`, `check`, `clippy`, `test`) passed after the startup completion + instrumentation changes.
+- Implemented: startup smoke runs now confirm log-path emission, legacy snapshot discard, version-2 startup-snapshot persistence, and fast-path version-2 startup restore.
 - Partially implemented: orchestration still enters through `crates/librapix-app/src/main.rs`, even though startup/catch-up boundaries are now materially cleaner.
 - Partially implemented: UI adaptation is restored for activity/status visibility and duplicate header status was removed, but full interactive product validation on a real populated library still needs manual confirmation outside this terminal environment.
 - Partially implemented: smoke validation from this environment can confirm build/run invocation only; populated-library GUI behavior still requires manual confirmation.

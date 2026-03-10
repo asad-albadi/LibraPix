@@ -1,9 +1,36 @@
 # Troubleshooting
 
+## Catalog-first startup still feels like a full-library preload
+
+- Symptoms
+  - Startup shows honest activity state, but the app still feels too heavy before it becomes comfortably usable.
+  - Gallery is eventually correct, yet startup still appears to front-load projection and thumbnail work across the whole library.
+- Affected area
+  - Startup/runtime policy in `crates/librapix-app/src/main.rs`.
+- Likely cause
+  - The staged coordinator restored activity reporting, but still treated too much work as startup-critical:
+    - full browse-tier thumbnail backlog
+    - full media-cache warm-up
+    - non-visible route preparation
+- Confirmed cause
+  - Startup had no explicit ready-enough boundary separate from deferred catch-up.
+  - Catalog-backed projection still over-prepared data for startup.
+  - Thumbnail scheduling still queued the full missing browse-tier backlog immediately after projection.
+- Resolution
+  - Add an explicit startup-ready state.
+  - Narrow startup projection to the currently visible surface and bound cache warm-up to a visible slice.
+  - Split thumbnail work into:
+    - startup-priority thumbnails
+    - delayed background catch-up
+  - Restore `Ready` after startup-critical work settles instead of waiting for the full thumbnail backlog.
+- Prevention guidance
+  - When runtime activity becomes staged, also classify work by startup-critical vs deferred catch-up.
+  - Do not treat non-visible route preparation or full-library thumbnail backfill as mandatory startup completion work.
+
 ## Startup shows no loading/activity state on catalog-first branch
 
 - Symptoms
-  - On startup with a real populated library, background work is clearly happening but the header activity text stays blank.
+  - On startup with a real populated library, background work is clearly happening but the runtime activity panel remains blank or the app appears idle.
   - Gallery/timeline/search can appear idle or empty while reconcile/projection work is still running.
   - The app may compile, test, and launch, but product-visible startup/runtime state does not behave honestly.
 - Affected area

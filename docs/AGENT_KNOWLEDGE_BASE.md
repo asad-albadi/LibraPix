@@ -60,8 +60,9 @@ Implemented now:
 ## 3) Current UX Shell Layout
 
 Shell (single-window Iced app):
-- Header: branding (`Libra` + `Pix`), search input, update chip, activity text, Settings, About, GitHub.
+- Header: branding (`Libra` + `Pix`), search input, update chip, Settings, About, GitHub.
 - Sidebar: browse nav + library list + library row actions (`Edit`, `Stats`) + add-library action.
+- Sidebar footer: structured runtime activity/status panel.
 - Main pane: gallery/timeline/search content and top toolbar stats + Filters button.
 - Details pane: selected media preview, metadata, tag chips, action buttons.
 

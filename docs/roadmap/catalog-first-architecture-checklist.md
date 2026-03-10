@@ -12,7 +12,7 @@
 - [x] Thumbnail milestone
 - [x] Search/projection milestone
 - [ ] UI adaptation milestone
-- [x] Validation milestone
+- [ ] Validation milestone
 - [x] Documentation completion milestone
 
 ## Current Slice
@@ -30,8 +30,14 @@
   - removed the silent monolithic `BackgroundWorkComplete` flow
   - kept ready-state transitions honest until all staged work is idle
 - Implemented: targeted regression tests for startup activity state, ready-state finalization, and thumbnail-stage handoff.
-- Implemented: validation loop (`fmt`, `check`, `clippy`, `test`) passed after the runtime reconciliation work.
-- Partially implemented: orchestration still enters through `crates/librapix-app/src/main.rs`, but it now uses explicit staged jobs instead of one silent background result apply path.
-- Partially implemented: UI adaptation is restored for activity/status visibility, but full interactive product validation on a real populated library still needs manual confirmation outside this terminal environment.
-- In progress: complete the startup/runtime policy so the branch reaches a real ready-enough state earlier and defers deep thumbnail/projection catch-up behind initial usability.
-- Planned next: finish the startup/runtime completion pass, then reassess whether further coordinator extraction is necessary before merge.
+- Implemented: startup runtime completion pass now distinguishes startup-critical work from deferred catch-up.
+- Implemented: startup projection refresh prioritizes the current surface and bounds startup cache warm-up to a visible slice.
+- Implemented: startup browse-tier thumbnail work is now split into startup-priority items plus delayed background catch-up.
+- Implemented: ready state no longer waits for the full browse-tier thumbnail backlog.
+- Implemented: route switches can trigger deferred surface refresh when startup intentionally leaves a non-visible surface for later.
+- Implemented: targeted regression coverage now covers deferred thumbnail catch-up readiness, startup route deferral, and startup thumbnail prioritization.
+- Implemented: final verification loop (`fmt`, `check`, `clippy`, `test`) passed after the startup completion changes.
+- Partially implemented: orchestration still enters through `crates/librapix-app/src/main.rs`, even though startup/catch-up boundaries are now materially cleaner.
+- Partially implemented: UI adaptation is restored for activity/status visibility and duplicate header status was removed, but full interactive product validation on a real populated library still needs manual confirmation outside this terminal environment.
+- Partially implemented: smoke validation from this environment can confirm build/run invocation only; populated-library GUI behavior still requires manual confirmation.
+- Planned next: manual populated-library validation before any merge to the default branch.

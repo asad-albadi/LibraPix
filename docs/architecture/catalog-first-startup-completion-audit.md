@@ -194,6 +194,25 @@ After ready enough is reached:
 - message-flow / media-ui / catalog-first architecture docs where needed
 - troubleshooting entry for the startup-heavy runtime policy and its final resolution
 
+## Implemented Outcome In This Pass
+
+Implemented in code:
+
+- startup now has an explicit ready-enough boundary
+- startup projection refresh is narrowed to the currently visible browse surface while startup is still incomplete
+- startup cache warm-up is bounded to a visible slice instead of the full catalog
+- startup browse-tier thumbnail work is split into:
+  - startup-priority items
+  - delayed background catch-up
+- deferred thumbnail catch-up starts after startup ready-enough and runs in lighter batches
+- route switches can request a deferred surface refresh when startup intentionally skipped the non-visible route
+
+Still intentionally true:
+
+- catalog refresh remains a full correctness step after reconcile
+- the coordinator still lives in `crates/librapix-app/src/main.rs`
+- full interactive confirmation on a populated real library still requires a human GUI pass outside this terminal environment
+
 ## Intentional Non-Goals For This Pass
 
 The final completion pass does not attempt:

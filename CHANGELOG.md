@@ -9,6 +9,7 @@ All notable changes to this project are documented in this file.
 - Added a catalog-first architecture plan, workstream checklist, and ADR for the new long-lived architecture branch.
 - Added a dedicated catalog-first startup completion audit documenting the current runtime critical path, remaining eager startup work, and the corrected ready-enough policy for finishing this branch.
 - Updated architecture docs to reflect the implemented catalog-first storage, timeline-key, search, thumbnail, and message-flow foundation.
+- Updated startup/runtime architecture docs and troubleshooting notes to record the final ready-enough startup policy, deferred thumbnail catch-up, and current-surface startup projection behavior.
 - Updated troubleshooting, message-flow, media-UI, and catalog-first architecture docs to record the catalog-first startup/runtime regression and its staged activity-state reconciliation.
 - Updated media-UI documentation to clarify that runtime activity status is shown in the sidebar footer rather than duplicated in the header.
 
@@ -46,6 +47,9 @@ All notable changes to this project are documented in this file.
 - Timeline projections can consume persisted day/month/year keys from the catalog layer while retaining timestamp fallback compatibility.
 - Thumbnail generation now records ready/failed named variants (`gallery-400`, `detail-800`) in storage-owned derived-artifact metadata.
 - Startup/runtime orchestration now uses explicit staged jobs (`snapshot hydrate/apply`, `scan`, `projection`, `thumbnail batches`) instead of one silent monolithic background result path.
+- Startup projection now prioritizes the currently visible surface during the startup-critical path instead of always rebuilding both browse routes before the app becomes usable.
+- Startup cache warm-up is now bounded to a visible slice instead of hydrating detail-cache state for the full catalog on every startup projection refresh.
+- Browse-tier thumbnail work is now split into startup-priority work and delayed background catch-up, with lighter batches during deferred catch-up.
 - Projection startup no longer forces eager detail-thumbnail generation across the full catalog; details fall back to browse thumbnails until higher-tier artifacts are ready.
 - The header no longer duplicates runtime activity text; that status now lives only in the left sidebar footer activity panel.
 - About dialog now shows the current app version from package metadata.
@@ -210,6 +214,7 @@ All notable changes to this project are documented in this file.
 ### Fixed
 - Existing real databases from the older runtime line now receive catalog/artifact tables through compatibility migrations, preventing silent empty startup projections on the catalog-first branch.
 - Startup activity text/loading indicators are restored on the catalog-first branch and now remain visible until snapshot, reconcile, projection, and thumbnail work actually settle.
+- Startup no longer waits for the full browse-tier thumbnail backlog before returning to a real ready-enough state.
 - Catalog-backed startup/projection failures no longer disappear behind `unwrap_or_default()` in the runtime path; errors now feed the structured activity state instead of silently clearing to idle.
 - Media-pane vertical scrollbar no longer overlays gallery/timeline cards; it now uses embedded scrollbar spacing so content width reserves a dedicated scrollbar gutter.
 - Timeline scrubber no longer snaps sideways on first click; scrub mode now keeps slider lane width stable and positions the date chip from the continuous scrub value.

@@ -39,6 +39,10 @@ Implemented:
 Partially implemented:
 
 - detail thumbnails are still generated from the background projection flow instead of a dedicated thumbnail job subsystem
+- startup browse-tier generation is now split into:
+  - startup-priority thumbnails for the first visible slice
+  - delayed background catch-up for the remaining browse-tier backlog
+- background catch-up batches run more lightly than the startup-priority batches to reduce startup pressure
 
 Deferred:
 

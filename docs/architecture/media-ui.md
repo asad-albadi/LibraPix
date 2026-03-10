@@ -95,4 +95,9 @@ This produces a Google-Photos-style justified layout where images maintain aspec
   - gallery/timeline/search projection refresh
   - thumbnail batches
 - Product placement is intentional: the structured activity panel lives in the left sidebar footer; the header does not duplicate the same runtime status text.
-- Activity text remains visible while real work is in flight and only clears to `Ready` when the staged coordinator has no remaining background work queued or running.
+- Startup uses a ready-enough policy rather than a full-library preload policy:
+  - current-route browse state is prioritized first
+  - non-visible route refresh can remain deferred until later
+  - startup thumbnail work is bounded to a first useful slice
+- Deferred thumbnail catch-up can continue after the app is already usable.
+- Activity text remains visible while real work is in flight, but startup readiness no longer waits for the full browse-tier thumbnail backlog.

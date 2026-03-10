@@ -95,8 +95,16 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
     - `ProjectionJobComplete`
     - `ThumbnailBatchComplete`
   - Startup restore also schedules a non-blocking GitHub latest-release check task.
-  - UI remains interactive while background work proceeds; sidebar/header activity state reflects the real stage currently in flight.
-  - Ready state is only restored after snapshot apply, reconcile, projection, and queued thumbnail work have all settled.
+  - Startup projection now follows a ready-enough policy:
+    - the startup-critical projection refresh prioritizes the currently visible browse surface
+    - non-visible route refresh can remain deferred until explicitly requested or later background catch-up
+    - startup cache warm-up is bounded to a small visible slice instead of the full catalog
+  - Thumbnail work is now split:
+    - startup-priority thumbnail work for the first visible slice
+    - delayed background catch-up for the remaining browse-tier backlog
+  - UI remains interactive while background work proceeds; sidebar activity state reflects the real stage currently in flight.
+  - Ready-enough state is restored after snapshot apply, reconcile, current-surface projection, and any startup-priority thumbnail work settle.
+  - Deferred thumbnail catch-up remains visible as honest background work without keeping the whole app in startup-busy state.
 - Release update check flow
   - State is explicit in app orchestration: `Unknown`, `Checking`, `UpToDate`, `UpdateAvailable { version, url }`, `Failed`.
   - Header chip click emits `UpdateChipPressed`.
@@ -129,7 +137,14 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
     - catalog-backed projection/search preparation
     - thumbnail batches
   - Catalog-backed projection work refreshes `media_catalog`, queries normalized rows, reads ready derived artifacts, and then schedules missing thumbnail work separately.
+  - During startup, projection refresh is intentionally narrower:
+    - current route first
+    - visible-slice cache warm-up
+    - deferred non-visible route refresh
   - Activity state is structural runtime state, not a widget-local hint; stage text and ready transitions are driven by the coordinator state machine.
+  - Ready-enough and background catch-up are now distinct runtime concepts:
+    - startup completion no longer waits for the full browse-tier thumbnail backlog
+    - deferred thumbnail catch-up is delayed and batched more lightly after startup becomes usable
   - Current branch limitation: the staged coordinator still lives in `librapix-app/src/main.rs` and has not yet been extracted into smaller orchestration modules.
   - Release checks continue to follow the same non-blocking task model (`Task::perform`) through `start_update_check` -> `UpdateCheckCompleted`.
 

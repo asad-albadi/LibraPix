@@ -225,6 +225,11 @@ Implemented as runtime reconciliation on this branch:
 
 - startup/runtime activity is now staged again instead of being cleared by a single monolithic background result.
 - snapshot hydrate, reconcile, projection, and thumbnail batches now surface explicit runtime stages to the shell.
+- startup/runtime policy now distinguishes startup-critical work from deferred catch-up:
+  - startup projection prioritizes the visible route
+  - startup cache warm-up is bounded
+  - full browse-tier thumbnail backlog no longer blocks ready-enough state
+  - deferred thumbnail catch-up continues after the shell becomes usable again
 
 Deferred:
 

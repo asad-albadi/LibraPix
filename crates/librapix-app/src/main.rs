@@ -36,7 +36,9 @@ use librapix_storage::{
     Storage, StorageOpenMetrics, TagKind,
 };
 use librapix_thumbnails::{
-    ThumbnailOutcome, ensure_image_thumbnail, ensure_video_thumbnail, thumbnail_path,
+    ThumbnailCancellation, ThumbnailError, ThumbnailOutcome, VideoThumbnailErrorKind,
+    VideoThumbnailOptions, ensure_image_thumbnail, ensure_video_thumbnail,
+    ensure_video_thumbnail_with_options, thumbnail_path,
 };
 use notify::{EventKind, RecursiveMode, Watcher};
 use semver::Version;
@@ -45,6 +47,8 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 use std::time::{Duration, Instant, SystemTime};
 use ui::*;
 
@@ -169,6 +173,15 @@ enum ThumbnailWorkMode {
     #[default]
     StartupPriority,
     BackgroundCatchUp,
+}
+
+impl ThumbnailWorkMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            ThumbnailWorkMode::StartupPriority => "startup_priority",
+            ThumbnailWorkMode::BackgroundCatchUp => "background_catchup",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -313,20 +326,84 @@ struct ThumbnailWorkOutcome {
 #[derive(Debug, Clone)]
 struct ThumbnailBatchInput {
     generation: u64,
+    batch_id: u64,
+    mode: ThumbnailWorkMode,
     database_file: PathBuf,
     thumbnails_dir: PathBuf,
+    cancellation: ThumbnailCancellation,
     items: Vec<ThumbnailWorkItem>,
 }
 
 #[derive(Debug, Clone, Default)]
 struct ThumbnailBatchResult {
     generation: u64,
+    batch_id: u64,
+    mode: ThumbnailWorkMode,
     outcomes: Vec<ThumbnailWorkOutcome>,
+    completed_media_ids: Vec<i64>,
+    failures: Vec<ThumbnailFailureEvent>,
+    attempted: usize,
+    image_items: usize,
+    video_items: usize,
+    cancelled: bool,
+    worker_elapsed: Duration,
     generated: usize,
     reused_exact: usize,
     reused_fallback: usize,
     failed: usize,
     errors: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ThumbnailFailureClass {
+    ImageDecode,
+    ImageIo,
+    VideoFfmpegNotFound,
+    VideoSpawnFailed,
+    VideoTimedOut,
+    VideoExitNonZero,
+    VideoMissingOutput,
+    Cancelled,
+    Unknown,
+}
+
+impl ThumbnailFailureClass {
+    fn as_str(self) -> &'static str {
+        match self {
+            ThumbnailFailureClass::ImageDecode => "image_decode",
+            ThumbnailFailureClass::ImageIo => "image_io",
+            ThumbnailFailureClass::VideoFfmpegNotFound => "video_ffmpeg_not_found",
+            ThumbnailFailureClass::VideoSpawnFailed => "video_spawn_failed",
+            ThumbnailFailureClass::VideoTimedOut => "video_timed_out",
+            ThumbnailFailureClass::VideoExitNonZero => "video_exit_non_zero",
+            ThumbnailFailureClass::VideoMissingOutput => "video_missing_output",
+            ThumbnailFailureClass::Cancelled => "cancelled",
+            ThumbnailFailureClass::Unknown => "unknown",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ThumbnailFailureEvent {
+    media_id: i64,
+    media_kind: String,
+    failure_class: ThumbnailFailureClass,
+    detail: String,
+    command_line: Option<String>,
+    ffmpeg_path: Option<PathBuf>,
+    exit_code: Option<i32>,
+    stderr_summary: Option<String>,
+    timeout_ms: Option<u128>,
+    hard_failure: bool,
+    disable_video_for_session: bool,
+}
+
+#[derive(Debug, Clone)]
+struct ThumbnailRetryState {
+    attempts: u32,
+    next_retry_at: Instant,
+    failure_class: ThumbnailFailureClass,
+    last_error: String,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -394,6 +471,8 @@ struct BackgroundCoordinator {
     pending_projection: bool,
     pending_projection_reason: BackgroundWorkReason,
     deferred_thumbnail_due_at: Option<Instant>,
+    thumbnail_cancel_generation: Arc<AtomicU64>,
+    thumbnail_batch_id: u64,
     thumbnail_queue: VecDeque<ThumbnailWorkItem>,
     thumbnail_queued_ids: HashSet<i64>,
     deferred_thumbnail_queue: VecDeque<ThumbnailWorkItem>,
@@ -404,6 +483,14 @@ struct BackgroundCoordinator {
     thumbnail_reused_fallback: usize,
     thumbnail_failed: usize,
     thumbnail_mode: ThumbnailWorkMode,
+    thumbnail_retry_state: HashMap<i64, ThumbnailRetryState>,
+    video_thumbnails_disabled_reason: Option<String>,
+    video_thumbnails_disabled_ffmpeg: Option<PathBuf>,
+    thumbnail_result_window_started_at: Option<Instant>,
+    thumbnail_result_window_batches: usize,
+    thumbnail_result_window_outcomes: usize,
+    thumbnail_result_window_failures: usize,
+    thumbnail_refresh_requests_while_active: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -606,10 +693,15 @@ const DEFERRED_THUMBNAIL_DELAY_MS: u64 = 800;
 const DEFERRED_THUMBNAIL_TICK_INTERVAL: Duration = Duration::from_millis(140);
 const SNAPSHOT_APPLY_CHUNK_SIZE: usize = 240;
 const STARTUP_SNAPSHOT_GALLERY_LIMIT: usize = 160;
-const THUMBNAIL_BATCH_SIZE: usize = 24;
-const BACKGROUND_THUMBNAIL_BATCH_SIZE: usize = 8;
+const STARTUP_IMAGE_THUMBNAIL_BATCH_SIZE: usize = 6;
+const BACKGROUND_IMAGE_THUMBNAIL_BATCH_SIZE: usize = 3;
+const MAX_VIDEO_THUMBNAILS_PER_BATCH: usize = 1;
 const STARTUP_THUMBNAIL_PRIORITY_LIMIT: usize = 96;
 const STARTUP_CACHE_WARM_LIMIT: usize = 160;
+const THUMBNAIL_RESULT_LOG_WINDOW: Duration = Duration::from_secs(1);
+const IMAGE_THUMBNAIL_RETRY_COOLDOWN: Duration = Duration::from_secs(15 * 60);
+const VIDEO_THUMBNAIL_RETRY_COOLDOWN: Duration = Duration::from_secs(10 * 60);
+const VIDEO_SESSION_DISABLE_COOLDOWN: Duration = Duration::from_secs(30 * 60);
 const PROJECTION_SNAPSHOT_KEY: &str = "default";
 const PROJECTION_SNAPSHOT_VERSION: u32 = 2;
 const AUTO_UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
@@ -6161,16 +6253,42 @@ fn all_background_work_idle(app: &Librapix) -> bool {
         && app.background.deferred_thumbnail_due_at.is_none()
 }
 
-fn cancel_thumbnail_work(app: &mut Librapix, reason: &str) {
-    let had_work = app.background.thumbnail_in_flight
+fn thumbnail_work_active(app: &Librapix) -> bool {
+    app.background.thumbnail_in_flight
         || !app.background.thumbnail_queue.is_empty()
         || !app.background.deferred_thumbnail_queue.is_empty()
-        || app.background.deferred_thumbnail_due_at.is_some();
+        || app.background.deferred_thumbnail_due_at.is_some()
+}
+
+fn note_thumbnail_refresh_pressure(app: &mut Librapix, reason: &str) {
+    if !thumbnail_work_active(app) {
+        return;
+    }
+
+    app.background.thumbnail_refresh_requests_while_active = app
+        .background
+        .thumbnail_refresh_requests_while_active
+        .saturating_add(1);
+    startup_log::log_info(
+        "startup.thumbnail.refresh_while_active",
+        &format!(
+            "reason={reason} count={}",
+            app.background.thumbnail_refresh_requests_while_active
+        ),
+    );
+}
+
+fn cancel_thumbnail_work(app: &mut Librapix, reason: &str) {
+    let had_work = thumbnail_work_active(app);
     if !had_work {
         return;
     }
 
     app.background.thumbnail_generation = app.background.thumbnail_generation.saturating_add(1);
+    app.background.thumbnail_cancel_generation.store(
+        app.background.thumbnail_generation,
+        std::sync::atomic::Ordering::Relaxed,
+    );
     app.background.thumbnail_in_flight = false;
     app.background.deferred_thumbnail_due_at = None;
     app.background.thumbnail_queue.clear();
@@ -6187,7 +6305,15 @@ fn cancel_thumbnail_work(app: &mut Librapix, reason: &str) {
     app.activity_progress.items_total = None;
     app.activity_progress.queue_depth = 0;
     app.thumbnail_status = thumbnail_status_text(app.i18n, 0, 0, 0);
-    startup_log::log_info("startup.thumbnail.cancelled", reason);
+    startup_log::log_info(
+        "startup.thumbnail.cancelled",
+        &format!(
+            "{reason} queued={} failed={} refresh_requests_while_active={}",
+            app.background.thumbnail_total,
+            app.background.thumbnail_failed,
+            app.background.thumbnail_refresh_requests_while_active,
+        ),
+    );
 }
 
 fn continue_startup_after_snapshot_hydrate(app: &mut Librapix) -> Task<Message> {
@@ -6238,6 +6364,7 @@ fn request_reconcile(app: &mut Librapix, reason: BackgroundWorkReason) -> Task<M
     app.background.pending_reconcile = false;
     app.background.pending_reconcile_reason = reason;
     app.background.pending_projection = false;
+    note_thumbnail_refresh_pressure(app, "reconcile");
     cancel_thumbnail_work(app, "reason=reconcile");
     app.startup_metrics.reconcile_started_at = Some(Instant::now());
 
@@ -6546,6 +6673,7 @@ fn request_projection_refresh(app: &mut Librapix, reason: BackgroundWorkReason) 
 }
 
 fn start_projection_refresh(app: &mut Librapix, reason: BackgroundWorkReason) -> Task<Message> {
+    note_thumbnail_refresh_pressure(app, "projection_refresh");
     cancel_thumbnail_work(app, "reason=projection_refresh");
     let policy = projection_refresh_policy(app);
     app.background.projection_in_flight = true;
@@ -7284,8 +7412,13 @@ fn apply_projection_job_result(app: &mut Librapix, result: ProjectionJobResult) 
         .flatten();
     }
 
+    let thumbnail_candidates = filter_thumbnail_candidates_for_runtime_policy(
+        app,
+        result.thumbnail_candidates,
+        "apply_projection_job_result",
+    );
     let (immediate_thumbnails, deferred_thumbnails) =
-        split_startup_thumbnail_work(app, result.thumbnail_candidates);
+        split_startup_thumbnail_work(app, thumbnail_candidates);
     app.background.deferred_thumbnail_queue =
         deferred_thumbnails.into_iter().collect::<VecDeque<_>>();
     startup_log::log_info(
@@ -7337,32 +7470,18 @@ fn split_startup_thumbnail_work(
     app: &Librapix,
     items: Vec<ThumbnailWorkItem>,
 ) -> (Vec<ThumbnailWorkItem>, Vec<ThumbnailWorkItem>) {
-    if items.len() <= STARTUP_THUMBNAIL_PRIORITY_LIMIT {
-        return (items, Vec::new());
-    }
-
     let priority_ids = startup_priority_media_ids(app, STARTUP_THUMBNAIL_PRIORITY_LIMIT);
-    if priority_ids.is_empty() {
-        let immediate = items
-            .iter()
-            .take(STARTUP_THUMBNAIL_PRIORITY_LIMIT)
-            .cloned()
-            .collect::<Vec<_>>();
-        let deferred = items
-            .iter()
-            .skip(STARTUP_THUMBNAIL_PRIORITY_LIMIT)
-            .cloned()
-            .collect::<Vec<_>>();
-        return (immediate, deferred);
-    }
-
     let priority_set = priority_ids.into_iter().collect::<HashSet<_>>();
     let mut immediate = Vec::new();
     let mut deferred = Vec::new();
     for item in items {
-        if priority_set.contains(&item.media_id)
-            && immediate.len() < STARTUP_THUMBNAIL_PRIORITY_LIMIT
-        {
+        let is_video = item.media_kind.eq_ignore_ascii_case("video");
+        let is_priority = if priority_set.is_empty() {
+            immediate.len() < STARTUP_THUMBNAIL_PRIORITY_LIMIT
+        } else {
+            priority_set.contains(&item.media_id)
+        };
+        if is_priority && !is_video && immediate.len() < STARTUP_THUMBNAIL_PRIORITY_LIMIT {
             immediate.push(item);
         } else {
             deferred.push(item);
@@ -7372,6 +7491,11 @@ fn split_startup_thumbnail_work(
 }
 
 fn log_thumbnail_stage_start(app: &mut Librapix, mode: ThumbnailWorkMode, total: usize) {
+    app.background.thumbnail_result_window_started_at = Some(Instant::now());
+    app.background.thumbnail_result_window_batches = 0;
+    app.background.thumbnail_result_window_outcomes = 0;
+    app.background.thumbnail_result_window_failures = 0;
+    app.background.thumbnail_refresh_requests_while_active = 0;
     match mode {
         ThumbnailWorkMode::StartupPriority => {
             app.startup_metrics.startup_thumbnail_started_at = Some(Instant::now());
@@ -7387,7 +7511,39 @@ fn log_thumbnail_stage_start(app: &mut Librapix, mode: ThumbnailWorkMode, total:
     }
 }
 
+fn flush_thumbnail_result_window(app: &mut Librapix, force: bool) {
+    let Some(started_at) = app.background.thumbnail_result_window_started_at else {
+        return;
+    };
+    let elapsed = started_at.elapsed();
+    if !force && elapsed < THUMBNAIL_RESULT_LOG_WINDOW {
+        return;
+    }
+    if app.background.thumbnail_result_window_batches == 0 {
+        app.background.thumbnail_result_window_started_at = Some(Instant::now());
+        return;
+    }
+
+    startup_log::log_info(
+        "startup.thumbnail.message_rate",
+        &format!(
+            "mode={} window_ms={} batches_applied={} outcomes_applied={} failures_applied={} refresh_requests_while_active={}",
+            app.background.thumbnail_mode.as_str(),
+            elapsed.as_millis(),
+            app.background.thumbnail_result_window_batches,
+            app.background.thumbnail_result_window_outcomes,
+            app.background.thumbnail_result_window_failures,
+            app.background.thumbnail_refresh_requests_while_active,
+        ),
+    );
+    app.background.thumbnail_result_window_started_at = Some(Instant::now());
+    app.background.thumbnail_result_window_batches = 0;
+    app.background.thumbnail_result_window_outcomes = 0;
+    app.background.thumbnail_result_window_failures = 0;
+}
+
 fn log_thumbnail_stage_end(app: &mut Librapix) {
+    flush_thumbnail_result_window(app, true);
     match app.background.thumbnail_mode {
         ThumbnailWorkMode::StartupPriority => {
             if let Some(started_at) = app.startup_metrics.startup_thumbnail_started_at.take() {
@@ -7395,12 +7551,13 @@ fn log_thumbnail_stage_end(app: &mut Librapix) {
                     "startup.thumbnail_priority.end",
                     started_at.elapsed(),
                     &format!(
-                        "total={} generated={} reused_exact={} reused_fallback={} failed={}",
+                        "total={} generated={} reused_exact={} reused_fallback={} failed={} refresh_requests_while_active={}",
                         app.background.thumbnail_total,
                         app.background.thumbnail_generated,
                         app.background.thumbnail_reused_exact,
                         app.background.thumbnail_reused_fallback,
                         app.background.thumbnail_failed,
+                        app.background.thumbnail_refresh_requests_while_active,
                     ),
                 );
             }
@@ -7411,16 +7568,137 @@ fn log_thumbnail_stage_end(app: &mut Librapix) {
                     "startup.thumbnail_catchup.end",
                     started_at.elapsed(),
                     &format!(
-                        "total={} generated={} reused_exact={} reused_fallback={} failed={}",
+                        "total={} generated={} reused_exact={} reused_fallback={} failed={} refresh_requests_while_active={}",
                         app.background.thumbnail_total,
                         app.background.thumbnail_generated,
                         app.background.thumbnail_reused_exact,
                         app.background.thumbnail_reused_fallback,
                         app.background.thumbnail_failed,
+                        app.background.thumbnail_refresh_requests_while_active,
                     ),
                 );
             }
         }
+    }
+}
+
+fn filter_thumbnail_candidates_for_runtime_policy(
+    app: &mut Librapix,
+    items: Vec<ThumbnailWorkItem>,
+    context: &str,
+) -> Vec<ThumbnailWorkItem> {
+    let now = Instant::now();
+    app.background
+        .thumbnail_retry_state
+        .retain(|_, state| state.next_retry_at > now);
+
+    let mut allowed = Vec::with_capacity(items.len());
+    let mut suppressed_backoff = 0usize;
+    let mut suppressed_video_disabled = 0usize;
+    let mut next_retry_ms = None::<u128>;
+    let mut backoff_reason = None::<String>;
+
+    for item in items {
+        if item.media_kind.eq_ignore_ascii_case("video")
+            && app.background.video_thumbnails_disabled_reason.is_some()
+        {
+            suppressed_video_disabled += 1;
+            continue;
+        }
+        if let Some(state) = app.background.thumbnail_retry_state.get(&item.media_id)
+            && state.next_retry_at > now
+        {
+            suppressed_backoff += 1;
+            let retry_after = state.next_retry_at.duration_since(now).as_millis();
+            next_retry_ms =
+                Some(next_retry_ms.map_or(retry_after, |existing| existing.min(retry_after)));
+            if backoff_reason.is_none() {
+                backoff_reason = Some(format!(
+                    "{}:{}",
+                    state.failure_class.as_str(),
+                    state.last_error
+                ));
+            }
+            continue;
+        }
+        allowed.push(item);
+    }
+
+    if suppressed_backoff > 0 || suppressed_video_disabled > 0 {
+        startup_log::log_info(
+            "startup.thumbnail.schedule_suppressed",
+            &format!(
+                "context={context} allowed={} suppressed_backoff={} suppressed_video_disabled={} next_retry_ms={} backoff_reason={}",
+                allowed.len(),
+                suppressed_backoff,
+                suppressed_video_disabled,
+                next_retry_ms.unwrap_or_default(),
+                backoff_reason.unwrap_or_default(),
+            ),
+        );
+    }
+
+    allowed
+}
+
+fn prune_thumbnail_queues_for_runtime_policy(app: &mut Librapix, context: &str) {
+    let now = Instant::now();
+    let mut removed_from_active = 0usize;
+    let mut removed_from_deferred = 0usize;
+    let mut active = VecDeque::new();
+    let mut deferred = VecDeque::new();
+
+    while let Some(item) = app.background.thumbnail_queue.pop_front() {
+        let suppress = (item.media_kind.eq_ignore_ascii_case("video")
+            && app.background.video_thumbnails_disabled_reason.is_some())
+            || app
+                .background
+                .thumbnail_retry_state
+                .get(&item.media_id)
+                .is_some_and(|state| state.next_retry_at > now);
+        if suppress {
+            app.background.thumbnail_queued_ids.remove(&item.media_id);
+            removed_from_active += 1;
+        } else {
+            active.push_back(item);
+        }
+    }
+
+    while let Some(item) = app.background.deferred_thumbnail_queue.pop_front() {
+        let suppress = (item.media_kind.eq_ignore_ascii_case("video")
+            && app.background.video_thumbnails_disabled_reason.is_some())
+            || app
+                .background
+                .thumbnail_retry_state
+                .get(&item.media_id)
+                .is_some_and(|state| state.next_retry_at > now);
+        if suppress {
+            removed_from_deferred += 1;
+        } else {
+            deferred.push_back(item);
+        }
+    }
+
+    app.background.thumbnail_queue = active;
+    app.background.deferred_thumbnail_queue = deferred;
+    if removed_from_active > 0 {
+        app.background.thumbnail_total = app
+            .background
+            .thumbnail_total
+            .saturating_sub(removed_from_active);
+        app.activity_progress.items_total = Some(app.background.thumbnail_total);
+    }
+    if removed_from_active > 0 || removed_from_deferred > 0 {
+        startup_log::log_info(
+            "startup.thumbnail.queue_pruned",
+            &format!(
+                "context={context} removed_active={} removed_deferred={} remaining_active={} remaining_deferred={}",
+                removed_from_active,
+                removed_from_deferred,
+                app.background.thumbnail_queue.len(),
+                app.background.deferred_thumbnail_queue.len(),
+            ),
+        );
     }
 }
 
@@ -7462,13 +7740,54 @@ fn start_deferred_thumbnail_catchup(app: &mut Librapix) -> Task<Message> {
     start_thumbnail_batches(app, items, ThumbnailWorkMode::BackgroundCatchUp)
 }
 
+fn thumbnail_batch_limits(mode: ThumbnailWorkMode) -> (usize, usize) {
+    match mode {
+        ThumbnailWorkMode::StartupPriority => (
+            STARTUP_IMAGE_THUMBNAIL_BATCH_SIZE,
+            MAX_VIDEO_THUMBNAILS_PER_BATCH,
+        ),
+        ThumbnailWorkMode::BackgroundCatchUp => (
+            BACKGROUND_IMAGE_THUMBNAIL_BATCH_SIZE,
+            MAX_VIDEO_THUMBNAILS_PER_BATCH,
+        ),
+    }
+}
+
+fn take_next_thumbnail_batch(app: &mut Librapix) -> Vec<ThumbnailWorkItem> {
+    let (max_items, max_videos) = thumbnail_batch_limits(app.background.thumbnail_mode);
+    let mut batch = Vec::new();
+    let mut remaining = VecDeque::new();
+    let mut video_count = 0usize;
+
+    while let Some(item) = app.background.thumbnail_queue.pop_front() {
+        let is_video = item.media_kind.eq_ignore_ascii_case("video");
+        let allow = batch.len() < max_items && (!is_video || video_count < max_videos);
+        if allow {
+            if is_video {
+                video_count += 1;
+            }
+            batch.push(item);
+        } else {
+            remaining.push_back(item);
+        }
+    }
+
+    app.background.thumbnail_queue = remaining;
+    batch
+}
+
 fn start_thumbnail_batches(
     app: &mut Librapix,
     items: Vec<ThumbnailWorkItem>,
     mode: ThumbnailWorkMode,
 ) -> Task<Message> {
+    let items =
+        filter_thumbnail_candidates_for_runtime_policy(app, items, "start_thumbnail_batches");
     app.background.thumbnail_generation = app.background.thumbnail_generation.saturating_add(1);
     let generation = app.background.thumbnail_generation;
+    app.background
+        .thumbnail_cancel_generation
+        .store(generation, std::sync::atomic::Ordering::Relaxed);
     app.background.thumbnail_queue.clear();
     app.background.thumbnail_queued_ids.clear();
     app.background.thumbnail_in_flight = false;
@@ -7478,6 +7797,7 @@ fn start_thumbnail_batches(
     app.background.thumbnail_reused_exact = 0;
     app.background.thumbnail_reused_fallback = 0;
     app.background.thumbnail_failed = 0;
+    app.background.thumbnail_batch_id = 0;
 
     let mut queued = VecDeque::new();
     let mut queued_ids = HashSet::new();
@@ -7512,26 +7832,23 @@ fn start_thumbnail_batches(
 }
 
 fn run_next_thumbnail_batch_if_idle(app: &mut Librapix) -> Task<Message> {
-    if app.background.thumbnail_in_flight || app.background.thumbnail_queue.is_empty() {
+    if app.background.thumbnail_in_flight {
+        return Task::none();
+    }
+    prune_thumbnail_queues_for_runtime_policy(app, "run_next_thumbnail_batch_if_idle");
+    if app.background.thumbnail_queue.is_empty() {
         return Task::none();
     }
 
     app.background.thumbnail_in_flight = true;
-    let mut batch = Vec::new();
-    let batch_size = if matches!(
-        app.background.thumbnail_mode,
-        ThumbnailWorkMode::BackgroundCatchUp
-    ) {
-        BACKGROUND_THUMBNAIL_BATCH_SIZE
-    } else {
-        THUMBNAIL_BATCH_SIZE
-    };
-    for _ in 0..batch_size {
-        let Some(item) = app.background.thumbnail_queue.pop_front() else {
-            break;
-        };
-        batch.push(item);
-    }
+    let batch = take_next_thumbnail_batch(app);
+    app.background.thumbnail_batch_id = app.background.thumbnail_batch_id.saturating_add(1);
+    let batch_id = app.background.thumbnail_batch_id;
+    let image_items = batch
+        .iter()
+        .filter(|item| item.media_kind.eq_ignore_ascii_case("image"))
+        .count();
+    let video_items = batch.len().saturating_sub(image_items);
 
     app.activity_progress.items_total = Some(app.background.thumbnail_total);
     app.activity_progress.items_done = app.background.thumbnail_done;
@@ -7543,10 +7860,30 @@ fn run_next_thumbnail_batch_if_idle(app: &mut Librapix) -> Task<Message> {
         false,
     );
 
+    startup_log::log_info(
+        "startup.thumbnail.batch.dispatch",
+        &format!(
+            "generation={} batch_id={} mode={} items={} images={} videos={} queue_remaining={}",
+            app.background.thumbnail_generation,
+            batch_id,
+            app.background.thumbnail_mode.as_str(),
+            batch.len(),
+            image_items,
+            video_items,
+            app.background.thumbnail_queue.len(),
+        ),
+    );
+
     let input = ThumbnailBatchInput {
         generation: app.background.thumbnail_generation,
+        batch_id,
+        mode: app.background.thumbnail_mode,
         database_file: app.runtime.database_file.clone(),
         thumbnails_dir: app.runtime.thumbnails_dir.clone(),
+        cancellation: ThumbnailCancellation::new(
+            Arc::clone(&app.background.thumbnail_cancel_generation),
+            app.background.thumbnail_generation,
+        ),
         items: batch,
     };
     Task::perform(async move { do_thumbnail_batch(input) }, |result| {
@@ -7568,26 +7905,169 @@ fn compatible_detail_thumbnail_for_work_item(
     path.is_file().then_some(path)
 }
 
+fn thumbnail_failure_from_error(
+    item: &ThumbnailWorkItem,
+    error: &ThumbnailError,
+) -> ThumbnailFailureEvent {
+    match error {
+        ThumbnailError::Video(video_error) => {
+            let failure_class = match video_error.kind {
+                VideoThumbnailErrorKind::FfmpegNotFound => {
+                    ThumbnailFailureClass::VideoFfmpegNotFound
+                }
+                VideoThumbnailErrorKind::SpawnFailed => ThumbnailFailureClass::VideoSpawnFailed,
+                VideoThumbnailErrorKind::TimedOut => ThumbnailFailureClass::VideoTimedOut,
+                VideoThumbnailErrorKind::ExitNonZero => ThumbnailFailureClass::VideoExitNonZero,
+                VideoThumbnailErrorKind::MissingOutput => ThumbnailFailureClass::VideoMissingOutput,
+                VideoThumbnailErrorKind::Cancelled => ThumbnailFailureClass::Cancelled,
+            };
+            ThumbnailFailureEvent {
+                media_id: item.media_id,
+                media_kind: item.media_kind.clone(),
+                failure_class,
+                detail: error.to_string(),
+                command_line: Some(video_error.command_line.clone()),
+                ffmpeg_path: video_error.ffmpeg_path.clone(),
+                exit_code: video_error.exit_code,
+                stderr_summary: video_error.stderr_summary.clone(),
+                timeout_ms: video_error.timeout_ms,
+                hard_failure: !matches!(video_error.kind, VideoThumbnailErrorKind::Cancelled),
+                disable_video_for_session: matches!(
+                    video_error.kind,
+                    VideoThumbnailErrorKind::FfmpegNotFound | VideoThumbnailErrorKind::SpawnFailed
+                ),
+            }
+        }
+        ThumbnailError::Image(_) => ThumbnailFailureEvent {
+            media_id: item.media_id,
+            media_kind: item.media_kind.clone(),
+            failure_class: ThumbnailFailureClass::ImageDecode,
+            detail: error.to_string(),
+            command_line: None,
+            ffmpeg_path: None,
+            exit_code: None,
+            stderr_summary: None,
+            timeout_ms: None,
+            hard_failure: true,
+            disable_video_for_session: false,
+        },
+        ThumbnailError::Io(_) => ThumbnailFailureEvent {
+            media_id: item.media_id,
+            media_kind: item.media_kind.clone(),
+            failure_class: if item.media_kind.eq_ignore_ascii_case("image") {
+                ThumbnailFailureClass::ImageIo
+            } else {
+                ThumbnailFailureClass::Unknown
+            },
+            detail: error.to_string(),
+            command_line: None,
+            ffmpeg_path: None,
+            exit_code: None,
+            stderr_summary: None,
+            timeout_ms: None,
+            hard_failure: false,
+            disable_video_for_session: false,
+        },
+    }
+}
+
+fn log_thumbnail_failure_event(
+    generation: u64,
+    batch_id: u64,
+    item: &ThumbnailWorkItem,
+    failure: &ThumbnailFailureEvent,
+) {
+    if item.media_kind.eq_ignore_ascii_case("video") {
+        startup_log::log_error(
+            "startup.thumbnail.video.failure",
+            &format!(
+                "generation={} batch_id={} media_id={} class={} ffmpeg={} command={} exit_code={:?} timeout_ms={:?} stderr={:?} detail={}",
+                generation,
+                batch_id,
+                item.media_id,
+                failure.failure_class.as_str(),
+                failure
+                    .ffmpeg_path
+                    .as_ref()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_default(),
+                failure.command_line.clone().unwrap_or_default(),
+                failure.exit_code,
+                failure.timeout_ms,
+                failure.stderr_summary,
+                failure.detail,
+            ),
+        );
+    } else {
+        startup_log::log_error(
+            "startup.thumbnail.generate.failed",
+            &format!(
+                "generation={} batch_id={} media_id={} kind={} class={} detail={}",
+                generation,
+                batch_id,
+                item.media_id,
+                item.media_kind,
+                failure.failure_class.as_str(),
+                failure.detail,
+            ),
+        );
+    }
+}
+
 fn do_thumbnail_batch(input: ThumbnailBatchInput) -> ThumbnailBatchResult {
+    let batch_started_at = Instant::now();
+    let generation = input.generation;
+    let batch_id = input.batch_id;
+    let mode = input.mode;
+    let database_file = input.database_file;
+    let thumbnails_dir = input.thumbnails_dir;
+    let cancellation = input.cancellation;
+    let items = input.items;
+    let image_items = items
+        .iter()
+        .filter(|item| item.media_kind.eq_ignore_ascii_case("image"))
+        .count();
+    let video_items = items.len().saturating_sub(image_items);
+    startup_log::log_info(
+        "startup.thumbnail.batch.start",
+        &format!(
+            "generation={} batch_id={} mode={} items={} images={} videos={}",
+            generation,
+            batch_id,
+            mode.as_str(),
+            items.len(),
+            image_items,
+            video_items,
+        ),
+    );
     let mut out = ThumbnailBatchResult {
-        generation: input.generation,
+        generation,
+        batch_id,
+        mode,
+        image_items,
+        video_items,
         ..Default::default()
     };
-    let storage = Storage::open(&input.database_file).ok();
+    let storage = Storage::open(&database_file).ok();
 
-    for item in input.items {
+    for item in items {
+        if cancellation.is_cancelled() {
+            out.cancelled = true;
+            break;
+        }
         let item_started_at = Instant::now();
         let exact_path = thumbnail_path(
-            &input.thumbnails_dir,
+            &thumbnails_dir,
             &item.absolute_path,
             item.file_size_bytes,
             item.modified_unix_seconds,
             GALLERY_THUMB_SIZE,
         );
         if exact_path.is_file() {
+            out.attempted += 1;
             out.reused_exact += 1;
             if let Some(storage) = storage.as_ref() {
-                let relative_path = relative_artifact_path(&input.thumbnails_dir, &exact_path);
+                let relative_path = relative_artifact_path(&thumbnails_dir, &exact_path);
                 if let Err(error) = storage.upsert_derived_artifact(
                     item.media_id,
                     DerivedArtifactKind::Thumbnail,
@@ -7598,13 +8078,14 @@ fn do_thumbnail_batch(input: ThumbnailBatchInput) -> ThumbnailBatchResult {
                     out.errors.push(error.to_string());
                 }
             }
+            out.completed_media_ids.push(item.media_id);
             if item.media_kind.eq_ignore_ascii_case("video") {
                 startup_log::log_duration(
                     "startup.thumbnail.video",
                     item_started_at.elapsed(),
                     &format!(
-                        "generation={} media_id={} mode=exact_reuse",
-                        input.generation, item.media_id,
+                        "generation={} batch_id={} media_id={} mode=exact_reuse",
+                        generation, batch_id, item.media_id,
                     ),
                 );
             }
@@ -7616,16 +8097,18 @@ fn do_thumbnail_batch(input: ThumbnailBatchInput) -> ThumbnailBatchResult {
         }
 
         if let Some(fallback_path) =
-            compatible_detail_thumbnail_for_work_item(&input.thumbnails_dir, &item)
+            compatible_detail_thumbnail_for_work_item(&thumbnails_dir, &item)
         {
+            out.attempted += 1;
             out.reused_fallback += 1;
+            out.completed_media_ids.push(item.media_id);
             if item.media_kind.eq_ignore_ascii_case("video") {
                 startup_log::log_duration(
                     "startup.thumbnail.video",
                     item_started_at.elapsed(),
                     &format!(
-                        "generation={} media_id={} mode=fallback_reuse",
-                        input.generation, item.media_id,
+                        "generation={} batch_id={} media_id={} mode=fallback_reuse",
+                        generation, batch_id, item.media_id,
                     ),
                 );
             }
@@ -7636,21 +8119,26 @@ fn do_thumbnail_batch(input: ThumbnailBatchInput) -> ThumbnailBatchResult {
             continue;
         }
 
+        out.attempted += 1;
         let thumbnail_result = if item.media_kind.eq_ignore_ascii_case("image") {
             ensure_image_thumbnail(
-                &input.thumbnails_dir,
+                &thumbnails_dir,
                 &item.absolute_path,
                 item.file_size_bytes,
                 item.modified_unix_seconds,
                 GALLERY_THUMB_SIZE,
             )
         } else if item.media_kind.eq_ignore_ascii_case("video") {
-            ensure_video_thumbnail(
-                &input.thumbnails_dir,
+            ensure_video_thumbnail_with_options(
+                &thumbnails_dir,
                 &item.absolute_path,
                 item.file_size_bytes,
                 item.modified_unix_seconds,
                 GALLERY_THUMB_SIZE,
+                VideoThumbnailOptions {
+                    cancellation: Some(cancellation.clone()),
+                    ..VideoThumbnailOptions::default()
+                },
             )
         } else {
             continue;
@@ -7665,7 +8153,7 @@ fn do_thumbnail_batch(input: ThumbnailBatchInput) -> ThumbnailBatchResult {
                 }
                 if let Some(storage) = storage.as_ref() {
                     let relative_path =
-                        relative_artifact_path(&input.thumbnails_dir, &thumbnail.thumbnail_path);
+                        relative_artifact_path(&thumbnails_dir, &thumbnail.thumbnail_path);
                     if let Err(error) = storage.upsert_derived_artifact(
                         item.media_id,
                         DerivedArtifactKind::Thumbnail,
@@ -7690,8 +8178,8 @@ fn do_thumbnail_batch(input: ThumbnailBatchInput) -> ThumbnailBatchResult {
                         "startup.thumbnail.video",
                         item_started_at.elapsed(),
                         &format!(
-                            "generation={} media_id={} mode={}",
-                            input.generation, item.media_id, outcome_label,
+                            "generation={} batch_id={} media_id={} mode={}",
+                            generation, batch_id, item.media_id, outcome_label,
                         ),
                     );
                 } else if item_started_at.elapsed() >= Duration::from_millis(150) {
@@ -7699,13 +8187,19 @@ fn do_thumbnail_batch(input: ThumbnailBatchInput) -> ThumbnailBatchResult {
                         "startup.thumbnail.item.slow",
                         item_started_at.elapsed(),
                         &format!(
-                            "generation={} media_id={} kind={} mode={}",
-                            input.generation, item.media_id, item.media_kind, outcome_label,
+                            "generation={} batch_id={} media_id={} kind={} mode={}",
+                            generation, batch_id, item.media_id, item.media_kind, outcome_label,
                         ),
                     );
                 }
+                out.completed_media_ids.push(item.media_id);
             }
             Err(error) => {
+                let failure = thumbnail_failure_from_error(&item, &error);
+                if matches!(failure.failure_class, ThumbnailFailureClass::Cancelled) {
+                    out.cancelled = true;
+                    break;
+                }
                 if let Some(storage) = storage.as_ref() {
                     let _ = storage.upsert_derived_artifact(
                         item.media_id,
@@ -7717,21 +8211,47 @@ fn do_thumbnail_batch(input: ThumbnailBatchInput) -> ThumbnailBatchResult {
                 }
                 out.failed += 1;
                 out.errors.push(error.to_string());
-                out.outcomes.push(ThumbnailWorkOutcome {
-                    media_id: item.media_id,
-                    thumbnail_path: None,
-                });
-                startup_log::log_error(
-                    "startup.thumbnail.generate.failed",
-                    &format!(
-                        "generation={} media_id={} kind={} error={error}",
-                        input.generation, item.media_id, item.media_kind,
-                    ),
-                );
+                out.failures.push(failure.clone());
+                out.completed_media_ids.push(item.media_id);
+                log_thumbnail_failure_event(generation, batch_id, &item, &failure);
             }
         }
     }
 
+    out.worker_elapsed = batch_started_at.elapsed();
+    if out.cancelled {
+        startup_log::log_duration(
+            "startup.thumbnail.batch.cancelled",
+            out.worker_elapsed,
+            &format!(
+                "generation={} batch_id={} mode={} attempted={} images={} videos={} queue_cancelled=true",
+                out.generation,
+                out.batch_id,
+                out.mode.as_str(),
+                out.attempted,
+                out.image_items,
+                out.video_items,
+            ),
+        );
+    } else {
+        startup_log::log_duration(
+            "startup.thumbnail.batch.end",
+            out.worker_elapsed,
+            &format!(
+                "generation={} batch_id={} mode={} attempted={} images={} videos={} generated={} reused_exact={} reused_fallback={} failed={}",
+                out.generation,
+                out.batch_id,
+                out.mode.as_str(),
+                out.attempted,
+                out.image_items,
+                out.video_items,
+                out.generated,
+                out.reused_exact,
+                out.reused_fallback,
+                out.failed,
+            ),
+        );
+    }
     out
 }
 
@@ -7746,9 +8266,93 @@ fn patch_thumbnail_paths(items: &mut [BrowseItem], updates: &HashMap<i64, PathBu
     }
 }
 
+fn disable_video_thumbnails_for_session(app: &mut Librapix, failure: &ThumbnailFailureEvent) {
+    if app.background.video_thumbnails_disabled_reason.is_some() {
+        return;
+    }
+
+    app.background.video_thumbnails_disabled_reason = Some(failure.detail.clone());
+    app.background.video_thumbnails_disabled_ffmpeg = failure.ffmpeg_path.clone();
+    startup_log::log_warn(
+        "startup.thumbnail.video.disabled_session",
+        &format!(
+            "reason={} ffmpeg={}",
+            failure.detail,
+            failure
+                .ffmpeg_path
+                .as_ref()
+                .map(|path| path.display().to_string())
+                .unwrap_or_default(),
+        ),
+    );
+}
+
+fn thumbnail_failure_cooldown(failure: &ThumbnailFailureEvent, attempts: u32) -> Duration {
+    let base = if failure.media_kind.eq_ignore_ascii_case("video") {
+        if failure.disable_video_for_session {
+            VIDEO_SESSION_DISABLE_COOLDOWN
+        } else {
+            VIDEO_THUMBNAIL_RETRY_COOLDOWN
+        }
+    } else {
+        IMAGE_THUMBNAIL_RETRY_COOLDOWN
+    };
+    base.saturating_mul(attempts.clamp(1, 3))
+}
+
+fn record_thumbnail_failure(app: &mut Librapix, failure: &ThumbnailFailureEvent) {
+    if failure.disable_video_for_session {
+        disable_video_thumbnails_for_session(app, failure);
+    }
+
+    let attempts = app
+        .background
+        .thumbnail_retry_state
+        .get(&failure.media_id)
+        .map(|state| state.attempts.saturating_add(1))
+        .unwrap_or(1);
+    let cooldown = thumbnail_failure_cooldown(failure, attempts);
+    let next_retry_at = Instant::now() + cooldown;
+    app.background.thumbnail_retry_state.insert(
+        failure.media_id,
+        ThumbnailRetryState {
+            attempts,
+            next_retry_at,
+            failure_class: failure.failure_class,
+            last_error: failure.detail.clone(),
+        },
+    );
+    startup_log::log_info(
+        "startup.thumbnail.backoff.applied",
+        &format!(
+            "media_id={} kind={} class={} attempts={} retry_after_ms={} hard_failure={} disable_video_for_session={}",
+            failure.media_id,
+            failure.media_kind,
+            failure.failure_class.as_str(),
+            attempts,
+            cooldown.as_millis(),
+            failure.hard_failure,
+            failure.disable_video_for_session,
+        ),
+    );
+}
+
 fn apply_thumbnail_batch_result(app: &mut Librapix, result: ThumbnailBatchResult) -> Task<Message> {
+    let apply_started_at = Instant::now();
     if result.generation != app.background.thumbnail_generation {
         app.background.thumbnail_in_flight = false;
+        startup_log::log_info(
+            "startup.thumbnail.batch.stale",
+            &format!(
+                "generation={} active_generation={} batch_id={} mode={} attempted={} cancelled={}",
+                result.generation,
+                app.background.thumbnail_generation,
+                result.batch_id,
+                result.mode.as_str(),
+                result.attempted,
+                result.cancelled,
+            ),
+        );
         return finalize_background_flow(app);
     }
 
@@ -7759,11 +8363,15 @@ fn apply_thumbnail_batch_result(app: &mut Librapix, result: ThumbnailBatchResult
     app.background.thumbnail_failed += result.failed;
 
     let mut ready_paths = HashMap::<i64, PathBuf>::new();
+    for media_id in &result.completed_media_ids {
+        app.background.thumbnail_queued_ids.remove(media_id);
+        app.background.thumbnail_done = app.background.thumbnail_done.saturating_add(1);
+    }
     for outcome in result.outcomes {
-        app.background
-            .thumbnail_queued_ids
-            .remove(&outcome.media_id);
         if let Some(path) = outcome.thumbnail_path {
+            app.background
+                .thumbnail_retry_state
+                .remove(&outcome.media_id);
             ready_paths.insert(outcome.media_id, path.clone());
             if let Some(details) = app.media_cache.get_mut(&outcome.media_id)
                 && details.detail_thumbnail_path.is_none()
@@ -7779,8 +8387,12 @@ fn apply_thumbnail_batch_result(app: &mut Librapix, result: ThumbnailBatchResult
                 announcement.preview_path = Some(path);
             }
         }
-        app.background.thumbnail_done = app.background.thumbnail_done.saturating_add(1);
     }
+
+    for failure in &result.failures {
+        record_thumbnail_failure(app, failure);
+    }
+    prune_thumbnail_queues_for_runtime_policy(app, "apply_thumbnail_batch_result");
 
     patch_thumbnail_paths(&mut app.gallery_items, &ready_paths);
     patch_thumbnail_paths(&mut app.timeline_items, &ready_paths);
@@ -7798,6 +8410,41 @@ fn apply_thumbnail_batch_result(app: &mut Librapix, result: ThumbnailBatchResult
     app.activity_progress.items_total = Some(app.background.thumbnail_total);
     app.activity_progress.items_done = app.background.thumbnail_done;
     app.activity_progress.queue_depth = app.background.thumbnail_queue.len();
+    app.background.thumbnail_result_window_batches = app
+        .background
+        .thumbnail_result_window_batches
+        .saturating_add(1);
+    app.background.thumbnail_result_window_outcomes = app
+        .background
+        .thumbnail_result_window_outcomes
+        .saturating_add(result.completed_media_ids.len());
+    app.background.thumbnail_result_window_failures = app
+        .background
+        .thumbnail_result_window_failures
+        .saturating_add(result.failures.len());
+    flush_thumbnail_result_window(app, false);
+    startup_log::log_duration(
+        "startup.thumbnail.apply",
+        apply_started_at.elapsed(),
+        &format!(
+            "generation={} batch_id={} mode={} outcomes={} ready_paths={} failures={} worker_elapsed_ms={} queue_remaining={} deferred_remaining={} pending_projection={} pending_reconcile={}",
+            result.generation,
+            result.batch_id,
+            result.mode.as_str(),
+            result.completed_media_ids.len(),
+            ready_paths.len(),
+            result.failures.len(),
+            result.worker_elapsed.as_millis(),
+            app.background.thumbnail_queue.len(),
+            app.background.deferred_thumbnail_queue.len(),
+            app.background.pending_projection,
+            app.background.pending_reconcile,
+        ),
+    );
+
+    if result.cancelled {
+        return finalize_background_flow(app);
+    }
 
     if !app.background.thumbnail_queue.is_empty() {
         return run_next_thumbnail_batch_if_idle(app);
@@ -7894,6 +8541,17 @@ fn refresh_diagnostics(app: &mut Librapix) {
         "first usable gallery recorded: {}",
         app.startup_metrics.first_usable_gallery_recorded
     ));
+    if let Some(reason) = app.background.video_thumbnails_disabled_reason.as_deref() {
+        lines.push(format!(
+            "video thumbnails disabled: {} ({})",
+            reason,
+            app.background
+                .video_thumbnails_disabled_ffmpeg
+                .as_ref()
+                .map(|path| path.display().to_string())
+                .unwrap_or_default()
+        ));
+    }
     lines.push(format!("browse status: {}", app.browse_status));
 
     app.diagnostics_lines = lines;
@@ -8464,6 +9122,40 @@ mod tests {
     }
 
     #[test]
+    fn split_startup_thumbnail_work_defers_visible_video_to_background() {
+        let mut app = test_app();
+        app.background.startup_ready = false;
+        app.gallery_items = vec![BrowseItem {
+            media_id: 10,
+            title: "visible-video.mp4".to_owned(),
+            thumbnail_path: None,
+            media_kind: "video".to_owned(),
+            metadata_line: String::new(),
+            is_group_header: false,
+            line: String::new(),
+            aspect_ratio: 1.0,
+            group_image_count: None,
+            group_video_count: None,
+        }];
+
+        let (immediate, deferred) = split_startup_thumbnail_work(
+            &app,
+            vec![ThumbnailWorkItem {
+                generation: 1,
+                media_id: 10,
+                absolute_path: PathBuf::from("/tmp/10.mp4"),
+                media_kind: "video".to_owned(),
+                file_size_bytes: 10,
+                modified_unix_seconds: Some(10),
+            }],
+        );
+
+        assert!(immediate.is_empty());
+        assert_eq!(deferred.len(), 1);
+        assert_eq!(deferred[0].media_id, 10);
+    }
+
+    #[test]
     fn thumbnail_lookup_reuses_exact_deterministic_gallery_file_without_catalog_row() {
         let thumbnails_dir = unique_temp_dir("exact-reuse");
         let row = catalog_row(1, thumbnails_dir.join("source.png"), "image");
@@ -8723,8 +9415,9 @@ mod tests {
         let _ = apply_projection_job_result(&mut app, result);
 
         assert!(app.background.startup_ready);
-        assert!(app.background.thumbnail_in_flight);
-        assert_eq!(app.activity_status, "Generating thumbnails");
+        assert!(!app.background.thumbnail_in_flight);
+        assert_eq!(app.background.deferred_thumbnail_queue.len(), 1);
+        assert!(app.background.deferred_thumbnail_due_at.is_some());
     }
 
     #[test]
@@ -8748,6 +9441,144 @@ mod tests {
         assert!(app.background.thumbnail_queue.is_empty());
         assert!(!app.background.thumbnail_in_flight);
         assert!(app.background.thumbnail_generation > 3);
+    }
+
+    #[test]
+    fn video_ffmpeg_failure_disables_later_video_scheduling_for_session() {
+        let mut app = test_app();
+        app.background.thumbnail_generation = 2;
+        app.background.thumbnail_in_flight = true;
+        app.background.thumbnail_total = 2;
+        app.background.thumbnail_queue = VecDeque::from([ThumbnailWorkItem {
+            generation: 2,
+            media_id: 88,
+            absolute_path: PathBuf::from("/tmp/88.mp4"),
+            media_kind: "video".to_owned(),
+            file_size_bytes: 10,
+            modified_unix_seconds: Some(10),
+        }]);
+        app.background.thumbnail_queued_ids = HashSet::from([77, 88]);
+
+        let _ = apply_thumbnail_batch_result(
+            &mut app,
+            ThumbnailBatchResult {
+                generation: 2,
+                batch_id: 1,
+                mode: ThumbnailWorkMode::BackgroundCatchUp,
+                completed_media_ids: vec![77],
+                failures: vec![ThumbnailFailureEvent {
+                    media_id: 77,
+                    media_kind: "video".to_owned(),
+                    failure_class: ThumbnailFailureClass::VideoFfmpegNotFound,
+                    detail: "ffmpeg missing".to_owned(),
+                    command_line: Some("ffmpeg.exe -i /tmp/77.mp4".to_owned()),
+                    ffmpeg_path: None,
+                    exit_code: None,
+                    stderr_summary: None,
+                    timeout_ms: None,
+                    hard_failure: true,
+                    disable_video_for_session: true,
+                }],
+                failed: 1,
+                ..ThumbnailBatchResult::default()
+            },
+        );
+
+        assert_eq!(
+            app.background.video_thumbnails_disabled_reason.as_deref(),
+            Some("ffmpeg missing")
+        );
+        assert!(app.background.thumbnail_queue.is_empty());
+        assert!(
+            filter_thumbnail_candidates_for_runtime_policy(
+                &mut app,
+                vec![ThumbnailWorkItem {
+                    generation: 3,
+                    media_id: 99,
+                    absolute_path: PathBuf::from("/tmp/99.mp4"),
+                    media_kind: "video".to_owned(),
+                    file_size_bytes: 10,
+                    modified_unix_seconds: Some(10),
+                }],
+                "test",
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn failed_thumbnail_enters_backoff_and_is_not_rescheduled_immediately() {
+        let mut app = test_app();
+        app.background.thumbnail_generation = 4;
+        app.background.thumbnail_in_flight = true;
+        app.background.thumbnail_total = 1;
+        app.background.thumbnail_queued_ids = HashSet::from([55]);
+
+        let _ = apply_thumbnail_batch_result(
+            &mut app,
+            ThumbnailBatchResult {
+                generation: 4,
+                batch_id: 2,
+                mode: ThumbnailWorkMode::BackgroundCatchUp,
+                completed_media_ids: vec![55],
+                failures: vec![ThumbnailFailureEvent {
+                    media_id: 55,
+                    media_kind: "image".to_owned(),
+                    failure_class: ThumbnailFailureClass::ImageDecode,
+                    detail: "invalid image".to_owned(),
+                    command_line: None,
+                    ffmpeg_path: None,
+                    exit_code: None,
+                    stderr_summary: None,
+                    timeout_ms: None,
+                    hard_failure: true,
+                    disable_video_for_session: false,
+                }],
+                failed: 1,
+                ..ThumbnailBatchResult::default()
+            },
+        );
+
+        let filtered = filter_thumbnail_candidates_for_runtime_policy(
+            &mut app,
+            vec![ThumbnailWorkItem {
+                generation: 5,
+                media_id: 55,
+                absolute_path: PathBuf::from("/tmp/55.png"),
+                media_kind: "image".to_owned(),
+                file_size_bytes: 10,
+                modified_unix_seconds: Some(10),
+            }],
+            "test",
+        );
+        assert!(filtered.is_empty());
+        assert!(app.background.thumbnail_retry_state.contains_key(&55));
+    }
+
+    #[test]
+    fn cancelled_thumbnail_batch_exits_before_processing_items() {
+        let token = Arc::new(AtomicU64::new(9));
+        let cancellation = ThumbnailCancellation::new(token.clone(), 8);
+        let result = do_thumbnail_batch(ThumbnailBatchInput {
+            generation: 8,
+            batch_id: 3,
+            mode: ThumbnailWorkMode::BackgroundCatchUp,
+            database_file: PathBuf::from("/tmp/librapix-test.db"),
+            thumbnails_dir: PathBuf::from("/tmp/librapix-thumbnails"),
+            cancellation,
+            items: vec![ThumbnailWorkItem {
+                generation: 8,
+                media_id: 1,
+                absolute_path: PathBuf::from("/tmp/1.png"),
+                media_kind: "image".to_owned(),
+                file_size_bytes: 10,
+                modified_unix_seconds: Some(10),
+            }],
+        });
+
+        assert!(result.cancelled);
+        assert_eq!(result.attempted, 0);
+        assert!(result.completed_media_ids.is_empty());
     }
 
     fn browse_item(media_id: i64) -> BrowseItem {

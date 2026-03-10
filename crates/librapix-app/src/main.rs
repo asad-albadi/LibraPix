@@ -1574,9 +1574,6 @@ fn view(app: &Librapix) -> Element<'_, Message> {
             .align_y(iced::Alignment::Center),
             Space::new().width(Length::Fill),
             update_chip,
-            text(app.activity_status.clone())
-                .size(FONT_CAPTION)
-                .color(ACCENT),
             settings_btn,
             about_btn,
             github_btn,

@@ -94,4 +94,5 @@ This produces a Google-Photos-style justified layout where images maintain aspec
   - library reconcile/scan
   - gallery/timeline/search projection refresh
   - thumbnail batches
+- Product placement is intentional: the structured activity panel lives in the left sidebar footer; the header does not duplicate the same runtime status text.
 - Activity text remains visible while real work is in flight and only clears to `Ready` when the staged coordinator has no remaining background work queued or running.

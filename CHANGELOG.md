@@ -9,6 +9,7 @@ All notable changes to this project are documented in this file.
 - Added a catalog-first architecture plan, workstream checklist, and ADR for the new long-lived architecture branch.
 - Updated architecture docs to reflect the implemented catalog-first storage, timeline-key, search, thumbnail, and message-flow foundation.
 - Updated troubleshooting, message-flow, media-UI, and catalog-first architecture docs to record the catalog-first startup/runtime regression and its staged activity-state reconciliation.
+- Updated media-UI documentation to clarify that runtime activity status is shown in the sidebar footer rather than duplicated in the header.
 
 ### Added
 - Migration `0009_catalog_first_foundation.sql` with:
@@ -45,6 +46,7 @@ All notable changes to this project are documented in this file.
 - Thumbnail generation now records ready/failed named variants (`gallery-400`, `detail-800`) in storage-owned derived-artifact metadata.
 - Startup/runtime orchestration now uses explicit staged jobs (`snapshot hydrate/apply`, `scan`, `projection`, `thumbnail batches`) instead of one silent monolithic background result path.
 - Projection startup no longer forces eager detail-thumbnail generation across the full catalog; details fall back to browse thumbnails until higher-tier artifacts are ready.
+- The header no longer duplicates runtime activity text; that status now lives only in the left sidebar footer activity panel.
 - About dialog now shows the current app version from package metadata.
 - Header now includes an update-status chip (`Checking...`, `Up to date`, `New release`) with subtle fallback behavior on failed checks.
 - Startup restore flow now batches background indexing/projection restore with update-check scheduling while keeping UI responsive.

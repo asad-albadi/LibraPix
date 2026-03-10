@@ -762,6 +762,48 @@ impl Storage {
             .map_err(StorageError::Sql)
     }
 
+    pub fn upsert_projection_snapshot(
+        &self,
+        snapshot_key: &str,
+        payload_json: &str,
+    ) -> Result<(), StorageError> {
+        self.connection.execute(
+            "INSERT INTO projection_snapshots (
+                snapshot_key,
+                payload_json,
+                updated_unix_seconds,
+                updated_at
+             ) VALUES (
+                ?1,
+                ?2,
+                CAST(strftime('%s', 'now') AS INTEGER),
+                CURRENT_TIMESTAMP
+             )
+             ON CONFLICT(snapshot_key) DO UPDATE SET
+                payload_json = excluded.payload_json,
+                updated_unix_seconds = CAST(strftime('%s', 'now') AS INTEGER),
+                updated_at = CURRENT_TIMESTAMP",
+            params![snapshot_key, payload_json],
+        )?;
+        Ok(())
+    }
+
+    pub fn load_projection_snapshot(
+        &self,
+        snapshot_key: &str,
+    ) -> Result<Option<String>, StorageError> {
+        self.connection
+            .query_row(
+                "SELECT payload_json
+                 FROM projection_snapshots
+                 WHERE snapshot_key = ?1",
+                params![snapshot_key],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(StorageError::Sql)
+    }
+
     pub fn refresh_source_root_statistics(&self, root_ids: &[i64]) -> Result<(), StorageError> {
         if root_ids.is_empty() {
             return Ok(());
@@ -1173,7 +1215,31 @@ mod tests {
         let version = storage
             .migration_version()
             .expect("migration version should be queryable");
-        assert_eq!(version, 9);
+        assert_eq!(version, 11);
+
+        let _ = std::fs::remove_file(db);
+    }
+
+    #[test]
+    fn projection_snapshot_round_trip() {
+        let db = temp_db_file("projection-snapshot");
+        let storage = Storage::open(&db).expect("database should open");
+
+        storage
+            .upsert_projection_snapshot("default", "{\"gallery\":[]}")
+            .expect("snapshot upsert should succeed");
+        let snapshot = storage
+            .load_projection_snapshot("default")
+            .expect("snapshot load should succeed");
+        assert_eq!(snapshot.as_deref(), Some("{\"gallery\":[]}"));
+
+        storage
+            .upsert_projection_snapshot("default", "{\"gallery\":[1]}")
+            .expect("snapshot update should succeed");
+        let updated = storage
+            .load_projection_snapshot("default")
+            .expect("snapshot load should succeed");
+        assert_eq!(updated.as_deref(), Some("{\"gallery\":[1]}"));
 
         let _ = std::fs::remove_file(db);
     }

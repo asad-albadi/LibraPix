@@ -101,6 +101,7 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
     - the startup-critical projection refresh prioritizes the currently visible browse surface
     - non-visible route refresh can remain deferred until explicitly requested or later background catch-up
     - startup cache warm-up is bounded to a small visible slice instead of the full catalog
+    - if reconcile finds no catalog changes and the current route is already the restored default gallery snapshot, startup skips the redundant gallery projection entirely and becomes ready from that snapshot
   - Startup projection now performs explicit thumbnail lookup before scheduling generation:
     - exact ready `gallery-400` artifact rows
     - deterministic on-disk `gallery-400` files
@@ -128,6 +129,9 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
     - startup-ready and first-usable-gallery milestones
   - UI remains interactive while background work proceeds; sidebar activity state reflects the real stage currently in flight.
   - Ready-enough state is restored after snapshot apply, reconcile, and current-surface projection; thumbnail work continues honestly in background instead of blocking startup-ready.
+  - Unchanged startup launches no longer force gallery-loading ownership after reconcile:
+    - `apply_scan_job_result(...)` skips projection when the restored gallery snapshot is still valid for the default route
+    - timeline refresh remains deferred until the user opens Timeline
   - Deferred thumbnail catch-up remains visible as honest background work without keeping the whole app in startup-busy state.
   - Later projection or reconcile requests cancel queued thumbnail work and invalidate stale in-flight batches instead of waiting for them to settle first.
   - Failed thumbnails now enter runtime backoff so later projection refreshes do not immediately retry the same known-bad items.

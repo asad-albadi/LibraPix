@@ -48,6 +48,8 @@ All notable changes to this project are documented in this file.
 - Removed `packaging/windows/` scripts and packaging README from the repository.
 
 ### Changed
+- Startup no longer forces a current-surface gallery projection on unchanged launches when a compatible gallery snapshot is already restored; after reconcile reports `new_files=0`, `changed_files=0`, and `missing_marked=0`, the app now skips the redundant full-gallery rebuild, marks startup ready immediately, and defers timeline refresh until the user opens that route.
+- Startup/runtime logs now record queued reconcile/projection requests, reconcile failure reasons, explicit gallery-working set/clear ownership, and skipped startup projection reasons so repeated refresh loops are provable from the newest Windows startup log.
 - Periodic app ticks now use `iced::time::every` on the Iced tokio backend instead of blocking `std::thread::sleep` subscription loops, removing the executor-side delay that could leave thumbnail completions unapplied on Windows.
 - Thumbnail runtime logs now record worker-complete -> dispatch-to-UI -> message-received handoff timing, apply-start timing, and slow handoff warnings.
 - Background thumbnail runtime now treats images and videos differently: visible videos defer into slower catch-up, video batches run one item at a time, and in-flight video extraction is cancellation-aware.

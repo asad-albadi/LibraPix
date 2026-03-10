@@ -1,5 +1,29 @@
 # Troubleshooting
 
+## Startup still enters `Refreshing gallery` even when nothing changed
+
+- Symptoms
+  - Every launch briefly restores the snapshot gallery, then immediately flips back into `Refreshing gallery` / `Working` / `Loading gallery...`.
+  - Startup logs show `startup.first_usable_gallery` from the snapshot, `startup.reconcile.scan_roots` with `new=0 changed=0`, and then a full `startup.projection.start` anyway.
+  - Large libraries spend noticeable extra time validating the whole gallery/artifact set before `startup.ready`.
+- Affected area
+  - Startup reconcile/projection handoff in `crates/librapix-app/src/main.rs`.
+- Confirmed cause
+  - `apply_scan_job_result(...)` unconditionally requested a projection refresh after every successful reconcile.
+  - Even when the current route was already the restored gallery snapshot and reconcile proved there were no catalog changes (`new_files=0`, `changed_files=0`, `missing_marked=0`), startup still rebuilt the full gallery and revalidated every ready gallery artifact before clearing gallery-loading ownership.
+- Resolution
+  - Skip the startup gallery projection when all of these are true:
+    - a compatible startup snapshot is already loaded
+    - the current route is the default unfiltered gallery
+    - reconcile reports no catalog changes
+  - Mark startup ready immediately from the restored snapshot after reconcile settles.
+  - Leave timeline refresh deferred so opening Timeline still triggers a real projection when needed.
+  - Log the skip explicitly as `startup.projection.skipped`.
+- Prevention guidance
+  - Do not schedule startup projection unconditionally after reconcile.
+  - If startup already has a usable snapshot and reconcile finds no catalog changes, treat that snapshot as the startup-complete gallery instead of rebuilding it immediately.
+  - Keep startup logs explicit about why a projection ran, queued, or was skipped.
+
 ## Catalog-first startup still feels like a full-library preload
 
 - Symptoms

@@ -6235,6 +6235,23 @@ fn startup_blocking_work_complete(app: &Librapix) -> bool {
         && !app.background.projection_in_flight
 }
 
+fn should_skip_startup_projection(app: &Librapix, summary: IndexingSummary) -> bool {
+    if app.background.startup_ready
+        || !app.background.snapshot_loaded
+        || app.gallery_items.is_empty()
+        || !app.state.search_query.trim().is_empty()
+        || !matches!(app.state.active_route, Route::Gallery)
+        || app.filter_media_kind.is_some()
+        || app.filter_extension.is_some()
+        || app.filter_tag.is_some()
+        || app.filter_source_root_id.is_some()
+    {
+        return false;
+    }
+
+    summary.new_files == 0 && summary.changed_files == 0 && summary.missing_marked == 0
+}
+
 fn all_background_work_idle(app: &Librapix) -> bool {
     startup_blocking_work_complete(app)
         && !app.background.thumbnail_in_flight
@@ -6338,6 +6355,19 @@ fn request_reconcile(app: &mut Librapix, reason: BackgroundWorkReason) -> Task<M
         || app.background.reconcile_in_flight
         || app.background.projection_in_flight
     {
+        startup_log::log_info(
+            "startup.reconcile.request.queued",
+            &format!(
+                "reason={reason:?} snapshot_apply={} snapshot_loaded={} snapshot_generation={} reconcile_in_flight={} projection_in_flight={} pending_reconcile={} pending_projection={}",
+                app.background.snapshot_apply.is_some(),
+                app.background.snapshot_loaded,
+                app.background.snapshot_generation,
+                app.background.reconcile_in_flight,
+                app.background.projection_in_flight,
+                app.background.pending_reconcile,
+                app.background.pending_projection,
+            ),
+        );
         app.background.pending_reconcile_reason = if app.background.pending_reconcile {
             merge_work_reason(app.background.pending_reconcile_reason, reason)
         } else {
@@ -6650,6 +6680,19 @@ fn request_projection_refresh(app: &mut Librapix, reason: BackgroundWorkReason) 
         || app.background.reconcile_in_flight
         || app.background.projection_in_flight
     {
+        startup_log::log_info(
+            "startup.projection.request.queued",
+            &format!(
+                "reason={reason:?} snapshot_apply={} snapshot_loaded={} snapshot_generation={} reconcile_in_flight={} projection_in_flight={} pending_reconcile={} pending_projection={}",
+                app.background.snapshot_apply.is_some(),
+                app.background.snapshot_loaded,
+                app.background.snapshot_generation,
+                app.background.reconcile_in_flight,
+                app.background.projection_in_flight,
+                app.background.pending_reconcile,
+                app.background.pending_projection,
+            ),
+        );
         app.background.pending_projection_reason = if app.background.pending_projection {
             merge_work_reason(app.background.pending_projection_reason, reason)
         } else {
@@ -6690,6 +6733,16 @@ fn start_projection_refresh(app: &mut Librapix, reason: BackgroundWorkReason) ->
     app.activity_progress.queue_depth = 0;
     app.activity_progress.last_error = None;
     app.browse_status = projection_loading_label(app).to_owned();
+    startup_log::log_info(
+        "startup.gallery_working.set",
+        &format!(
+            "owner=projection generation={} route={:?} browse_status={} startup_ready={} reason={reason:?}",
+            app.background.projection_generation,
+            app.state.active_route,
+            app.browse_status,
+            app.background.startup_ready,
+        ),
+    );
     startup_log::log_info(
         "startup.projection.start",
         &format!(
@@ -7249,6 +7302,7 @@ fn apply_scan_job_result(app: &mut Librapix, result: ScanJobResult) -> Task<Mess
         return Task::none();
     }
 
+    let indexing_summary = result.indexing_summary;
     app.state.apply(AppMessage::ReplaceLibraryRoots);
     app.state.replace_library_roots(result.roots);
     ensure_valid_library_filter(app);
@@ -7256,12 +7310,24 @@ fn apply_scan_job_result(app: &mut Librapix, result: ScanJobResult) -> Task<Mess
     app.indexing_status = result.indexing_status;
     app.activity_progress.roots_total = Some(result.root_count);
     app.activity_progress.roots_done = result.scanned_root_ids.len();
-    if let Some(summary) = result.indexing_summary {
+    if let Some(summary) = indexing_summary {
         app.state.apply(AppMessage::RecordIndexingSummary);
         app.state.record_indexing_summary(summary);
     }
     if let Some(error) = result.error {
         app.activity_progress.last_error = Some(error);
+        startup_log::log_error(
+            "startup.reconcile.failed",
+            &format!(
+                "generation={} reason={:?} error={}",
+                result.generation,
+                result.reason,
+                app.activity_progress
+                    .last_error
+                    .as_deref()
+                    .unwrap_or_default()
+            ),
+        );
         app.background.reconcile_in_flight = false;
         if let Some(started_at) = app.startup_metrics.reconcile_started_at.take() {
             startup_log::log_duration(
@@ -7299,6 +7365,24 @@ fn apply_scan_job_result(app: &mut Librapix, result: ScanJobResult) -> Task<Mess
                 app.state.indexing_summary.read_model_count,
             ),
         );
+    }
+    if let Some(summary) = indexing_summary
+        && should_skip_startup_projection(app, summary)
+    {
+        app.background.startup_deferred_timeline_refresh = true;
+        startup_log::log_info(
+            "startup.projection.skipped",
+            &format!(
+                "reason=unchanged_snapshot_gallery generation={} route={:?} new_files={} changed_files={} missing_marked={} gallery_items={} timeline_deferred=true",
+                result.generation,
+                app.state.active_route,
+                summary.new_files,
+                summary.changed_files,
+                summary.missing_marked,
+                app.gallery_items.len(),
+            ),
+        );
+        return finalize_background_flow(app);
     }
     request_projection_refresh(app, result.reason)
 }
@@ -8540,6 +8624,19 @@ fn finalize_background_flow(app: &mut Librapix) -> Task<Message> {
         schedule_deferred_thumbnail_catchup(app);
     }
     if app.background.startup_ready && all_background_work_idle(app) {
+        startup_log::log_info(
+            "startup.gallery_working.clear",
+            &format!(
+                "owner=finalize route={:?} browse_status={} pending_reconcile={} pending_projection={} thumbnail_in_flight={} deferred_thumbnail_due={} deferred_thumbnail_queue={}",
+                app.state.active_route,
+                app.browse_status,
+                app.background.pending_reconcile,
+                app.background.pending_projection,
+                app.background.thumbnail_in_flight,
+                app.background.deferred_thumbnail_due_at.is_some(),
+                app.background.deferred_thumbnail_queue.len(),
+            ),
+        );
         set_activity_ready(app);
     }
     Task::none()
@@ -8972,7 +9069,7 @@ mod tests {
 
     #[test]
     fn windows_file_drop_payload_uses_dropfiles_header_and_double_nul() {
-        let path = PathBuf::from("/tmp/librapix/clip.png");
+        let path = std::env::temp_dir().join("librapix").join("clip.png");
         let payload = build_windows_file_drop_payload(&path).expect("payload should be generated");
         let header_size = std::mem::size_of::<WindowsDropFilesHeader>();
         assert!(payload.len() > header_size);
@@ -9367,6 +9464,91 @@ mod tests {
 
         assert!(app.background.projection_in_flight);
         assert!(matches!(app.state.active_route, Route::Timeline));
+    }
+
+    #[test]
+    fn unchanged_startup_snapshot_skips_projection_refresh() {
+        let mut app = test_app();
+        app.background.snapshot_loaded = true;
+        app.background.startup_ready = false;
+        app.background.reconcile_generation = 1;
+        app.background.reconcile_in_flight = true;
+        app.gallery_items = vec![browse_item(1), browse_item(2)];
+        set_activity_stage(
+            &mut app,
+            TextKey::StageRefreshingGalleryLabel,
+            "Loading gallery...".to_owned(),
+            true,
+        );
+
+        let _ = apply_scan_job_result(
+            &mut app,
+            ScanJobResult {
+                generation: 1,
+                reason: BackgroundWorkReason::UserOrSystem,
+                roots: vec![],
+                ignore_rules: vec![],
+                root_count: 1,
+                scanned_root_ids: vec![1],
+                indexing_summary: Some(IndexingSummary {
+                    scanned_roots: 1,
+                    candidate_files: 2,
+                    ignored_entries: 0,
+                    unreadable_entries: 0,
+                    new_files: 0,
+                    changed_files: 0,
+                    unchanged_files: 2,
+                    missing_marked: 0,
+                    read_model_count: 2,
+                }),
+                indexing_status: "Indexing complete".to_owned(),
+                error: None,
+            },
+        );
+
+        assert!(!app.background.projection_in_flight);
+        assert!(app.background.startup_ready);
+        assert!(app.background.startup_deferred_timeline_refresh);
+        assert!(!app.activity_progress.busy);
+        assert_eq!(app.activity_status, "Ready");
+    }
+
+    #[test]
+    fn startup_projection_still_runs_when_reconcile_detects_changes() {
+        let mut app = test_app();
+        app.background.snapshot_loaded = true;
+        app.background.startup_ready = false;
+        app.background.reconcile_generation = 1;
+        app.background.reconcile_in_flight = true;
+        app.gallery_items = vec![browse_item(1), browse_item(2)];
+
+        let _ = apply_scan_job_result(
+            &mut app,
+            ScanJobResult {
+                generation: 1,
+                reason: BackgroundWorkReason::UserOrSystem,
+                roots: vec![],
+                ignore_rules: vec![],
+                root_count: 1,
+                scanned_root_ids: vec![1],
+                indexing_summary: Some(IndexingSummary {
+                    scanned_roots: 1,
+                    candidate_files: 3,
+                    ignored_entries: 0,
+                    unreadable_entries: 0,
+                    new_files: 1,
+                    changed_files: 0,
+                    unchanged_files: 2,
+                    missing_marked: 0,
+                    read_model_count: 3,
+                }),
+                indexing_status: "Indexing complete".to_owned(),
+                error: None,
+            },
+        );
+
+        assert!(app.background.projection_in_flight);
+        assert!(!app.background.startup_ready);
     }
 
     #[test]

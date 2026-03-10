@@ -16,6 +16,7 @@ This repository is documentation-driven. Architecture and operational decisions 
 - `docs/architecture/catalog-first-architecture.md`
 - `docs/architecture/catalog-first-startup-completion-audit.md`
 - `docs/architecture/background-thumbnail-responsiveness-audit.md`
+- `docs/architecture/thumbnail-apply-handoff-audit.md`
 - `docs/architecture/startup-thumbnail-reuse-audit.md`
 - `docs/architecture/layers.md`
 - `docs/architecture/message-flow.md`

@@ -4,6 +4,10 @@ Date: 2026-03-10
 
 Scope: post-`startup.ready` responsiveness on `feat/catalog-first-architecture`, with focus on Windows large-library behavior and failing video thumbnails.
 
+Follow-on note:
+
+- A later Windows log exposed a second issue in the thumbnail completion handoff path. That separate completion-to-apply delay audit is recorded in `docs/architecture/thumbnail-apply-handoff-audit.md`.
+
 ## Target case
 
 Observed log: `logs/librapix-startup-20260310-164429-10636.log`

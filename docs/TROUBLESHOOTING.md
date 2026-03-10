@@ -1,5 +1,46 @@
 # Troubleshooting
 
+## Timeline, gallery, or filter switches hang after projection completes
+
+- Symptoms
+  - Startup or a route/filter change appears to finish projection work in the log, but the window becomes unresponsive or feels stuck immediately afterward.
+  - Logs show `interaction.projection.apply` or `startup.projection.end`, but the next visible frame never arrives promptly.
+  - Large-library runs are worst when Gallery or Timeline suddenly switch from a small restored/snapshot surface to a full 6k+ logical result set.
+- Affected area
+  - Large-surface rendering in `crates/librapix-app/src/main.rs`.
+- Confirmed cause
+  - Projection/search work was already off the UI thread, but the view path still tried to build the full gallery or timeline widget tree in one frame.
+  - Timeline was especially expensive because every date bucket built its own justified grid, but gallery/filter paths could hit the same problem once a full current-surface projection applied.
+  - The hang therefore happened after the background worker finished, not during storage/projection itself.
+- Resolution
+  - Keep full logical result sets in memory, but render only the current viewport plus overscan.
+  - Preserve scroll extent with top/bottom spacer blocks so scrolling correctness and full-library completeness remain intact.
+  - Log the effective render window with `interaction.surface_render.window` so large-surface rendering stays measurable in Windows runtime logs.
+- Prevention guidance
+  - Do not assume background projection alone makes large-surface interactions safe.
+  - If a route/filter applies thousands of items, verify the view path is also bounded to the visible window.
+
+## Fast startup snapshot restore leaves Gallery permanently incomplete
+
+- Symptoms
+  - Startup becomes ready quickly from the bounded 160-item gallery snapshot, but Gallery never grows beyond that restored slice on unchanged launches.
+  - Logs show `startup.projection.skipped` and `startup.ready`, but there is no later gallery continuation.
+- Affected area
+  - Startup reconcile/projection handoff in `crates/librapix-app/src/main.rs`.
+- Confirmed cause
+  - The earlier ready-enough startup policy intentionally skipped the redundant unchanged gallery projection after reconcile.
+  - That removed the blocking full-library rebuild, but it also meant the bounded snapshot slice had no non-blocking follow-up path and could become the permanent gallery state.
+- Resolution
+  - Keep the fast snapshot-backed first paint.
+  - After unchanged reconcile, mark startup ready immediately and schedule a delayed non-blocking gallery continuation on the current surface.
+  - Record that lifecycle explicitly in logs:
+    - `startup.gallery_continuation.scheduled`
+    - `startup.gallery_continuation.kickoff`
+    - `interaction.surface_render.window`
+- Prevention guidance
+  - When startup snapshots are intentionally narrow, always pair them with an explicit continuation path.
+  - Do not fix startup latency by skipping the only path that restores full gallery completeness.
+
 ## First-open media selection hangs after startup
 
 - Symptoms

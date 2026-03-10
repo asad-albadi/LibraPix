@@ -63,6 +63,7 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
   - App schedules projection-only background work.
   - Worker loads catalog rows, delegates filtering/sorting to `librapix-projections`, and applies `GalleryQuery`.
   - UI renders selectable gallery items by route panel when staged projection results are applied.
+  - Large gallery/timeline/search surfaces now render through a viewport-bounded window with preserved scroll extent, so full logical result sets can apply without composing every card in one frame.
 - Direct media selection
   - Selection is explicit app state (`selected_media_id`).
   - Selecting from search/gallery/timeline loads details and enables actions/tags.
@@ -105,7 +106,7 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
     - the startup-critical projection refresh prioritizes the currently visible browse surface
     - non-visible route refresh can remain deferred until explicitly requested or later background catch-up
     - startup cache warm-up is bounded to a small visible slice instead of the full catalog
-    - if reconcile finds no catalog changes and the current route is already the restored default gallery snapshot, startup skips the redundant gallery projection entirely and becomes ready from that snapshot
+    - if reconcile finds no catalog changes and the current route is already the restored default gallery snapshot, startup skips the redundant startup-blocking gallery projection, becomes ready from that snapshot, and schedules a non-blocking gallery continuation so the snapshot restore does not become the permanent gallery state
   - Startup projection now performs explicit thumbnail lookup before scheduling generation:
     - exact ready `gallery-400` artifact rows
     - deterministic on-disk `gallery-400` files

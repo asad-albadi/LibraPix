@@ -5,6 +5,7 @@ All notable changes to this project are documented in this file.
 ## [Unreleased]
 
 ### Docs
+- Updated media-UI, message-flow, and troubleshooting docs to describe startup gallery continuation after snapshot restore, bounded current-surface rendering, and the new large-surface render diagnostics.
 - Added a dedicated thumbnail apply handoff audit covering the Windows completion-to-apply delay, the exact Iced runtime cause, and the corrected timer/runtime policy.
 - Added a dedicated background thumbnail responsiveness audit covering the Windows post-ready lag path, retry loop, and the corrected video/background policy.
 - Added a dedicated startup thumbnail reuse audit covering the exact DB-first reuse failure, the compatible-fallback policy, and the corrected startup-ready boundary.
@@ -48,6 +49,8 @@ All notable changes to this project are documented in this file.
 - Removed `packaging/windows/` scripts and packaging README from the repository.
 
 ### Changed
+- Unchanged startup launches now keep the fast bounded gallery snapshot for first paint, mark startup ready immediately after reconcile, and then schedule a non-blocking current-surface gallery continuation so the restored 160-card slice is not the permanent gallery state.
+- Large gallery and timeline surfaces now render through a viewport-bounded window with top/bottom spacer preservation instead of building the entire widget tree at once; runtime logs record the effective visible window via `interaction.surface_render.window`.
 - First-open media selection no longer generates the `detail-800` thumbnail synchronously on the UI thread when startup snapshot state has not warmed the detail cache yet; the details pane now reuses an existing detail artifact when present and otherwise falls back to the already-visible browse thumbnail immediately.
 - Post-startup route, filter, search, and filesystem-driven projection refreshes now use a current-surface-first projection policy instead of always rebuilding both Gallery and Timeline; non-visible route refresh is deferred until the user opens that route.
 - Interaction logs now cover media selection/detail load, route switches, projection request/apply ownership, and slow-step thresholds so post-startup hangs are provable from the Windows runtime logs.

@@ -34,18 +34,25 @@ Gallery and timeline group grids use the same row-building algorithm:
 
 This produces a Google-Photos-style justified layout where images maintain aspect ratios and rows adapt to available width.
 
+For large libraries, the shell no longer builds every justified row at once:
+- Gallery, timeline, and search render only the current viewport plus overscan.
+- Top/bottom spacer blocks preserve the full scroll extent, so correctness/completeness stays intact without forcing the UI thread to instantiate thousands of cards in one frame.
+- Runtime logs record the large-surface render window as `interaction.surface_render.window`.
+
 ## View modes
 
 ### Gallery
 - Renders a single flat justified grid of all non-header browse items.
 - No group headers.
 - Uses full projected item set (no hidden UI cap).
+- When startup restores only the bounded snapshot slice first, the UI can stay immediately usable from that slice while a non-blocking gallery continuation refresh fills in the full logical gallery afterward.
 
 ### Timeline
 - Renders date-grouped sections.
 - Each section has a group header (date label plus image/video count chips) followed by a justified mini-grid.
 - Uses full projected item set (no hidden UI cap).
 - Timeline mode includes a right-side fast scrubber driven by projection anchors.
+- Timeline rendering is also viewport-bounded so opening Timeline does not require the UI thread to compose every bucket/card before the route becomes usable.
 
 ### Search
 - Renders search results as a justified grid using the same layout as gallery.

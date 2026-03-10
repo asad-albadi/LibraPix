@@ -182,3 +182,17 @@ The only legitimate startup blockers after this pass are:
 - current-surface projection needed for first useful content
 
 Thumbnail generation is explicitly not in that list.
+
+## Implemented Outcome
+
+Implemented from this audit:
+
+- projection-time thumbnail lookup now reuses:
+  - exact ready `gallery-400` artifact rows
+  - deterministic on-disk `gallery-400` files
+  - compatible `detail-800` artifact rows
+  - deterministic `detail-800` fallback for visible-priority items
+- unresolved visible items render placeholders immediately and then continue with background thumbnail work
+- startup-ready is now recorded before any thumbnail batch needs to finish
+- later projection/reconcile refreshes cancel thumbnail work instead of waiting behind it
+- startup logs now record artifact lookup start/end timing, reuse counts, placeholder counts, scheduled-generation counts, rejected-artifact reasons, and video slow/failure events

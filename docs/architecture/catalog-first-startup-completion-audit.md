@@ -55,14 +55,17 @@ The current branch now follows this sequence:
     - replaces gallery/timeline/search state
     - updates details/cache/filter state
     - persists the bounded startup snapshot payload
-    - splits thumbnail work into startup-priority items and deferred catch-up
+    - performs projection-time thumbnail reuse lookup before any generation is scheduled
+    - marks startup ready after startup-blocking work settles, before thumbnail batches finish
+    - splits thumbnail work into startup-priority background items and deferred catch-up
 12. `do_thumbnail_batch(...)` and `apply_thumbnail_batch_result(...)`:
-    - generate or reuse browse-tier thumbnails in batches
+    - reuse exact browse-tier files or compatible detail-tier fallbacks before generating new browse-tier thumbnails
     - upsert ready/failed artifact rows
     - patch browse cards as thumbnails become ready
 13. `finalize_background_flow(...)`:
-    - marks startup ready once snapshot apply, reconcile, current-surface projection, and startup-priority thumbnails settle
+    - marks startup ready once snapshot apply, reconcile, and current-surface projection settle
     - schedules deferred thumbnail catch-up after ready-enough instead of keeping the app in startup-busy state
+    - cancels thumbnail work when later projection/reconcile refreshes need to take priority
 
 ## What Is On The Current Startup Critical Path
 
@@ -75,13 +78,13 @@ The effective startup critical path is now:
 - bounded startup snapshot apply (recent gallery slice only)
 - startup reconcile / scan
 - current-surface projection refresh
-- startup-priority thumbnail batches only
 
 The path intentionally no longer includes:
 
 - synchronous pre-render storage open
 - full gallery snapshot rehydration
 - any timeline snapshot rehydration
+- startup-priority thumbnail batches
 - full browse-tier thumbnail backlog drain before `Ready`
 
 ## Non-Critical Work That Is Currently Too Eager
@@ -214,8 +217,16 @@ Implemented in code:
 - startup cache warm-up is bounded to a visible slice instead of the full catalog
 - stale delayed-startup reconcile ticks are now ignored after their due timestamp is cleared, preventing duplicate startup scan/projection loops
 - startup browse-tier thumbnail work is split into:
-  - startup-priority items
+  - startup-priority background items
   - delayed background catch-up
+- browse projection now reuses thumbnails in this order:
+  - exact `gallery-400` artifact rows
+  - deterministic on-disk `gallery-400` files
+  - compatible `detail-800` artifact rows
+  - deterministic `detail-800` fallback for visible-priority items
+- startup logging now records thumbnail artifact lookup start/end timing, exact/fallback reuse counts, placeholder counts, scheduled-generation counts, rejected-artifact reasons, and video slow/failure events
+- startup-ready no longer waits for startup-priority thumbnail batches
+- later projection/reconcile refreshes cancel thumbnail work instead of waiting for thumbnail batches to settle
 - deferred thumbnail catch-up starts after startup ready-enough and runs in lighter batches
 - route switches can request a deferred surface refresh when startup intentionally skipped the non-visible route
 - no new splash screen was added in this pass; the existing staged activity UI remains the honest startup indicator after the critical path reduction

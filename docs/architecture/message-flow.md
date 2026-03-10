@@ -101,8 +101,13 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
     - the startup-critical projection refresh prioritizes the currently visible browse surface
     - non-visible route refresh can remain deferred until explicitly requested or later background catch-up
     - startup cache warm-up is bounded to a small visible slice instead of the full catalog
+  - Startup projection now performs explicit thumbnail lookup before scheduling generation:
+    - exact ready `gallery-400` artifact rows
+    - deterministic on-disk `gallery-400` files
+    - compatible `detail-800` fallback rows
+    - deterministic `detail-800` fallback for visible-priority items
   - Thumbnail work is now split:
-    - startup-priority thumbnail work for the first visible slice
+    - startup-priority background thumbnail work for the first visible slice
     - delayed background catch-up for the remaining browse-tier backlog
   - Startup/runtime instrumentation now writes a timestamped log file with:
     - bootstrap config-load timing
@@ -110,10 +115,15 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
     - snapshot hydrate/apply timing
     - reconcile/projection timing
     - thumbnail start/end timing
+    - artifact lookup start/end timing
+    - exact/fallback reuse counts
+    - placeholder and scheduled-generation counts
+    - rejected-artifact reasons
     - startup-ready and first-usable-gallery milestones
   - UI remains interactive while background work proceeds; sidebar activity state reflects the real stage currently in flight.
-  - Ready-enough state is restored after snapshot apply, reconcile, current-surface projection, and any startup-priority thumbnail work settle.
+  - Ready-enough state is restored after snapshot apply, reconcile, and current-surface projection; thumbnail work continues honestly in background instead of blocking startup-ready.
   - Deferred thumbnail catch-up remains visible as honest background work without keeping the whole app in startup-busy state.
+  - Later projection or reconcile requests cancel in-flight thumbnail batches instead of waiting for them to settle first.
 - Release update check flow
   - State is explicit in app orchestration: `Unknown`, `Checking`, `UpToDate`, `UpdateAvailable { version, url }`, `Failed`.
   - Header chip click emits `UpdateChipPressed`.
@@ -152,7 +162,7 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
     - deferred non-visible route refresh
   - Activity state is structural runtime state, not a widget-local hint; stage text and ready transitions are driven by the coordinator state machine.
   - Ready-enough and background catch-up are now distinct runtime concepts:
-    - startup completion no longer waits for the full browse-tier thumbnail backlog
+    - startup completion no longer waits for any thumbnail batch
     - deferred thumbnail catch-up is delayed and batched more lightly after startup becomes usable
   - Current branch limitation: the staged coordinator still lives in `librapix-app/src/main.rs` and has not yet been extracted into smaller orchestration modules.
   - Release checks continue to follow the same non-blocking task model (`Task::perform`) through `start_update_check` -> `UpdateCheckCompleted`.

@@ -29,20 +29,43 @@ Thumbnail generation is an app-owned, non-destructive cache subsystem.
 - Detail-size thumbnails are also reused by the in-app new-file modal dialog preview.
 - Failures are counted for status output but do not abort full indexing flow.
 
+## Reuse policy
+
+Browse projection now follows this order:
+
+1. exact valid `gallery-400` artifact row
+2. exact deterministic `gallery-400` file already present on disk
+3. compatible `detail-800` artifact row as gallery fallback
+4. compatible deterministic `detail-800` file for current visible-priority items
+5. placeholder immediately, then background generation if nothing reusable exists
+
+Important behavior:
+
+- Browse/search cards do not require thumbnail generation before they can render.
+- A compatible `detail-800` thumbnail is preferred over unnecessary browse-tier regeneration.
+- Broken `ready` artifact rows are rejected when the recorded file is missing or the stored path is absent.
+- Background thumbnail batches also check for compatible detail-tier fallback before generating a new gallery-tier file.
+
 ## Artifact catalog status
 
 Implemented:
 
 - ready and failed thumbnail variants are written to `derived_artifacts`
-- browse/search projections resolve gallery thumbnails from the artifact catalog
+- browse/search projections resolve thumbnails from:
+  - exact ready artifact rows
+  - deterministic on-disk browse files
+  - compatible detail-tier fallbacks when exact browse tier is unavailable
+- startup/runtime logging records artifact lookup timing, exact reuse counts, fallback reuse counts, placeholder counts, scheduled-generation counts, and rejected-artifact reasons
 
 Partially implemented:
 
 - detail thumbnails are still generated from the background projection flow instead of a dedicated thumbnail job subsystem
-- startup browse-tier generation is now split into:
-  - startup-priority thumbnails for the first visible slice
+- browse-tier generation is split into:
+  - startup-priority background work for the first visible slice
   - delayed background catch-up for the remaining browse-tier backlog
-- background catch-up batches run more lightly than the startup-priority batches to reduce startup pressure
+- startup-ready no longer waits for any thumbnail batch to finish
+- background catch-up batches run more lightly than the startup-priority batches to reduce runtime pressure
+- reconcile/projection refresh requests cancel in-flight thumbnail work instead of waiting behind it
 
 Deferred:
 

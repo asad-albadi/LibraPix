@@ -39,9 +39,14 @@
 - Implemented: startup projection refresh prioritizes the current surface and bounds startup cache warm-up to a visible slice.
 - Implemented: startup browse-tier thumbnail work is now split into startup-priority items plus delayed background catch-up.
 - Implemented: ready state no longer waits for the full browse-tier thumbnail backlog.
+- Implemented: projection-time thumbnail lookup now reuses exact `gallery-400` artifacts, deterministic on-disk browse thumbnails, and compatible `detail-800` fallbacks before scheduling generation.
+- Implemented: unresolved visible items now render placeholders immediately while thumbnail generation continues in background.
+- Implemented: startup-ready no longer waits for any thumbnail batch, including startup-priority visible-slice work.
+- Implemented: projection/reconcile refreshes now cancel thumbnail work instead of waiting for thumbnail batches to settle first.
+- Implemented: startup logs now record thumbnail artifact lookup timing, exact/fallback reuse counts, placeholder counts, scheduled-generation counts, rejected-artifact reasons, and video slow/failure events.
 - Implemented: route switches can trigger deferred surface refresh when startup intentionally leaves a non-visible surface for later.
 - Implemented: stale delayed startup-reconcile ticks are ignored after their due timestamp is cleared, preventing duplicate startup scan/projection loops.
-- Implemented: targeted regression coverage now covers deferred thumbnail catch-up readiness, startup route deferral, and startup thumbnail prioritization.
+- Implemented: targeted regression coverage now covers deferred thumbnail catch-up readiness, startup route deferral, startup thumbnail prioritization, exact thumbnail reuse, compatible fallback reuse, placeholder scheduling, video non-blocking startup, and projection refresh cancellation of thumbnail work.
 - Implemented: final verification loop (`fmt`, `check`, `clippy`, `test`) passed after the startup completion + instrumentation changes.
 - Implemented: startup smoke runs now confirm log-path emission, legacy snapshot discard, version-2 startup-snapshot persistence, and fast-path version-2 startup restore.
 - Partially implemented: orchestration still enters through `crates/librapix-app/src/main.rs`, even though startup/catch-up boundaries are now materially cleaner.

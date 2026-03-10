@@ -26,6 +26,36 @@
   - Do not reintroduce storage open/migration work on the pre-render bootstrap path.
   - Do not treat non-visible route preparation or full-library thumbnail backfill as mandatory startup completion work.
 
+## Existing thumbnails are not reused at startup and `startup.ready` stays late
+
+- Symptoms
+  - First useful gallery appears, but `startup.ready` still arrives late while startup-priority thumbnails run.
+  - Large libraries appear to regenerate or re-check thumbnails even when thumbnail files already exist.
+  - Video thumbnails are especially visible because ffmpeg work stretches the startup tail.
+- Affected area
+  - Thumbnail lookup and startup/runtime coordinator policy in `crates/librapix-app/src/main.rs`.
+- Confirmed cause
+  - Projection previously trusted only exact ready `gallery-400` rows from `derived_artifacts`.
+  - Deterministic on-disk browse thumbnails were only rediscovered later inside `do_thumbnail_batch(...)`, not during projection-time reuse lookup.
+  - Compatible `detail-800` thumbnails were not accepted as gallery fallback during startup projection.
+  - Startup-ready still waited for the startup-priority thumbnail queue to settle.
+  - Reconcile/projection requests also treated thumbnail work as a blocker instead of canceling it.
+- Resolution
+  - Projection now reuses thumbnails in this order:
+    - exact ready `gallery-400` artifact rows
+    - deterministic on-disk `gallery-400` files
+    - compatible `detail-800` artifact rows
+    - deterministic `detail-800` fallback for visible-priority items
+  - When nothing reusable exists, the UI renders placeholders immediately and schedules generation in background.
+  - Startup-ready now flips after snapshot apply, reconcile, and current-surface projection; thumbnail batches continue honestly after ready.
+  - Later projection/reconcile refreshes cancel thumbnail work instead of waiting behind it.
+  - Startup logs now record artifact lookup timing, reuse counts, placeholder counts, scheduled-generation counts, rejected-artifact reasons, and video slow/failure events.
+- Prevention guidance
+  - Do not make exact catalog-row presence the only startup reuse rule.
+  - Prefer compatible fallback over unnecessary browse-tier regeneration.
+  - Keep thumbnails outside the startup-ready boundary.
+  - Keep thumbnail scheduling observable in logs so reuse regressions are measurable.
+
 ## Startup logs are hard to find
 
 - Symptoms
@@ -68,7 +98,7 @@
     - scan job
     - projection job
     - thumbnail batches
-  - Only set ready-state when no snapshot apply, reconcile, projection, or thumbnail work remains in flight or queued.
+  - Only set startup-ready when snapshot apply, reconcile, and projection have settled; keep thumbnail batches as honest background work instead.
   - Stop generating detail thumbnails eagerly during projection startup; load ready detail artifacts and fall back to browse thumbnails for selection/details while background thumbnail work progresses.
 - Prevention guidance
   - Never advance storage schema direction on a long-lived branch without reconciling real migration lineage from adjacent branch history.

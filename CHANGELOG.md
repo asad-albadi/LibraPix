@@ -5,6 +5,8 @@ All notable changes to this project are documented in this file.
 ## [Unreleased]
 
 ### Docs
+- Added a dedicated startup thumbnail reuse audit covering the exact DB-first reuse failure, the compatible-fallback policy, and the corrected startup-ready boundary.
+- Updated thumbnail, message-flow, startup audit, troubleshooting, and catalog-first checklist docs to reflect projection-time exact/fallback thumbnail reuse and non-blocking startup-ready.
 - Updated the catalog-first startup audit, message-flow docs, troubleshooting guide, and roadmap checklist to describe the final startup-snapshot policy, startup instrumentation/logging, and deferred catch-up behavior.
 - Added `docs/AGENT_KNOWLEDGE_BASE.md` as a single comprehensive, code-verified project knowledge base for future engineering agents, and linked it from `docs/README.md`.
 - Added a catalog-first architecture plan, workstream checklist, and ADR for the new long-lived architecture branch.
@@ -44,6 +46,9 @@ All notable changes to this project are documented in this file.
 - Removed `packaging/windows/` scripts and packaging README from the repository.
 
 ### Changed
+- Startup projection now performs explicit thumbnail reuse lookup before scheduling generation, preferring exact `gallery-400` artifacts, deterministic on-disk browse files, and compatible `detail-800` fallbacks.
+- Startup and runtime logs now record thumbnail artifact lookup timing, exact/fallback reuse counts, placeholder counts, scheduled-generation counts, rejected-artifact reasons, and video slow/failure events.
+- Reconcile/projection refresh requests now cancel thumbnail work instead of waiting behind thumbnail batches.
 - Bootstrap startup no longer opens storage or runs migrations before the first render; those steps now run in the staged background startup flow with timing instrumentation.
 - Persisted startup snapshots now store only a bounded recent-gallery slice plus filter-tag metadata (`projection_snapshots.version = 2`) instead of full gallery+timeline browse state.
 - Startup snapshot application now restores only that bounded gallery slice, allowing `Loading library snapshot` to complete earlier and leaving non-visible browse state to later projection refresh.
@@ -217,6 +222,8 @@ All notable changes to this project are documented in this file.
 - i18n keys for auto-tag UI labels.
 
 ### Fixed
+- Existing thumbnails are now reused earlier at startup even when the exact browse-tier artifact row is missing, as long as a deterministic on-disk browse thumbnail or a compatible detail-tier fallback exists.
+- Startup-ready no longer waits for startup-priority thumbnail batches; visible cards can render with reused thumbnails or placeholders while thumbnail work continues in background.
 - `Loading library snapshot` no longer deserializes and reapplies a full gallery+timeline browse snapshot before the app can continue startup.
 - Existing incompatible broad startup snapshots are now discarded and rebuilt instead of being eagerly rehydrated on the new startup path.
 - Stale delayed startup-reconcile ticks no longer trigger duplicate scan/projection passes after the app has already reached ready-enough state.

@@ -7,6 +7,7 @@ All notable changes to this project are documented in this file.
 ### Docs
 - Added `docs/AGENT_KNOWLEDGE_BASE.md` as a single comprehensive, code-verified project knowledge base for future engineering agents, and linked it from `docs/README.md`.
 - Added a catalog-first architecture plan, workstream checklist, and ADR for the new long-lived architecture branch.
+- Added a dedicated catalog-first startup completion audit documenting the current runtime critical path, remaining eager startup work, and the corrected ready-enough policy for finishing this branch.
 - Updated architecture docs to reflect the implemented catalog-first storage, timeline-key, search, thumbnail, and message-flow foundation.
 - Updated troubleshooting, message-flow, media-UI, and catalog-first architecture docs to record the catalog-first startup/runtime regression and its staged activity-state reconciliation.
 - Updated media-UI documentation to clarify that runtime activity status is shown in the sidebar footer rather than duplicated in the header.

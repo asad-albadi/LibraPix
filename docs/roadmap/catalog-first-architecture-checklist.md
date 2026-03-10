@@ -19,6 +19,7 @@
 
 - Implemented: branch creation from the reconciled default branch baseline.
 - Implemented: architecture plan written before significant refactor work.
+- Implemented: dedicated startup completion audit documenting the current runtime critical path, remaining eager work, and the corrected startup policy for finishing this branch.
 - Implemented: additive migration `0009_catalog_first_foundation.sql` introducing `media_catalog` and `derived_artifacts`.
 - Implemented: additive compatibility migrations `0010_projection_snapshots.sql` and `0011_catalog_history_reconciliation.sql` so existing real databases from the older runtime line receive both projection-snapshot support and catalog/artifact tables.
 - Implemented: storage catalog materialization and derived-artifact query APIs.
@@ -32,4 +33,5 @@
 - Implemented: validation loop (`fmt`, `check`, `clippy`, `test`) passed after the runtime reconciliation work.
 - Partially implemented: orchestration still enters through `crates/librapix-app/src/main.rs`, but it now uses explicit staged jobs instead of one silent background result apply path.
 - Partially implemented: UI adaptation is restored for activity/status visibility, but full interactive product validation on a real populated library still needs manual confirmation outside this terminal environment.
-- Planned next: extract the staged coordinator further out of the app crate and formalize the next catalog-driven job boundaries without regressing runtime visibility again.
+- In progress: complete the startup/runtime policy so the branch reaches a real ready-enough state earlier and defers deep thumbnail/projection catch-up behind initial usability.
+- Planned next: finish the startup/runtime completion pass, then reassess whether further coordinator extraction is necessary before merge.

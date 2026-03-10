@@ -14,6 +14,7 @@ This repository is documentation-driven. Architecture and operational decisions 
 
 - `docs/architecture/overview.md`
 - `docs/architecture/catalog-first-architecture.md`
+- `docs/architecture/catalog-first-startup-completion-audit.md`
 - `docs/architecture/layers.md`
 - `docs/architecture/message-flow.md`
 - `docs/architecture/indexing.md`

@@ -696,6 +696,11 @@ struct ViewportDragState {
     last_logged_at: Option<Instant>,
     update_count: usize,
     coalesced_updates: usize,
+    candidate_started_at: Option<Instant>,
+    candidate_last_event_at: Option<Instant>,
+    candidate_event_count: usize,
+    candidate_origin_y: f32,
+    candidate_origin_height: f32,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -894,8 +899,12 @@ const MEDIA_VIRTUAL_OVERSCAN_DRAG_PX: f32 = 400.0;
 const TIMELINE_GROUP_HEADER_HEIGHT: f32 = 40.0;
 const AUTOMATION_TICK_INTERVAL: Duration = Duration::from_millis(100);
 const VIEWPORT_SETTLE_TICK_INTERVAL: Duration = Duration::from_millis(40);
-const VIEWPORT_SETTLE_DELAY: Duration = Duration::from_millis(140);
+const VIEWPORT_SETTLE_DELAY: Duration = Duration::from_millis(320);
 const VIEWPORT_ACTIVE_LOG_INTERVAL: Duration = Duration::from_millis(200);
+const VIEWPORT_DRAG_ACTIVATION_WINDOW: Duration = Duration::from_millis(220);
+const VIEWPORT_DRAG_ACTIVATION_EVENTS: usize = 3;
+const VIEWPORT_DRAG_ACTIVATION_DELTA_PX: f32 = 120.0;
+const VIEWPORT_DRAG_HEIGHT_STABILITY_PX: f32 = 4.0;
 static LARGE_SURFACE_RENDER_LOGS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
 #[derive(Debug, Clone)]
@@ -5205,6 +5214,51 @@ fn route_surface_kind(route: Route) -> MediaSurfaceKind {
     }
 }
 
+fn begin_viewport_drag_candidate(
+    app: &mut Librapix,
+    now: Instant,
+    absolute_y: f32,
+    viewport_height: f32,
+) {
+    app.viewport_drag.candidate_started_at = Some(now);
+    app.viewport_drag.candidate_last_event_at = Some(now);
+    app.viewport_drag.candidate_event_count = 1;
+    app.viewport_drag.candidate_origin_y = absolute_y;
+    app.viewport_drag.candidate_origin_height = viewport_height;
+}
+
+fn update_viewport_drag_candidate(
+    app: &mut Librapix,
+    now: Instant,
+    absolute_y: f32,
+    viewport_height: f32,
+) {
+    let continue_candidate = app
+        .viewport_drag
+        .candidate_last_event_at
+        .is_some_and(|last| now.duration_since(last) <= VIEWPORT_DRAG_ACTIVATION_WINDOW);
+
+    if !continue_candidate {
+        begin_viewport_drag_candidate(app, now, absolute_y, viewport_height);
+        return;
+    }
+
+    app.viewport_drag.candidate_last_event_at = Some(now);
+    app.viewport_drag.candidate_event_count =
+        app.viewport_drag.candidate_event_count.saturating_add(1);
+}
+
+fn should_activate_viewport_drag(app: &Librapix, absolute_y: f32, viewport_height: f32) -> bool {
+    if app.viewport_drag.candidate_event_count < VIEWPORT_DRAG_ACTIVATION_EVENTS {
+        return false;
+    }
+
+    let scroll_delta = (absolute_y - app.viewport_drag.candidate_origin_y).abs();
+    let height_delta = (viewport_height - app.viewport_drag.candidate_origin_height).abs();
+    scroll_delta >= VIEWPORT_DRAG_ACTIVATION_DELTA_PX
+        && height_delta <= VIEWPORT_DRAG_HEIGHT_STABILITY_PX
+}
+
 fn handle_media_viewport_changed(
     app: &mut Librapix,
     absolute_y: f32,
@@ -5222,30 +5276,6 @@ fn handle_media_viewport_changed(
 
     let now = Instant::now();
     let route = viewport_route_label(app.state.active_route);
-    let should_activate_drag = app
-        .viewport_drag
-        .last_event_at
-        .is_some_and(|last| now.duration_since(last) <= VIEWPORT_SETTLE_DELAY);
-
-    if should_activate_drag && !app.viewport_drag.active {
-        app.viewport_drag.active = true;
-        app.viewport_drag.started_at = Some(now);
-        app.viewport_drag.update_count = 0;
-        app.viewport_drag.coalesced_updates = 0;
-        app.viewport_drag.last_logged_at = None;
-        startup_log::log_info(
-            "interaction.viewport.drag.start",
-            &format!(
-                "route={route} viewport_y={absolute_y:.1} max_y={max_y:.1} viewport_height={viewport_height:.1} overscan_px={:.1} render_window_logs_deferred=true projection_in_flight={} thumbnail_in_flight={} pending_projection={} pending_reconcile={}",
-                media_virtual_overscan_px(true),
-                app.background.projection_in_flight,
-                app.background.thumbnail_in_flight,
-                app.background.pending_projection,
-                app.background.pending_reconcile,
-            ),
-        );
-    }
-
     if app.viewport_drag.active {
         app.viewport_drag.update_count = app.viewport_drag.update_count.saturating_add(1);
         let should_log_update = app
@@ -5268,6 +5298,47 @@ fn handle_media_viewport_changed(
             );
             app.viewport_drag.last_logged_at = Some(now);
         }
+    } else {
+        update_viewport_drag_candidate(app, now, absolute_y, viewport_height);
+    }
+
+    if !app.viewport_drag.active && should_activate_viewport_drag(app, absolute_y, viewport_height)
+    {
+        app.viewport_drag.active = true;
+        app.viewport_drag.started_at = Some(now);
+        app.viewport_drag.update_count = 0;
+        app.viewport_drag.coalesced_updates = 0;
+        app.viewport_drag.last_logged_at = None;
+        app.viewport_drag.candidate_started_at = None;
+        app.viewport_drag.candidate_last_event_at = None;
+        startup_log::log_info(
+            "interaction.viewport.drag.start",
+            &format!(
+                "route={route} viewport_y={absolute_y:.1} max_y={max_y:.1} viewport_height={viewport_height:.1} overscan_px={:.1} render_window_logs_deferred=true candidate_updates={} candidate_scroll_delta={:.1} projection_in_flight={} thumbnail_in_flight={} pending_projection={} pending_reconcile={}",
+                media_virtual_overscan_px(true),
+                app.viewport_drag.candidate_event_count,
+                (absolute_y - app.viewport_drag.candidate_origin_y).abs(),
+                app.background.projection_in_flight,
+                app.background.thumbnail_in_flight,
+                app.background.pending_projection,
+                app.background.pending_reconcile,
+            ),
+        );
+        app.viewport_drag.update_count = app.viewport_drag.update_count.saturating_add(1);
+        app.viewport_drag.last_logged_at = Some(now);
+        startup_log::log_info(
+            "interaction.viewport.drag.update",
+            &format!(
+                "route={route} updates={} coalesced={} viewport_y={absolute_y:.1} max_y={max_y:.1} viewport_height={viewport_height:.1} overscan_px={:.1} projection_in_flight={} thumbnail_in_flight={} pending_projection={} pending_reconcile={}",
+                app.viewport_drag.update_count,
+                app.viewport_drag.coalesced_updates,
+                media_virtual_overscan_px(true),
+                app.background.projection_in_flight,
+                app.background.thumbnail_in_flight,
+                app.background.pending_projection,
+                app.background.pending_reconcile,
+            ),
+        );
     }
 
     app.viewport_drag.last_event_at = Some(now);
@@ -11649,6 +11720,32 @@ mod tests {
     }
 
     #[test]
+    fn tiny_viewport_corrections_do_not_activate_drag_lifecycle() {
+        let mut app = test_app();
+        app.state.active_route = Route::Gallery;
+
+        handle_media_viewport_changed(&mut app, 174_502.1, 174_502.1, 1_251.0);
+        handle_media_viewport_changed(&mut app, 174_412.9, 174_412.9, 1_251.0);
+
+        assert!(!app.viewport_drag.active);
+        assert_eq!(app.viewport_drag.update_count, 0);
+        assert_eq!(app.viewport_drag.candidate_event_count, 2);
+    }
+
+    #[test]
+    fn sustained_scroll_burst_activates_drag_lifecycle() {
+        let mut app = test_app();
+        app.state.active_route = Route::Gallery;
+
+        handle_media_viewport_changed(&mut app, 0.0, 174_502.2, 1_251.0);
+        handle_media_viewport_changed(&mut app, 180.0, 174_502.2, 1_251.0);
+        handle_media_viewport_changed(&mut app, 360.0, 174_502.2, 1_251.0);
+
+        assert!(app.viewport_drag.active);
+        assert_eq!(app.viewport_drag.update_count, 1);
+    }
+
+    #[test]
     fn viewport_settle_tick_clears_active_drag_after_pause() {
         let mut app = test_app();
         app.state.active_route = Route::Gallery;
@@ -11679,6 +11776,19 @@ mod tests {
             layout_width_for_surface(&app, MediaSurfaceKind::Gallery, 1165.2),
             1165.0
         );
+    }
+
+    #[test]
+    fn viewport_settle_waits_for_longer_idle_gap() {
+        let mut app = test_app();
+        app.state.active_route = Route::Gallery;
+        app.viewport_drag.active = true;
+        app.viewport_drag.started_at = Some(Instant::now() - Duration::from_millis(450));
+        app.viewport_drag.last_event_at = Some(Instant::now() - Duration::from_millis(200));
+
+        settle_media_viewport_drag(&mut app);
+
+        assert!(app.viewport_drag.active);
     }
 
     #[test]

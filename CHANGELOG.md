@@ -56,6 +56,7 @@ All notable changes to this project are documented in this file.
 - Removed `packaging/windows/` scripts and packaging README from the repository.
 
 ### Changed
+- Sidebar footer status presentation was corrected to match native sidebar section styling: removed the boxed/card container, renamed the sidebar footer heading to `STATUS`, kept the update chip at the top of the section, and tightened spacing for a flatter, cleaner integration with Browse/Library sections.
 - Sidebar footer status UI is now a unified system-status panel: the update-status chip moved from the header into the bottom-left sidebar footer above runtime activity/progress, spacing/typography were tightened for clearer hierarchy, metrics were compacted into a single secondary line, and long error text is now compact with hover-to-view-full details.
 - Active thumb-drag preview now freezes the effective scroll range (`max_y`) and skips max-only viewport churn while dragging; settle still applies one exact final viewport snapshot, and logs now include `max_only_skipped` diagnostics.
 - Active scrollbar-thumb drag now uses latest-only pending viewport replacement with cadence-capped preview apply and a forced final settle apply, so one physical drag no longer requires processing every intermediate target.

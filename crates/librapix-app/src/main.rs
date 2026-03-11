@@ -2753,17 +2753,12 @@ fn view(app: &Librapix) -> Element<'_, Message> {
     )
     .height(Length::Fill);
     let sidebar_status = container(
-        container(
-            column![
-                render_update_chip(app).width(Length::Fill),
-                h_divider(),
-                section_heading(app.i18n.text(TextKey::IndexingSectionLabel)),
-                render_activity_status(app),
-            ]
-            .spacing(SPACE_SM),
-        )
-        .style(card_style)
-        .padding([SPACE_SM as u16, SPACE_SM as u16]),
+        column![
+            section_heading(app.i18n.text(TextKey::StatusSectionLabel)),
+            render_update_chip(app).width(Length::Fill),
+            render_activity_status(app),
+        ]
+        .spacing(SPACE_XS),
     )
     .width(Length::Fill)
     .padding([SPACE_SM as u16, SPACE_MD as u16]);

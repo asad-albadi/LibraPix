@@ -5,6 +5,7 @@ All notable changes to this project are documented in this file.
 ## [Unreleased]
 
 ### Docs
+- Updated troubleshooting and media-UI docs to describe the scrollbar-drag lag path, the new viewport drag/settle lifecycle, justified-layout caching, and drag-time render-log suppression.
 - Updated troubleshooting and media-UI docs to describe the Timeline large-group virtualization regression, the corrected per-row windowing behavior inside date sections, and the new Timeline render diagnostics.
 - Updated media-UI, message-flow, and troubleshooting docs to describe startup gallery continuation after snapshot restore, bounded current-surface rendering, and the new large-surface render diagnostics.
 - Added a dedicated thumbnail apply handoff audit covering the Windows completion-to-apply delay, the exact Iced runtime cause, and the corrected timer/runtime policy.
@@ -51,6 +52,7 @@ All notable changes to this project are documented in this file.
 - Removed `packaging/windows/` scripts and packaging README from the repository.
 
 ### Changed
+- Gallery and Timeline thumb-drag scrolling now use a cheaper active-drag path: justified row layouts are reused per surface/width, viewport settle is tracked explicitly, drag-time overscan is tighter, and per-position render-window logs are deferred until the viewport settles.
 - Timeline viewport rendering now stays bounded even when a single date group contains hundreds or thousands of justified rows; the render path virtualizes rows inside each intersecting group instead of rendering an entire oversized section at once.
 - Timeline render diagnostics now record total groups/rows, visible groups/rows, first/last visible row indices, spacer sizes, and anomaly warnings so large-window regressions are provable from Windows logs.
 - Unchanged startup launches now keep the fast bounded gallery snapshot for first paint, mark startup ready immediately after reconcile, and then schedule a non-blocking current-surface gallery continuation so the restored 160-card slice is not the permanent gallery state.

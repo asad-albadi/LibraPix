@@ -38,6 +38,8 @@ For large libraries, the shell no longer builds every justified row at once:
 - Gallery, timeline, and search render only the current viewport plus overscan.
 - Top/bottom spacer blocks preserve the full scroll extent, so correctness/completeness stays intact without forcing the UI thread to instantiate thousands of cards in one frame.
 - Runtime logs record the large-surface render window as `interaction.surface_render.window`.
+- Gallery and Timeline also cache justified layouts per surface and responsive width, so scrollbar-thumb drags do not rebuild full row math for every intermediate viewport update.
+- The media viewport now has an explicit drag/settle lifecycle; active drag uses tighter overscan and suppresses per-position render-window logs, then the settled viewport restores the normal overscan and full diagnostics.
 
 ## View modes
 

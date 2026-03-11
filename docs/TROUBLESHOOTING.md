@@ -1,5 +1,30 @@
 # Troubleshooting
 
+## Dragging the scrollbar thumb still lags even after viewport windowing is bounded
+
+- Symptoms
+  - Dragging the media-pane scrollbar thumb far up or down still feels sticky or briefly hung, especially in large Gallery and Timeline surfaces.
+  - Projection logs stay fast and `interaction.timeline_render.window` stays bounded, yet the UI still stutters while the viewport is moving.
+  - Windows logs can accumulate thousands of unique `interaction.surface_render.window` / `interaction.timeline_render.window` lines during a single manual drag session.
+- Affected area
+  - Media viewport updates and justified-layout rendering in `crates/librapix-app/src/main.rs`.
+- Confirmed cause
+  - The earlier Timeline fix bounded how many rows were rendered, but Gallery and Timeline still rebuilt justified row layouts for the full logical dataset on every intermediate viewport update.
+  - The render path also wrote synchronous per-position diagnostics to the startup log file, and `startup_log` flushes each line immediately on the UI path.
+  - Together, repeated thumb-drag viewport changes kept paying avoidable layout work and log I/O even though no projection, thumbnail scheduling, or detail load was actually needed.
+- Resolution
+  - Reuse justified layouts per surface and responsive width instead of rebuilding them for every viewport movement.
+  - Track an explicit viewport active-drag vs settled lifecycle with:
+    - `interaction.viewport.drag.start`
+    - `interaction.viewport.drag.update`
+    - `interaction.viewport.settle.start`
+    - `interaction.viewport.settle.end`
+  - Use tighter overscan while drag is active and restore the full overscan after settle so final correctness remains intact.
+  - Suppress per-position render-window logs during active drag; keep the settled render diagnostics and cache-build logs instead.
+- Prevention guidance
+  - Bounding the visible window is not enough if row math is still recomputed for the full dataset on every scroll message.
+  - Avoid synchronous high-volume logging on the hot viewport path, especially on Windows where each line is flushed immediately.
+
 ## Timeline still hangs even though projection finishes quickly
 
 - Symptoms

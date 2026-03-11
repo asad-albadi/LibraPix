@@ -82,6 +82,9 @@ mod tests {
                 media_kind: "image".to_owned(),
                 modified_unix_seconds: Some(200),
                 tags: vec!["kind:image".to_owned()],
+                timeline_day_key: None,
+                timeline_month_key: None,
+                timeline_year_key: None,
             },
             ProjectionMedia {
                 media_id: 2,
@@ -89,6 +92,9 @@ mod tests {
                 media_kind: "video".to_owned(),
                 modified_unix_seconds: Some(100),
                 tags: vec!["kind:video".to_owned()],
+                timeline_day_key: None,
+                timeline_month_key: None,
+                timeline_year_key: None,
             },
         ]
     }

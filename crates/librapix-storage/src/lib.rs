@@ -1,3 +1,4 @@
+mod catalog;
 mod migration;
 
 use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
@@ -5,7 +6,13 @@ use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+pub use catalog::{
+    CatalogMediaRecord, CatalogRefreshSummary, DerivedArtifactKind, DerivedArtifactRecord,
+    DerivedArtifactStatus,
+};
+pub use migration::{AppliedMigrationMetric, MigrationMetrics};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SourceRootLifecycle {
@@ -186,6 +193,15 @@ pub struct IgnoreRuleRecord {
     pub is_enabled: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StorageOpenMetrics {
+    pub file_exists: bool,
+    pub connection_open_duration: Duration,
+    pub pragma_duration: Duration,
+    pub migration: MigrationMetrics,
+    pub total_duration: Duration,
+}
+
 #[derive(Debug)]
 pub enum StorageError {
     InvalidSourcePath(PathBuf),
@@ -229,15 +245,38 @@ pub struct Storage {
 
 impl Storage {
     pub fn open(database_file: &Path) -> Result<Self, StorageError> {
-        if let Some(parent) = database_file.parent() {
+        Self::open_with_metrics(database_file).map(|(storage, _)| storage)
+    }
+
+    pub fn open_with_metrics(
+        database_file: &Path,
+    ) -> Result<(Self, StorageOpenMetrics), StorageError> {
+        let total_started_at = Instant::now();
+        if let Some(parent) = database_file.parent()
+            && !parent.as_os_str().is_empty()
+        {
             fs::create_dir_all(parent)?;
         }
 
+        let file_exists = database_file.exists();
+        let connection_open_started_at = Instant::now();
         let connection = Connection::open(database_file)?;
-        connection.execute_batch("PRAGMA foreign_keys = ON;")?;
-        migration::apply_migrations(&connection)?;
+        let connection_open_duration = connection_open_started_at.elapsed();
 
-        Ok(Self { connection })
+        let pragma_started_at = Instant::now();
+        connection.execute_batch("PRAGMA foreign_keys = ON;")?;
+        let pragma_duration = pragma_started_at.elapsed();
+
+        let migration = migration::apply_migrations(&connection)?;
+        let metrics = StorageOpenMetrics {
+            file_exists,
+            connection_open_duration,
+            pragma_duration,
+            migration,
+            total_duration: total_started_at.elapsed(),
+        };
+
+        Ok((Self { connection }, metrics))
     }
 
     pub fn migration_version(&self) -> Result<u32, StorageError> {
@@ -756,6 +795,48 @@ impl Storage {
             .map_err(StorageError::Sql)
     }
 
+    pub fn upsert_projection_snapshot(
+        &self,
+        snapshot_key: &str,
+        payload_json: &str,
+    ) -> Result<(), StorageError> {
+        self.connection.execute(
+            "INSERT INTO projection_snapshots (
+                snapshot_key,
+                payload_json,
+                updated_unix_seconds,
+                updated_at
+             ) VALUES (
+                ?1,
+                ?2,
+                CAST(strftime('%s', 'now') AS INTEGER),
+                CURRENT_TIMESTAMP
+             )
+             ON CONFLICT(snapshot_key) DO UPDATE SET
+                payload_json = excluded.payload_json,
+                updated_unix_seconds = CAST(strftime('%s', 'now') AS INTEGER),
+                updated_at = CURRENT_TIMESTAMP",
+            params![snapshot_key, payload_json],
+        )?;
+        Ok(())
+    }
+
+    pub fn load_projection_snapshot(
+        &self,
+        snapshot_key: &str,
+    ) -> Result<Option<String>, StorageError> {
+        self.connection
+            .query_row(
+                "SELECT payload_json
+                 FROM projection_snapshots
+                 WHERE snapshot_key = ?1",
+                params![snapshot_key],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(StorageError::Sql)
+    }
+
     pub fn refresh_source_root_statistics(&self, root_ids: &[i64]) -> Result<(), StorageError> {
         if root_ids.is_empty() {
             return Ok(());
@@ -1160,6 +1241,18 @@ mod tests {
         std::env::temp_dir().join(unique)
     }
 
+    fn temp_root_path(name: &str) -> PathBuf {
+        let unique = format!(
+            "librapix-storage-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time should be after epoch")
+                .as_nanos()
+        );
+        std::env::temp_dir().join(unique)
+    }
+
     #[test]
     fn opens_and_applies_baseline_migration() {
         let db = temp_db_file("migration");
@@ -1167,7 +1260,31 @@ mod tests {
         let version = storage
             .migration_version()
             .expect("migration version should be queryable");
-        assert_eq!(version, 8);
+        assert_eq!(version, 11);
+
+        let _ = std::fs::remove_file(db);
+    }
+
+    #[test]
+    fn projection_snapshot_round_trip() {
+        let db = temp_db_file("projection-snapshot");
+        let storage = Storage::open(&db).expect("database should open");
+
+        storage
+            .upsert_projection_snapshot("default", "{\"gallery\":[]}")
+            .expect("snapshot upsert should succeed");
+        let snapshot = storage
+            .load_projection_snapshot("default")
+            .expect("snapshot load should succeed");
+        assert_eq!(snapshot.as_deref(), Some("{\"gallery\":[]}"));
+
+        storage
+            .upsert_projection_snapshot("default", "{\"gallery\":[1]}")
+            .expect("snapshot update should succeed");
+        let updated = storage
+            .load_projection_snapshot("default")
+            .expect("snapshot load should succeed");
+        assert_eq!(updated.as_deref(), Some("{\"gallery\":[1]}"));
 
         let _ = std::fs::remove_file(db);
     }
@@ -1176,13 +1293,13 @@ mod tests {
     fn upsert_source_root_is_idempotent() {
         let db = temp_db_file("sources");
         let storage = Storage::open(&db).expect("database should open");
-        let path = Path::new("/tmp/librapix-library");
+        let path = temp_root_path("library");
 
         storage
-            .upsert_source_root(path)
+            .upsert_source_root(&path)
             .expect("first insert should succeed");
         storage
-            .upsert_source_root(path)
+            .upsert_source_root(&path)
             .expect("second insert should succeed");
 
         let roots = storage.list_source_roots().expect("roots should be listed");
@@ -1197,8 +1314,9 @@ mod tests {
     fn lifecycle_changes_and_reconciliation_work() {
         let db = temp_db_file("lifecycle");
         let storage = Storage::open(&db).expect("database should open");
+        let path = temp_root_path("should-not-exist");
         storage
-            .upsert_source_root(Path::new("/path/that/should/not/exist"))
+            .upsert_source_root(&path)
             .expect("insert should work");
 
         storage
@@ -1222,9 +1340,9 @@ mod tests {
     fn incremental_apply_marks_missing_entries() {
         let db = temp_db_file("incremental");
         let mut storage = Storage::open(&db).expect("database should open");
-        let root = Path::new("/tmp/librapix-incremental-root");
+        let root = temp_root_path("incremental-root");
         storage
-            .upsert_source_root(root)
+            .upsert_source_root(&root)
             .expect("root insert should work");
         let root_id = storage
             .list_source_roots()
@@ -1235,7 +1353,7 @@ mod tests {
 
         let first = vec![IndexedMediaWrite {
             source_root_id: root_id,
-            absolute_path: PathBuf::from("/tmp/librapix-incremental-root/a.png"),
+            absolute_path: root.join("a.png"),
             media_kind: "image".to_owned(),
             file_size_bytes: 10,
             modified_unix_seconds: Some(100),
@@ -1263,8 +1381,9 @@ mod tests {
     fn refresh_source_root_statistics_persists_expected_totals() {
         let db = temp_db_file("root-stats");
         let mut storage = Storage::open(&db).expect("database should open");
+        let root = temp_root_path("root-stats");
         storage
-            .upsert_source_root(Path::new("/tmp/librapix-root-stats"))
+            .upsert_source_root(&root)
             .expect("root insert should work");
         let root_id = storage
             .list_source_roots()
@@ -1278,7 +1397,7 @@ mod tests {
                 &[
                     IndexedMediaWrite {
                         source_root_id: root_id,
-                        absolute_path: PathBuf::from("/tmp/librapix-root-stats/a.png"),
+                        absolute_path: root.join("a.png"),
                         media_kind: "image".to_owned(),
                         file_size_bytes: 100,
                         modified_unix_seconds: Some(1000),
@@ -1288,7 +1407,7 @@ mod tests {
                     },
                     IndexedMediaWrite {
                         source_root_id: root_id,
-                        absolute_path: PathBuf::from("/tmp/librapix-root-stats/b.mp4"),
+                        absolute_path: root.join("b.mp4"),
                         media_kind: "video".to_owned(),
                         file_size_bytes: 300,
                         modified_unix_seconds: Some(2000),
@@ -1304,7 +1423,7 @@ mod tests {
             .apply_incremental_index(
                 &[IndexedMediaWrite {
                     source_root_id: root_id,
-                    absolute_path: PathBuf::from("/tmp/librapix-root-stats/a.png"),
+                    absolute_path: root.join("a.png"),
                     media_kind: "image".to_owned(),
                     file_size_bytes: 100,
                     modified_unix_seconds: Some(1000),
@@ -1340,8 +1459,9 @@ mod tests {
     fn read_model_search_matches_tag() {
         let db = temp_db_file("read-model-tags");
         let mut storage = Storage::open(&db).expect("database should open");
+        let root = temp_root_path("read-model");
         storage
-            .upsert_source_root(Path::new("/tmp/librapix-read-model"))
+            .upsert_source_root(&root)
             .expect("root insert should work");
         let root_id = storage
             .list_source_roots()
@@ -1352,7 +1472,7 @@ mod tests {
 
         let writes = vec![IndexedMediaWrite {
             source_root_id: root_id,
-            absolute_path: PathBuf::from("/tmp/librapix-read-model/a.png"),
+            absolute_path: root.join("a.png"),
             media_kind: "image".to_owned(),
             file_size_bytes: 12,
             modified_unix_seconds: Some(200),
@@ -1379,8 +1499,9 @@ mod tests {
     fn attach_and_detach_tag_by_name() {
         let db = temp_db_file("tag-attach-detach");
         let mut storage = Storage::open(&db).expect("database should open");
+        let root = temp_root_path("tag-root");
         storage
-            .upsert_source_root(Path::new("/tmp/librapix-tag-root"))
+            .upsert_source_root(&root)
             .expect("root insert should work");
         let root_id = storage
             .list_source_roots()
@@ -1392,7 +1513,7 @@ mod tests {
             .apply_incremental_index(
                 &[IndexedMediaWrite {
                     source_root_id: root_id,
-                    absolute_path: PathBuf::from("/tmp/librapix-tag-root/a.png"),
+                    absolute_path: root.join("a.png"),
                     media_kind: "image".to_owned(),
                     file_size_bytes: 1,
                     modified_unix_seconds: Some(1),
@@ -1435,8 +1556,9 @@ mod tests {
     fn list_all_media_read_models_does_not_truncate() {
         let db = temp_db_file("read-model-all");
         let mut storage = Storage::open(&db).expect("database should open");
+        let root = temp_root_path("read-model-all");
         storage
-            .upsert_source_root(Path::new("/tmp/librapix-read-model-all"))
+            .upsert_source_root(&root)
             .expect("root insert should work");
         let root_id = storage
             .list_source_roots()
@@ -1448,7 +1570,7 @@ mod tests {
         let writes = vec![
             IndexedMediaWrite {
                 source_root_id: root_id,
-                absolute_path: PathBuf::from("/tmp/librapix-read-model-all/new-image.png"),
+                absolute_path: root.join("new-image.png"),
                 media_kind: "image".to_owned(),
                 file_size_bytes: 12,
                 modified_unix_seconds: Some(300),
@@ -1458,7 +1580,7 @@ mod tests {
             },
             IndexedMediaWrite {
                 source_root_id: root_id,
-                absolute_path: PathBuf::from("/tmp/librapix-read-model-all/old-video.mp4"),
+                absolute_path: root.join("old-video.mp4"),
                 media_kind: "video".to_owned(),
                 file_size_bytes: 14,
                 modified_unix_seconds: Some(100),
@@ -1468,7 +1590,7 @@ mod tests {
             },
             IndexedMediaWrite {
                 source_root_id: root_id,
-                absolute_path: PathBuf::from("/tmp/librapix-read-model-all/mid-image.jpg"),
+                absolute_path: root.join("mid-image.jpg"),
                 media_kind: "image".to_owned(),
                 file_size_bytes: 10,
                 modified_unix_seconds: Some(200),
@@ -1492,6 +1614,214 @@ mod tests {
             .expect("all query should work");
         assert_eq!(all_rows.len(), 3);
         assert!(all_rows.iter().any(|row| row.media_kind == "video"));
+
+        let _ = std::fs::remove_file(db);
+    }
+
+    #[test]
+    fn refresh_catalog_materializes_normalized_fields() {
+        let db = temp_db_file("catalog-refresh");
+        let mut storage = Storage::open(&db).expect("database should open");
+        let root_path = temp_root_path("catalog-root");
+        storage
+            .upsert_source_root(&root_path)
+            .expect("root insert should work");
+        let root = storage
+            .list_source_roots()
+            .expect("roots should list")
+            .into_iter()
+            .next()
+            .expect("root should exist");
+        storage
+            .update_source_root_display_name(root.id, "Screenshots")
+            .expect("display name should update");
+
+        storage
+            .apply_incremental_index(
+                &[IndexedMediaWrite {
+                    source_root_id: root.id,
+                    absolute_path: root_path.join("Boss Fight.PNG"),
+                    media_kind: "image".to_owned(),
+                    file_size_bytes: 42,
+                    modified_unix_seconds: Some(1_710_000_000),
+                    width_px: Some(1920),
+                    height_px: Some(1080),
+                    metadata_status: IndexedMetadataStatus::Ok,
+                }],
+                &[root.id],
+            )
+            .expect("index apply should work");
+        storage
+            .ensure_media_kind_tags_attached()
+            .expect("kind tags should attach");
+        let media_id = storage
+            .list_all_media_read_models()
+            .expect("read models should list")
+            .first()
+            .expect("media row should exist")
+            .media_id;
+        storage
+            .attach_tag_name_to_media(media_id, "Boss", TagKind::Game)
+            .expect("tag attach should work");
+
+        let summary = storage
+            .refresh_catalog()
+            .expect("catalog refresh should work");
+        assert_eq!(summary.upserted_count, 1);
+
+        let catalog = storage
+            .list_catalog_media_filtered(None)
+            .expect("catalog rows should list");
+        assert_eq!(catalog.len(), 1);
+        assert_eq!(catalog[0].file_name, "Boss Fight.PNG");
+        assert_eq!(catalog[0].file_extension.as_deref(), Some("PNG"));
+        assert_eq!(
+            catalog[0].source_root_display_name.as_deref(),
+            Some("Screenshots")
+        );
+        assert!(catalog[0].timeline_day_key.is_some());
+        assert!(catalog[0].tags.iter().any(|tag| tag == "Boss"));
+        assert!(catalog[0].search_text.contains("screenshots"));
+
+        let _ = std::fs::remove_file(db);
+    }
+
+    #[test]
+    fn refresh_catalog_preserves_tags_with_commas() {
+        let db = temp_db_file("catalog-refresh-comma-tag");
+        let mut storage = Storage::open(&db).expect("database should open");
+        let root_path = temp_root_path("catalog-comma-root");
+        storage
+            .upsert_source_root(&root_path)
+            .expect("root insert should work");
+        let root = storage
+            .list_source_roots()
+            .expect("roots should list")
+            .into_iter()
+            .next()
+            .expect("root should exist");
+
+        storage
+            .apply_incremental_index(
+                &[IndexedMediaWrite {
+                    source_root_id: root.id,
+                    absolute_path: root_path.join("comma-tag.png"),
+                    media_kind: "image".to_owned(),
+                    file_size_bytes: 42,
+                    modified_unix_seconds: Some(1_710_000_000),
+                    width_px: Some(1920),
+                    height_px: Some(1080),
+                    metadata_status: IndexedMetadataStatus::Ok,
+                }],
+                &[root.id],
+            )
+            .expect("index apply should work");
+        let media_id = storage
+            .list_all_media_read_models()
+            .expect("read models should list")
+            .first()
+            .expect("media row should exist")
+            .media_id;
+        storage
+            .attach_tag_name_to_media(media_id, "Boss, Fight", TagKind::Game)
+            .expect("comma tag attach should work");
+        storage
+            .attach_tag_name_to_media(media_id, "Favorite", TagKind::App)
+            .expect("second tag attach should work");
+
+        let summary = storage
+            .refresh_catalog()
+            .expect("catalog refresh should work");
+        assert_eq!(summary.upserted_count, 1);
+
+        let catalog = storage
+            .list_catalog_media_filtered(None)
+            .expect("catalog rows should list");
+        assert_eq!(catalog.len(), 1);
+        assert_eq!(catalog[0].tags.len(), 2);
+        assert!(catalog[0].tags.iter().any(|tag| tag == "Boss, Fight"));
+        assert!(catalog[0].tags.iter().any(|tag| tag == "Favorite"));
+        assert!(catalog[0].search_text.contains("boss, fight"));
+
+        let _ = std::fs::remove_file(db);
+    }
+
+    #[test]
+    fn derived_artifact_round_trip_filters_by_variant_and_media() {
+        let db = temp_db_file("derived-artifacts");
+        let mut storage = Storage::open(&db).expect("database should open");
+        let root = temp_root_path("derived-root");
+        storage
+            .upsert_source_root(&root)
+            .expect("root insert should work");
+        let root_id = storage
+            .list_source_roots()
+            .expect("roots should list")
+            .first()
+            .expect("one root expected")
+            .id;
+        storage
+            .apply_incremental_index(
+                &[IndexedMediaWrite {
+                    source_root_id: root_id,
+                    absolute_path: root.join("a.png"),
+                    media_kind: "image".to_owned(),
+                    file_size_bytes: 10,
+                    modified_unix_seconds: Some(10),
+                    width_px: Some(10),
+                    height_px: Some(10),
+                    metadata_status: IndexedMetadataStatus::Ok,
+                }],
+                &[root_id],
+            )
+            .expect("index apply should work");
+        let media_id = storage
+            .list_all_media_read_models()
+            .expect("read models should list")
+            .first()
+            .expect("media row should exist")
+            .media_id;
+
+        storage
+            .upsert_derived_artifact(
+                media_id,
+                DerivedArtifactKind::Thumbnail,
+                "gallery-400",
+                Some(Path::new("abc123.png")),
+                DerivedArtifactStatus::Ready,
+            )
+            .expect("artifact upsert should work");
+        storage
+            .upsert_derived_artifact(
+                media_id,
+                DerivedArtifactKind::Thumbnail,
+                "detail-800",
+                None,
+                DerivedArtifactStatus::Failed,
+            )
+            .expect("failed artifact upsert should work");
+
+        let gallery_artifacts = storage
+            .list_ready_derived_artifacts_for_media_ids(
+                &[media_id],
+                DerivedArtifactKind::Thumbnail,
+                "gallery-400",
+            )
+            .expect("gallery artifacts should list");
+        assert_eq!(gallery_artifacts.len(), 1);
+        assert_eq!(
+            gallery_artifacts[0].relative_path,
+            Some(PathBuf::from("abc123.png"))
+        );
+
+        let detail_artifacts = storage
+            .list_ready_derived_artifacts_for_media_ids(
+                &[media_id],
+                DerivedArtifactKind::Thumbnail,
+                "detail-800",
+            )
+            .expect("detail artifacts should list");
+        assert!(detail_artifacts.is_empty());
 
         let _ = std::fs::remove_file(db);
     }

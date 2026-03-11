@@ -66,6 +66,11 @@ fn project_timeline_with_timezone<Tz: TimeZone>(
     let mut unknown_items: Vec<&ProjectionMedia> = Vec::new();
 
     for item in media {
+        if let Some(key) = persisted_timeline_key(item, granularity) {
+            grouped.entry(key).or_default().push(item);
+            continue;
+        }
+
         let Some(timestamp) = item.modified_unix_seconds else {
             unknown_items.push(item);
             continue;
@@ -149,6 +154,51 @@ fn project_timeline_with_timezone<Tz: TimeZone>(
     buckets
 }
 
+fn persisted_timeline_key(
+    item: &ProjectionMedia,
+    granularity: TimelineGranularity,
+) -> Option<TimelineKey> {
+    let raw = match granularity {
+        TimelineGranularity::Day => item.timeline_day_key.as_deref(),
+        TimelineGranularity::Month => item.timeline_month_key.as_deref(),
+        TimelineGranularity::Year => item.timeline_year_key.as_deref(),
+    }?;
+    parse_persisted_timeline_key(raw, granularity)
+}
+
+fn parse_persisted_timeline_key(
+    value: &str,
+    granularity: TimelineGranularity,
+) -> Option<TimelineKey> {
+    let mut parts = value.split('-');
+    let year = parts.next()?.parse::<i32>().ok()?;
+
+    match granularity {
+        TimelineGranularity::Day => {
+            let month = parts.next()?.parse::<u32>().ok()?;
+            let day = parts.next()?.parse::<u32>().ok()?;
+            Some(TimelineKey {
+                year,
+                month: Some(month),
+                day: Some(day),
+            })
+        }
+        TimelineGranularity::Month => {
+            let month = parts.next()?.parse::<u32>().ok()?;
+            Some(TimelineKey {
+                year,
+                month: Some(month),
+                day: None,
+            })
+        }
+        TimelineGranularity::Year => Some(TimelineKey {
+            year,
+            month: None,
+            day: None,
+        }),
+    }
+}
+
 pub fn build_timeline_anchors(buckets: &[TimelineBucket]) -> Vec<TimelineAnchor> {
     if buckets.is_empty() {
         return Vec::new();
@@ -212,6 +262,9 @@ mod tests {
                 media_kind: "image".to_owned(),
                 modified_unix_seconds: Some(1_700_000_000),
                 tags: vec![],
+                timeline_day_key: None,
+                timeline_month_key: None,
+                timeline_year_key: None,
             },
             ProjectionMedia {
                 media_id: 2,
@@ -219,6 +272,9 @@ mod tests {
                 media_kind: "video".to_owned(),
                 modified_unix_seconds: Some(1_700_000_100),
                 tags: vec![],
+                timeline_day_key: None,
+                timeline_month_key: None,
+                timeline_year_key: None,
             },
             ProjectionMedia {
                 media_id: 3,
@@ -226,6 +282,9 @@ mod tests {
                 media_kind: "image".to_owned(),
                 modified_unix_seconds: None,
                 tags: vec![],
+                timeline_day_key: None,
+                timeline_month_key: None,
+                timeline_year_key: None,
             },
         ]
     }
@@ -334,6 +393,9 @@ mod tests {
                 media_kind: "image".to_owned(),
                 modified_unix_seconds: Some(84_600), // 1970-01-01 23:30:00 UTC
                 tags: vec![],
+                timeline_day_key: None,
+                timeline_month_key: None,
+                timeline_year_key: None,
             },
             ProjectionMedia {
                 media_id: 2,
@@ -341,6 +403,9 @@ mod tests {
                 media_kind: "image".to_owned(),
                 modified_unix_seconds: Some(88_200), // 1970-01-02 00:30:00 UTC
                 tags: vec![],
+                timeline_day_key: None,
+                timeline_month_key: None,
+                timeline_year_key: None,
             },
         ];
 
@@ -354,5 +419,26 @@ mod tests {
         assert_eq!(utc_buckets.len(), 2);
         assert_eq!(local_buckets.len(), 1);
         assert_eq!(local_buckets[0].label, "1970-01-02");
+    }
+
+    #[test]
+    fn uses_persisted_timeline_keys_when_available() {
+        let media = vec![ProjectionMedia {
+            media_id: 1,
+            absolute_path: "/a/one.png".to_owned(),
+            media_kind: "image".to_owned(),
+            modified_unix_seconds: Some(1_700_000_000),
+            tags: vec![],
+            timeline_day_key: Some("2026-03-10".to_owned()),
+            timeline_month_key: Some("2026-03".to_owned()),
+            timeline_year_key: Some("2026".to_owned()),
+        }];
+
+        let buckets = project_timeline(&media, TimelineGranularity::Day);
+        assert_eq!(buckets.len(), 1);
+        assert_eq!(buckets[0].label, "2026-03-10");
+        assert_eq!(buckets[0].date.year, Some(2026));
+        assert_eq!(buckets[0].date.month, Some(3));
+        assert_eq!(buckets[0].date.day, Some(10));
     }
 }

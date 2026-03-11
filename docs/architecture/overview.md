@@ -22,6 +22,11 @@ Librapix is a desktop-first Rust application with strict internal boundaries.
 - Read-model query surface: `librapix-storage` read APIs over indexed media and tags.
 - Workspace orchestration: root virtual workspace.
 
+## Current branch focus
+
+- `feat/catalog-first-architecture` introduces a catalog-first migration path documented in `docs/architecture/catalog-first-architecture.md`.
+- The immediate goal is to separate source facts, normalized browse/search facts, and derived artifact facts without a destructive rewrite.
+
 ## Architectural intent
 
 - Keep Iced-specific types in `librapix-app`.

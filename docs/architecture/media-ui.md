@@ -2,6 +2,8 @@
 
 Librapix uses a centralized media-view architecture that underpins gallery, timeline, and search browsing.
 
+Issue `#12` runtime rationale and before/after evidence are consolidated in `docs/architecture/issue-12-runtime-optimization-summary.md`. This document describes the final rendering and interaction model only.
+
 ## Unified data model
 
 All browsing views consume `BrowseItem` which carries:
@@ -20,7 +22,7 @@ All browsing views consume `BrowseItem` which carries:
   - includes padded metadata row below the thumbnail.
 - `resolve_thumbnail(thumbnails_dir, row, max_edge)`: returns a thumbnail path for images (Lanczos3) or videos (ffmpeg), or None.
 - `aspect_ratio_from(width_px, height_px)`: computes aspect ratio from nullable stored dimensions.
-- `populate_media_cache(cache, rows, thumbnails_dir)`: caches read-model data and pre-resolved detail-size thumbnail paths for fast selection without I/O.
+- `populate_media_cache(cache, rows, thumbnails_dir)`: caches read-model data and already-ready detail-tier artifact paths without forcing eager thumbnail generation during projection startup.
 
 ## Justified row layout
 
@@ -34,18 +36,35 @@ Gallery and timeline group grids use the same row-building algorithm:
 
 This produces a Google-Photos-style justified layout where images maintain aspect ratios and rows adapt to available width.
 
+For large libraries, the shell no longer builds every justified row at once:
+- Gallery, timeline, and search render only the current viewport plus overscan.
+- Top/bottom spacer blocks preserve the full scroll extent, so correctness/completeness stays intact without forcing the UI thread to instantiate thousands of cards in one frame.
+- Runtime logs record the large-surface render window as `interaction.surface_render.window`.
+- Gallery and Timeline also cache justified layouts per surface and responsive width, so scrollbar-thumb drags do not rebuild full row math for every intermediate viewport update.
+- The media viewport now has an explicit drag/settle lifecycle; active drag uses tighter overscan, latest-only preview applies, and suppresses per-position render-window logs, then the settled viewport restores the normal overscan and full diagnostics.
+- Hard scrollbar-thumb drags also freeze the effective layout width to the last settled justified-layout width for the duration of the drag. This avoids drag-time responsive-width oscillation from invalidating the width-keyed layout cache on every intermediate thumb position while still restoring the exact measured width after settle.
+- Active drag preview also freezes effective scroll-range `max_y` and skips max-only updates until settle, preventing thumb-fight churn while preserving exact correctness after settle.
+- Drag diagnostics now record width-freeze/churn plus update-stream behavior through `interaction.surface_layout.drag_width.freeze`, `interaction.surface_layout.drag_width.anomaly`, `interaction.viewport.drag.update` (`applied/deferred/replaced`), and `interaction.viewport.settle.end` (`max_only_skipped`).
+- Drag activation is intentionally stricter than generic scrolling: the app now waits for a real burst of viewport movement before entering active-drag mode, keeps only the latest pending drag target while active, and settle waits for a longer idle gap so near-edge scrollbar corrections or resize chatter do not fragment one physical thumb interaction into many tiny logical drags.
+
 ## View modes
 
 ### Gallery
 - Renders a single flat justified grid of all non-header browse items.
 - No group headers.
 - Uses full projected item set (no hidden UI cap).
+- When startup restores only the bounded snapshot slice first, the UI can stay immediately usable from that slice while a non-blocking gallery continuation refresh fills in the full logical gallery afterward.
 
 ### Timeline
 - Renders date-grouped sections.
 - Each section has a group header (date label plus image/video count chips) followed by a justified mini-grid.
 - Uses full projected item set (no hidden UI cap).
 - Timeline mode includes a right-side fast scrubber driven by projection anchors.
+- Timeline rendering is viewport-bounded at two levels:
+  - only intersecting date sections are considered
+  - inside each intersecting section, only the visible justified rows plus overscan are composed
+- Section-local spacer blocks preserve the full scroll extent even when a single date bucket contains hundreds or thousands of rows.
+- Runtime logs record Timeline window diagnostics (`interaction.timeline_render.window`) including total groups/rows, visible groups/rows, first/last visible row, and spacer sizes so Windows render regressions remain measurable.
 
 ### Search
 - Renders search results as a justified grid using the same layout as gallery.
@@ -58,7 +77,7 @@ This produces a Google-Photos-style justified layout where images maintain aspec
 
 - Selection is app-level state (`selected_media_id`).
 - On click, `load_media_details_cached()` checks `media_cache` first, then falls back to storage.
-- Cache hits use pre-resolved `detail_thumbnail_path` — no disk I/O on the click path.
+- Cache hits prefer pre-resolved `detail_thumbnail_path`; if the detail tier is not ready yet, selection/details fall back to the currently available browse thumbnail path.
 - Double-click opens the file in the OS default app.
 - Keyboard shortcuts are routed through ignored-key subscriptions to avoid text-input conflicts:
   - `Cmd/Ctrl+C` copies selected file
@@ -85,3 +104,20 @@ This produces a Google-Photos-style justified layout where images maintain aspec
 - Dialog content includes preview thumbnail, compact metadata, and path/modification details.
 - Quick actions: view/select, open file, copy file, dismiss.
 - Dialog state is app-level (`new_media_announcement`) and remains outside card/grid rendering primitives.
+
+## Runtime activity state
+
+- Startup/runtime activity is product state, not a view-local spinner.
+- The shell now reflects staged background work:
+  - snapshot hydrate/apply
+  - library reconcile/scan
+  - gallery/timeline/search projection refresh
+  - thumbnail batches
+- Product placement is intentional: the structured activity panel lives in the left sidebar footer; the header does not duplicate the same runtime status text.
+- Startup uses a ready-enough policy rather than a full-library preload policy:
+  - current-route browse state is prioritized first
+  - non-visible route refresh can remain deferred until later
+  - startup thumbnail work is bounded to a first useful slice
+- Unchanged snapshot-backed startup can still schedule a later non-blocking gallery continuation so fast first paint does not become a permanently truncated gallery.
+- Deferred thumbnail catch-up can continue after the app is already usable.
+- Activity text remains visible while real work is in flight, but startup readiness no longer waits for the full browse-tier thumbnail backlog.

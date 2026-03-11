@@ -13,6 +13,8 @@ This repository is documentation-driven. Architecture and operational decisions 
 ## Architecture
 
 - `docs/architecture/overview.md`
+- `docs/architecture/catalog-first-architecture.md`
+- `docs/architecture/issue-12-runtime-optimization-summary.md`
 - `docs/architecture/layers.md`
 - `docs/architecture/message-flow.md`
 - `docs/architecture/indexing.md`
@@ -80,3 +82,4 @@ This repository is documentation-driven. Architecture and operational decisions 
 - `docs/adrs/0018-timeline-scrubber-anchor-navigation.md`
 - `docs/adrs/0019-windows-signing-and-publisher-baseline.md`
 - `docs/adrs/0020-chip-based-tag-ignore-interactions.md`
+- `docs/adrs/0021-catalog-first-architecture-foundation.md`

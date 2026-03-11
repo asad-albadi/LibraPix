@@ -6,6 +6,7 @@ pub struct ConfigPaths {
     pub config_dir: PathBuf,
     pub data_dir: PathBuf,
     pub cache_dir: PathBuf,
+    pub logs_dir: PathBuf,
     pub thumbnails_dir: PathBuf,
     pub config_file: PathBuf,
     pub database_file: PathBuf,
@@ -18,6 +19,11 @@ pub fn default_paths() -> Result<ConfigPaths, &'static str> {
     let config_dir = project_dirs.config_dir().to_path_buf();
     let data_dir = project_dirs.data_dir().to_path_buf();
     let cache_dir = project_dirs.cache_dir().to_path_buf();
+    let logs_dir = project_dirs
+        .state_dir()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| project_dirs.data_local_dir().to_path_buf())
+        .join("logs");
     let thumbnails_dir = cache_dir.join("thumbnails");
     let config_file = config_dir.join("config.toml");
     let database_file = data_dir.join("librapix.db");
@@ -26,6 +32,7 @@ pub fn default_paths() -> Result<ConfigPaths, &'static str> {
         config_dir,
         data_dir,
         cache_dir,
+        logs_dir,
         thumbnails_dir,
         config_file,
         database_file,

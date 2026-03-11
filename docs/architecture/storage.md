@@ -70,6 +70,31 @@ SQLite is the primary persistent store for Librapix-owned metadata.
 
 This schema is intentionally minimal to avoid overbuilding before indexing and search are implemented.
 
+## Catalog-first foundation
+
+Implemented in `feat/catalog-first-architecture`:
+
+- `indexed_media` remains the source-facts table.
+- `media_catalog` materializes normalized browse/search/timeline fields:
+  - `file_name`
+  - `file_extension`
+  - `tags_csv` (serialized tag payload; legacy column name)
+  - `search_text`
+  - `timeline_day_key`
+  - `timeline_month_key`
+  - `timeline_year_key`
+- `derived_artifacts` records app-owned generated outputs such as thumbnail variants.
+
+Partially implemented:
+
+- catalog refresh is currently a storage-owned materialization pass (`refresh_catalog()`) that rebuilds normalized rows from source facts and tag joins.
+
+Deferred:
+
+- fully incremental catalog maintenance for every mutation path
+- aggregate timeline rollup tables
+- alternate search indexes or FTS storage
+
 ## Source root ownership policy
 
 - Current policy: source roots are persisted in storage as operational records.
@@ -88,6 +113,17 @@ This schema is intentionally minimal to avoid overbuilding before indexing and s
 - Large browse/search refreshes read this query surface from background tasks (`Task::perform`) so SQLite reads/projection hydration do not block the UI thread.
 - This read layer is UI-agnostic and replaceable by richer search subsystems later.
 - Library statistics dialog reads maintained rows from `source_root_statistics` via `get_source_root_statistics(root_id)` and does not run expensive aggregation on dialog open.
+
+## Catalog query surface
+
+Implemented:
+
+- `list_catalog_media_filtered(source_root_id)` returns normalized catalog rows ordered for browse flows.
+- `list_ready_derived_artifacts_for_media_ids(...)` returns ready artifact records for named variants such as `gallery-400` and `detail-800`.
+
+Partially implemented:
+
+- details and tag workflows still use the direct read-model lookup path where that remains simpler and correct.
 
 ## Library statistics maintenance
 
@@ -141,3 +177,4 @@ This schema is intentionally minimal to avoid overbuilding before indexing and s
 - Source media directories are never used as cache locations.
 - Path overrides are possible through config, but ownership remains app-side only.
 - Thumbnail cache file naming uses deterministic derived keys from source path + size + modified timestamp.
+- Ready/failed thumbnail variants are now also recorded in `derived_artifacts` so cache state is not inferred from disk presence alone.

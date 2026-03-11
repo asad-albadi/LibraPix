@@ -1,5 +1,6 @@
 use crate::StorageError;
 use rusqlite::{Connection, params};
+use std::time::{Duration, Instant};
 
 struct Migration {
     version: u32,
@@ -7,7 +8,7 @@ struct Migration {
     sql: &'static str,
 }
 
-const MIGRATIONS: [Migration; 8] = [
+const MIGRATIONS: [Migration; 11] = [
     Migration {
         version: 1,
         name: "baseline_foundation",
@@ -48,9 +49,44 @@ const MIGRATIONS: [Migration; 8] = [
         name: "source_root_statistics",
         sql: include_str!("../migrations/0008_source_root_statistics.sql"),
     },
+    Migration {
+        version: 9,
+        name: "catalog_first_foundation",
+        sql: include_str!("../migrations/0009_catalog_first_foundation.sql"),
+    },
+    Migration {
+        version: 10,
+        name: "projection_snapshots",
+        sql: include_str!("../migrations/0010_projection_snapshots.sql"),
+    },
+    Migration {
+        version: 11,
+        name: "catalog_history_reconciliation",
+        sql: include_str!("../migrations/0011_catalog_history_reconciliation.sql"),
+    },
 ];
 
-pub fn apply_migrations(connection: &Connection) -> Result<(), StorageError> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppliedMigrationMetric {
+    pub version: u32,
+    pub name: &'static str,
+    pub duration: Duration,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MigrationMetrics {
+    pub previous_version: u32,
+    pub final_version: u32,
+    pub schema_setup_duration: Duration,
+    pub version_lookup_duration: Duration,
+    pub total_duration: Duration,
+    pub applied: Vec<AppliedMigrationMetric>,
+}
+
+pub fn apply_migrations(connection: &Connection) -> Result<MigrationMetrics, StorageError> {
+    let total_started_at = Instant::now();
+
+    let schema_setup_started_at = Instant::now();
     connection.execute_batch(
         "CREATE TABLE IF NOT EXISTS schema_migrations (
             version INTEGER PRIMARY KEY,
@@ -58,17 +94,24 @@ pub fn apply_migrations(connection: &Connection) -> Result<(), StorageError> {
             applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );",
     )?;
+    let schema_setup_duration = schema_setup_started_at.elapsed();
 
+    let version_lookup_started_at = Instant::now();
     let current_version: u32 = connection.query_row(
         "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
         [],
         |row| row.get(0),
     )?;
+    let version_lookup_duration = version_lookup_started_at.elapsed();
+
+    let mut applied = Vec::new();
+    let mut final_version = current_version;
 
     for migration in MIGRATIONS
         .iter()
         .filter(|migration| migration.version > current_version)
     {
+        let migration_started_at = Instant::now();
         let transaction = connection.unchecked_transaction()?;
         transaction.execute_batch(migration.sql)?;
         transaction.execute(
@@ -76,7 +119,20 @@ pub fn apply_migrations(connection: &Connection) -> Result<(), StorageError> {
             params![migration.version, migration.name],
         )?;
         transaction.commit()?;
+        applied.push(AppliedMigrationMetric {
+            version: migration.version,
+            name: migration.name,
+            duration: migration_started_at.elapsed(),
+        });
+        final_version = migration.version;
     }
 
-    Ok(())
+    Ok(MigrationMetrics {
+        previous_version: current_version,
+        final_version,
+        schema_setup_duration,
+        version_lookup_duration,
+        total_duration: total_started_at.elapsed(),
+        applied,
+    })
 }

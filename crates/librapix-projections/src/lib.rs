@@ -7,6 +7,9 @@ pub struct ProjectionMedia {
     pub media_kind: String,
     pub modified_unix_seconds: Option<i64>,
     pub tags: Vec<String>,
+    pub timeline_day_key: Option<String>,
+    pub timeline_month_key: Option<String>,
+    pub timeline_year_key: Option<String>,
 }
 
 pub mod gallery;

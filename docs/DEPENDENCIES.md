@@ -12,13 +12,15 @@ This file tracks major direct dependencies that shape architecture and maintenan
 - Official docs consulted:
   - [https://docs.rs/crate/iced/latest](https://docs.rs/crate/iced/latest)
   - [https://docs.iced.rs/iced/](https://docs.iced.rs/iced/)
+  - [https://docs.rs/iced/latest/iced/time/index.html](https://docs.rs/iced/latest/iced/time/index.html)
   - [https://docs.rs/iced/latest/iced/widget/operation/scrollable/fn.scroll_to.html](https://docs.rs/iced/latest/iced/widget/operation/scrollable/fn.scroll_to.html)
   - [https://docs.rs/iced/latest/iced/widget/scrollable/fn.scroll_to.html](https://docs.rs/iced/latest/iced/widget/scrollable/fn.scroll_to.html)
   - [https://github.com/iced-rs/iced/releases](https://github.com/iced-rs/iced/releases)
 - Notes:
   - Latest stable verified at baseline: `0.14.0`.
-  - Features enabled: `image` (raster icons), `svg` (vector logo in header).
+  - Features enabled: `image` (raster icons), `svg` (vector logo in header), `tokio` (non-blocking timer subscriptions via `iced::time::every`).
   - Timeline scrubber uses `operation::scroll_to` for absolute offset targeting with `operation::snap_to` fallback during early viewport initialization.
+  - Startup/runtime ticks now use Iced's timer API on the tokio backend; the older blocking `std::thread::sleep` subscription loops were removed after they delayed thumbnail result handoff on Windows.
   - Keep presentation logic in `librapix-app` and prevent leakage into domain/storage.
 - Risks/tradeoffs:
   - API evolution can require incremental refactors.
@@ -80,6 +82,7 @@ This file tracks major direct dependencies that shape architecture and maintenan
   - [https://docs.rs/directories/latest/directories/](https://docs.rs/directories/latest/directories/)
 - Notes:
   - `ProjectDirs` is used to compute config/data/cache defaults.
+  - Startup logging now uses `ProjectDirs::state_dir()` when available and falls back to `data_local_dir()` for the platform-default log directory.
 - Risks/tradeoffs:
   - Directory conventions differ by platform; docs must define behavior clearly.
 
@@ -95,6 +98,7 @@ This file tracks major direct dependencies that shape architecture and maintenan
 - Notes:
   - `bundled` feature avoids system SQLite dependency variance across platforms.
   - Used in `librapix-storage` with SQL migrations and `schema_migrations` tracking.
+  - Also backs the catalog-first foundation tables `media_catalog` and `derived_artifacts`.
 - Risks/tradeoffs:
   - Bundled SQLite increases compile time.
   - Raw SQL requires disciplined migration/version management.
@@ -161,6 +165,7 @@ This file tracks major direct dependencies that shape architecture and maintenan
   - [https://docs.rs/chrono/latest/chrono/](https://docs.rs/chrono/latest/chrono/)
 - Notes:
   - Timeline grouping uses local timezone day boundaries derived from indexed Unix timestamps.
+  - Catalog materialization now also stores local day/month/year keys in `media_catalog` using `chrono`.
 - Risks/tradeoffs:
   - Local timezone behavior can vary around DST/offset transitions; projection tests cover boundary scenarios.
 

@@ -5,9 +5,19 @@ All notable changes to this project are documented in this file.
 ## [Unreleased]
 
 ### Docs
+- Added `docs/architecture/issue-12-runtime-optimization-summary.md` as the final consolidated explanation for the runtime-optimization work on `feat/catalog-first-architecture`.
+- Reconciled `message-flow`, `media-ui`, `thumbnails`, `catalog-first-architecture`, and `TROUBLESHOOTING` so they describe the final startup, projection, rendering, thumbnail, and thumb-drag model consistently.
+- Removed superseded issue-12 audit/checklist docs that only preserved intermediate investigation steps instead of the final architecture story.
 - Added `docs/AGENT_KNOWLEDGE_BASE.md` as a single comprehensive, code-verified project knowledge base for future engineering agents, and linked it from `docs/README.md`.
+- Added the catalog-first architecture plan and ADR for the long-lived branch foundation.
+- Updated media-UI documentation to clarify that runtime activity status is shown in the sidebar footer rather than duplicated in the header.
 
 ### Added
+- Migration `0009_catalog_first_foundation.sql` with:
+  - `media_catalog` for normalized browse/search/timeline facts
+  - `derived_artifacts` for named thumbnail variant readiness
+- Debug runtime automation via `LIBRAPIX_AUTOMATION_SCRIPT` for deterministic Windows validation of route switches, filter changes, and first-open detail interactions against the real executable and large-library state.
+- Storage APIs for catalog materialization and derived-artifact lookup.
 - GitHub release update-check flow in `librapix-app` using GitHub latest-release endpoint (`/releases/latest`) with explicit state model: `Unknown`, `Checking`, `UpToDate`, `UpdateAvailable { version, url }`, `Failed`.
 - Header update-status chip with click behavior:
   - opens latest release page when a newer release is available
@@ -33,6 +43,17 @@ All notable changes to this project are documented in this file.
 - Removed `packaging/windows/` scripts and packaging README from the repository.
 
 ### Changed
+- Sidebar footer status presentation was corrected to match native sidebar section styling: removed the boxed/card container, renamed the sidebar footer heading to `STATUS`, kept the update chip at the top of the section, and tightened spacing for a flatter, cleaner integration with Browse/Library sections.
+- Sidebar footer status UI is now a unified system-status panel: the update-status chip moved from the header into the bottom-left sidebar footer above runtime activity/progress, spacing/typography were tightened for clearer hierarchy, metrics were compacted into a single secondary line, and long error text is now compact with hover-to-view-full details.
+- Startup now uses a bounded gallery snapshot (`projection_snapshots.version = 2`), an explicit ready-enough boundary, current-surface-first startup projection, and a non-blocking unchanged-launch gallery continuation instead of treating startup like a full-library preload.
+- Large gallery, timeline, and search surfaces now render through viewport-bounded windows; Timeline also virtualizes rows inside intersecting date groups and logs real group/row visibility through the runtime diagnostics.
+- Post-startup route, filter, search, and filesystem refreshes now rebuild only the active surface immediately, while first-open details reuse existing detail/browse artifacts instead of synchronously generating `detail-800`.
+- Startup and runtime thumbnail policy now performs projection-time exact/fallback reuse, records named ready/failed variants, keeps thumbnail batches outside the startup-ready boundary, and cancels queued work when later projection or reconcile requests take priority.
+- Background thumbnail runtime now separates image and video policy, defers visible videos into slower catch-up, throttles video batches to one item, applies runtime backoff/session disable on repeated failures, and logs rich ffmpeg failure context.
+- Periodic coordinator ticks now use `iced::time::every` on the Iced tokio backend, and thumbnail logs now record worker-complete -> dispatch-to-UI -> message-received -> apply timing so handoff delays remain measurable.
+- Scrollbar-thumb drag now uses an explicit preview/settle lifecycle with layout-cache reuse, latest-only pending targets, frozen drag-time width and effective `max_y`, adaptive settle behavior, and one exact final viewport apply.
+- Background browse/search/timeline preparation now reads normalized catalog rows instead of rebuilding those surfaces directly from source-fact joins, while Timeline projections consume persisted day/month/year keys with timestamp fallback compatibility.
+- The header no longer duplicates runtime activity text; that status now lives only in the left sidebar footer activity panel.
 - About dialog now shows the current app version from package metadata.
 - Header now includes an update-status chip (`Checking...`, `Up to date`, `New release`) with subtle fallback behavior on failed checks.
 - Startup restore flow now batches background indexing/projection restore with update-check scheduling while keeping UI responsive.
@@ -62,6 +83,15 @@ All notable changes to this project are documented in this file.
 - Windows EXE and Linux AppImage release artifacts now render in-app icons/logo without companion asset packages.
 - Fixed startup responsiveness regression after embedded-asset migration by caching image/SVG handles in static lazy storage instead of rebuilding handles in render paths.
 - New-file detected dialog now uses the same content-sized modal behavior as other dialogs, removing extra bottom gap below actions.
+
+### Fixed
+- Newly discovered media opened from the filesystem-watch announcement dialog now shows an intentional animated loading placeholder while its preview is still being prepared, instead of appearing blank or broken.
+- Timeline no longer hangs or heavily stalls when scrolling through very large date buckets; an intersecting group no longer forces the UI thread to build every row in that group.
+- Timeline large-surface logs now report the real total row count instead of echoing the visible-row count, fixing misleading render-window evidence during Timeline investigations.
+- Post-ready background thumbnail failures no longer aggressively retry the same known-bad items on later projection generations in the same session.
+- Failing Windows video thumbnail work no longer stays opaque; logs now show the real ffmpeg failure path needed to debug startup and post-ready lag.
+- Video thumbnail startup now resolves `ffmpeg` from `PATH` before falling back to a same-named file in the current working directory, avoiding false session-wide disablement when the launch directory contains an unrelated `ffmpeg` file.
+- Catalog materialization now preserves literal commas inside tag names instead of splitting them into multiple tags during `media_catalog` refresh/readback.
 
 ### Added
 - Branding integration: blue logo in app header, GitHub link button, asset-based icons throughout UI.
@@ -193,6 +223,15 @@ All notable changes to this project are documented in this file.
 - i18n keys for auto-tag UI labels.
 
 ### Fixed
+- Existing thumbnails are now reused earlier at startup even when the exact browse-tier artifact row is missing, as long as a deterministic on-disk browse thumbnail or a compatible detail-tier fallback exists.
+- Startup-ready no longer waits for startup-priority thumbnail batches; visible cards can render with reused thumbnails or placeholders while thumbnail work continues in background.
+- `Loading library snapshot` no longer deserializes and reapplies a full gallery+timeline browse snapshot before the app can continue startup.
+- Existing incompatible broad startup snapshots are now discarded and rebuilt instead of being eagerly rehydrated on the new startup path.
+- Stale delayed startup-reconcile ticks no longer trigger duplicate scan/projection passes after the app has already reached ready-enough state.
+- Existing real databases from the older runtime line now receive catalog/artifact tables through compatibility migrations, preventing silent empty startup projections on the catalog-first branch.
+- Startup activity text/loading indicators are restored on the catalog-first branch and now remain visible until snapshot, reconcile, projection, and thumbnail work actually settle.
+- Startup no longer waits for the full browse-tier thumbnail backlog before returning to a real ready-enough state.
+- Catalog-backed startup/projection failures no longer disappear behind `unwrap_or_default()` in the runtime path; errors now feed the structured activity state instead of silently clearing to idle.
 - Media-pane vertical scrollbar no longer overlays gallery/timeline cards; it now uses embedded scrollbar spacing so content width reserves a dedicated scrollbar gutter.
 - Timeline scrubber no longer snaps sideways on first click; scrub mode now keeps slider lane width stable and positions the date chip from the continuous scrub value.
 - Windows `Copy File` now writes an actual Explorer-compatible file-drop clipboard payload (native `CF_HDROP` via Win32 `SetClipboardData`) instead of PowerShell-based clipboard indirection.

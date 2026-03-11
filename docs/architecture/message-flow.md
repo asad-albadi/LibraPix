@@ -2,6 +2,8 @@
 
 Current baseline follows Iced's explicit state/update/view loop.
 
+Issue `#12` runtime rationale and evidence are consolidated in `docs/architecture/issue-12-runtime-optimization-summary.md`. This document describes the final runtime flow only.
+
 ## Flow
 
 1. `view` renders controls from current `AppState`.
@@ -38,17 +40,19 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
   - `librapix-indexer` scans and emits media candidates.
   - App persists candidates incrementally to `indexed_media`, marks missing records, and records indexing summary in state.
   - App refreshes maintained `source_root_statistics` for scanned roots.
-  - App runs thumbnail generation for image read-model rows into app-owned thumbnail cache.
+  - App refreshes `media_catalog` so browse/search/timeline work reads a normalized catalog layer instead of shaping raw source facts directly.
+  - App runs thumbnail generation for catalog rows and records named thumbnail variants in `derived_artifacts`.
 - Run read-model query baseline
   - App schedules projection/search background work via `Task::perform`.
-  - Worker queries read models from storage with optional text filtering over path/tag data.
-  - App executes fuzzy search over the full in-memory read-model document set (no hidden fixed 20-result cap).
+  - Worker queries normalized catalog rows from storage with optional root filtering.
+  - App executes fuzzy search over the full in-memory catalog document set (no hidden fixed 20-result cap).
   - App applies active kind/extension/tag filters to resulting hits.
 - Run timeline projection baseline
   - App schedules projection-only background work.
-  - Worker loads read-model rows, delegates grouping to `librapix-projections`, and applies kind/extension/tag filters.
+  - Worker loads catalog rows, delegates grouping to `librapix-projections`, and applies kind/extension/tag filters.
+  - Projection prefers persisted timeline keys from `media_catalog` and falls back to timestamp conversion only when needed.
   - Worker derives `TimelineAnchor` metadata from timeline buckets (`build_timeline_anchors`).
-  - UI renders selectable timeline items grouped by route panel when `BackgroundWorkComplete` is applied.
+  - UI renders selectable timeline items grouped by route panel when staged projection results are applied.
 - Timeline scrubber interaction
   - Timeline pane owns a stable scrollable `Id` (`media-pane-scrollable`).
   - Timeline/gallery media scrollable uses embedded vertical scrollbar spacing so scrollbar gutter is outside card content.
@@ -59,14 +63,19 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
   - Scroll updates emit `MediaViewportChanged`; scrub value tracks viewport offset continuously while anchor selection tracks nearest projection anchor.
 - Run gallery projection baseline
   - App schedules projection-only background work.
-  - Worker loads read-model rows, delegates filtering/sorting to `librapix-projections`, and applies `GalleryQuery`.
-  - UI renders selectable gallery items by route panel when `BackgroundWorkComplete` is applied.
+  - Worker loads catalog rows, delegates filtering/sorting to `librapix-projections`, and applies `GalleryQuery`.
+  - UI renders selectable gallery items by route panel when staged projection results are applied.
+  - Large gallery/timeline/search surfaces now render through a viewport-bounded window with preserved scroll extent, so full logical result sets can apply without composing every card in one frame.
 - Direct media selection
   - Selection is explicit app state (`selected_media_id`).
   - Selecting from search/gallery/timeline loads details and enables actions/tags.
 - Load media details
   - UI provides selected media id.
   - App resolves media details from storage read-model lookup.
+  - If startup snapshot state has not warmed the selected media into `media_cache`, details now stay placeholder-first:
+    - prefer an already-existing `detail-800` file when present
+    - otherwise reuse the current browse thumbnail immediately
+    - do not synchronously generate a new detail thumbnail on the selection path
   - UI renders metadata lines and action status.
 - Tag actions
   - UI provides selected media id + tag text or chip action (edit/remove).
@@ -85,10 +94,55 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
   - Ignored-only subscription prevents conflicts with focused text input widgets.
 - Startup restore
   - `Task::done(Message::StartupRestore)` fires after the first render.
-  - If roots exist, spawns background work via `Task::perform` to run indexing, thumbnail generation, and gallery/timeline projections on a background thread.
+  - Bootstrap now loads config/theme/path overrides only; storage open and migrations were removed from the pre-render path.
+  - Startup restore first hydrates the persisted startup snapshot on a background task.
+  - If a compatible snapshot exists, app applies it incrementally through `SnapshotApplyTick`, but only for a bounded recent-gallery slice instead of the full gallery+timeline browse state.
+  - Incompatible legacy snapshots are discarded and rebuilt after the next successful unfiltered gallery projection instead of being eagerly rehydrated.
+  - Startup then schedules a delayed reconcile kickoff (`StartupReconcileKickoff`) when hydrated roots exist.
+  - Reconcile and projection now run as explicit staged jobs:
+    - `ScanJobComplete`
+    - `ProjectionJobComplete`
+    - `ThumbnailBatchComplete`
   - Startup restore also schedules a non-blocking GitHub latest-release check task.
-  - UI remains interactive while background work proceeds; activity status shown in header.
-  - On completion, `BackgroundWorkComplete` message applies all results to app state atomically.
+  - Startup projection now follows a ready-enough policy:
+    - the startup-critical projection refresh prioritizes the currently visible browse surface
+    - non-visible route refresh can remain deferred until explicitly requested or later background catch-up
+    - startup cache warm-up is bounded to a small visible slice instead of the full catalog
+    - if reconcile finds no catalog changes and the current route is already the restored default gallery snapshot, startup skips the redundant startup-blocking gallery projection, becomes ready from that snapshot, and schedules a non-blocking gallery continuation so the snapshot restore does not become the permanent gallery state
+  - Startup projection now performs explicit thumbnail lookup before scheduling generation:
+    - exact ready `gallery-400` artifact rows
+    - deterministic on-disk `gallery-400` files
+    - compatible `detail-800` fallback rows
+    - deterministic `detail-800` fallback for visible-priority items
+  - Thumbnail work is now split:
+    - startup-priority background thumbnail work for the first visible image slice
+    - delayed background catch-up for visible videos and the remaining browse-tier backlog
+  - Startup/runtime instrumentation now writes a timestamped log file with:
+    - bootstrap config-load timing
+    - storage open + migration timing
+    - snapshot hydrate/apply timing
+    - reconcile/projection timing
+    - thumbnail start/end timing
+    - thumbnail batch dispatch/start/end/cancel timing
+    - thumbnail worker-complete -> dispatch-to-UI -> message-received handoff timing
+    - thumbnail apply start timing plus apply duration
+    - thumbnail apply timing in the app state
+    - thumbnail result-message rate during active background work
+    - artifact lookup start/end timing
+    - exact/fallback reuse counts
+    - placeholder and scheduled-generation counts
+    - rejected-artifact reasons
+    - video command/exit/timeout/stderr details on failure
+    - startup-ready and first-usable-gallery milestones
+  - UI remains interactive while background work proceeds; sidebar activity state reflects the real stage currently in flight.
+  - Ready-enough state is restored after snapshot apply, reconcile, and current-surface projection; thumbnail work continues honestly in background instead of blocking startup-ready.
+  - Unchanged startup launches no longer force gallery-loading ownership after reconcile:
+    - `apply_scan_job_result(...)` skips projection when the restored gallery snapshot is still valid for the default route
+    - timeline refresh remains deferred until the user opens Timeline
+  - Deferred thumbnail catch-up remains visible as honest background work without keeping the whole app in startup-busy state.
+  - Later projection or reconcile requests cancel queued thumbnail work and invalidate stale in-flight batches instead of waiting for them to settle first.
+  - Failed thumbnails now enter runtime backoff so later projection refreshes do not immediately retry the same known-bad items.
+  - ffmpeg resolution/spawn failures disable repeated video attempts for the rest of the session instead of flooding the app with broken subprocess launches.
 - Release update check flow
   - State is explicit in app orchestration: `Unknown`, `Checking`, `UpToDate`, `UpdateAvailable { version, url }`, `Failed`.
   - Header chip click emits `UpdateChipPressed`.
@@ -96,6 +150,7 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
     - opens the latest release URL immediately when `UpdateAvailable` is active
     - otherwise attempts a manual re-check (rate-limited to 5 minutes)
   - A periodic tick subscription emits `UpdateCheckTick`.
+  - Periodic runtime timers now use `iced::time::every(...)` on the Iced tokio backend instead of custom blocking `std::thread::sleep(...)` subscription loops.
   - `UpdateCheckTick` enforces a 24-hour auto re-check policy while preventing overlapping checks.
   - Background task completion emits `UpdateCheckCompleted`, which applies the new update-check state and successful-check timestamp.
 - Library dialog folder picker
@@ -111,16 +166,40 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
   - After indexing completes, gallery projection refreshes automatically (within StartupRestore flow).
   - Filesystem-triggered background refresh compares previous and current media cache ids to detect newly indexed files.
   - New files can trigger a dismissible in-app modal dialog with preview/metadata and quick actions.
+  - Post-startup route/filter/search/filesystem projection refreshes are current-surface-first:
+    - the active route is rebuilt immediately
+    - the non-visible route is marked deferred and rebuilt only when opened later
+    - projection logs record trigger, policy, refreshed surfaces, and working-state ownership
 
 - Background work pattern
-  - Heavy operations (indexing, scanning, thumbnail generation, projections, search hydration) are encapsulated in `do_background_work`.
-  - `spawn_background_work` captures current app inputs in `BackgroundWorkInput` and returns a `Task::perform` that runs the work off the UI thread.
-  - Work mode is explicit:
-    - `IndexAndProject`: indexing + thumbnails + projections/search
-    - `ProjectOnly`: projections/search refresh without filesystem scan/index writes
-  - `BackgroundWorkComplete` handler applies all returned state atomically.
-  - Multiple handlers share this pattern: `StartupRestore`, `FilesystemChanged`, `RunIndexing`, `ApplyMinFileSize`, library-dialog save operations, manual route refresh, search run, and filter changes.
-  - Release checks follow the same non-blocking task model (`Task::perform`) through `start_update_check` -> `UpdateCheckCompleted`.
+  - Heavy operations still run off the UI thread through `Task::perform`, but the branch now uses staged job families instead of one monolithic worker result.
+  - Startup/runtime stages are explicit:
+    - snapshot hydrate
+    - snapshot apply
+    - scan/reconcile
+    - catalog-backed projection/search preparation
+    - thumbnail batches
+  - Catalog-backed projection work refreshes `media_catalog`, queries normalized rows, reads ready derived artifacts, and then schedules missing thumbnail work separately.
+  - During startup, projection refresh is intentionally narrower:
+    - current route first
+    - visible-slice cache warm-up
+    - deferred non-visible route refresh
+  - Activity state is structural runtime state, not a widget-local hint; stage text and ready transitions are driven by the coordinator state machine.
+  - Periodic coordinator ticks (`UpdateCheckTick`, `StartupReconcileKickoff`, `SnapshotApplyTick`, `DeferredThumbnailCatchupKickoff`) now use Iced's timer API instead of blocking timer streams, so background task completions are not left waiting behind sleeping subscription workers.
+  - Ready-enough and background catch-up are now distinct runtime concepts:
+    - startup completion no longer waits for any thumbnail batch
+    - deferred thumbnail catch-up is delayed and batched more lightly after startup becomes usable
+    - unchanged snapshot-backed startup can still schedule a later non-blocking gallery continuation for completeness
+  - Background thumbnail policy is no longer uniform:
+    - images can remain higher-priority background work
+    - videos are throttled more aggressively, with one-item batches plus backoff/cancellation
+  - Thumbnail batch completion is now explicitly observable end-to-end:
+    - worker finish
+    - dispatch to UI
+    - message received in `update`
+    - apply start/end in app state
+  - Current branch limitation: the staged coordinator still lives in `librapix-app/src/main.rs` and has not yet been extracted into smaller orchestration modules.
+  - Release checks continue to follow the same non-blocking task model (`Task::perform`) through `start_update_check` -> `UpdateCheckCompleted`.
 
 ## Rules
 

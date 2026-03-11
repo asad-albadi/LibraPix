@@ -539,6 +539,19 @@ pub fn thumb_placeholder_style(_theme: &Theme) -> container::Style {
     }
 }
 
+pub fn preview_loading_block_style(_theme: &Theme) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(Color {
+            r: 0.286,
+            g: 0.286,
+            b: 0.286,
+            a: 1.0,
+        })),
+        border: iced::border::rounded(RADIUS_MD),
+        ..container::Style::default()
+    }
+}
+
 pub fn empty_state_style(_theme: &Theme) -> container::Style {
     container::Style {
         background: Some(Background::Color(BG_SURFACE)),

@@ -2,97 +2,194 @@
 
 ![LibraPix logo](assets/logo/blue/icon-128.png)
 
-**LibraPix** is a cross-platform, desktop-first, non-destructive local media gallery and manager for screenshots and recordings.
+LibraPix is a cross-platform desktop application for browsing and managing local screenshots and recordings without modifying the original files.
+
+## Why LibraPix exists
+
+Many screenshot and clip workflows are folder-based and grow over time across multiple directories. LibraPix provides a single local view over those folders, with indexing, search, timeline browsing, tags, and thumbnail caching, while keeping source media read-only.
+
+## Project status
+
+LibraPix is currently in an MVP-complete baseline (`0.4.0`) focused on a usable, non-destructive desktop workflow. The codebase is actively evolving, but the main end-to-end flow is implemented.
+
+## Current feature set
+
+Implemented in the current codebase:
+
+- Multiple library roots with add/edit/remove/deactivate/reactivate flows
+- Optional display names per library
+- Root-level app/game tags that are automatically applied during indexing
+- Read-only media scanning with centralized ignore rules
+- Gallery and timeline browsing surfaces
+- Search over indexed media using fuzzy matching
+- Metadata/details panel (type, size, modified date, dimensions, path)
+- App/game tag attach/detach/edit flows in the UI
+- Filtering by media type, extension, tag, and library
+- Minimum file size filter for indexing
+- SQLite-backed catalog and projection snapshots
+- App-owned thumbnail cache for images and videos
+- Filesystem watching and new-media announcement UI
+- OS actions: open file, open containing folder, copy file, copy path
+- Background GitHub release check (startup + periodic)
 
 ## Screenshot
 
-![LibraPix screenshot](assets/screenshots/Screenshot%202026-03-11%20190524.png)
+![LibraPix application screenshot](assets/screenshots/Screenshot%202026-03-11%20190524.png)
 
-## Status
+## Technology stack
 
-Project phase: **MVP complete** (technical + visual shell baseline).
+| Area | Technologies in use |
+| --- | --- |
+| Language/runtime | Rust (Edition 2024, MSRV 1.85) |
+| Desktop UI | `iced` |
+| Configuration | `serde`, `toml`, `directories` |
+| Storage | SQLite via `rusqlite` (`bundled`), SQL migrations |
+| Indexing & filesystem | `walkdir`, `globset`, `notify`, `imagesize` |
+| Search | `strsim` (normalized Levenshtein strategy) |
+| Imaging/thumbnails | `image`, `sha2`, system `ffmpeg` for video thumbnails |
+| Platform integrations | `rfd` (native folder picker), `opener` |
+| Networking | `ureq` + `serde_json` (release update check) |
+| CI/release | GitHub Actions workflow for Linux AppImage and Windows `.exe` release artifacts |
 
-## Core Principles
+## Architecture overview
 
-- **Non-destructive by design**: source media is treated as read-only.
-- **Documentation-driven**: architecture and repository rules are first-class deliverables.
-- **Clear boundaries**: UI, application flow, domain logic, storage/indexing/search, i18n, and config remain isolated.
-- **Simplicity first**: small modules, explicit state transitions, and maintainable code.
+LibraPix is a Rust workspace with focused crates and explicit boundaries:
 
-## Features
+- `librapix-app`: Iced application shell, state/update/view wiring, runtime orchestration
+- `librapix-core`: shared app/domain state and message types
+- `librapix-config`: config schema, validation, and platform path resolution
+- `librapix-storage`: SQLite persistence and migrations
+- `librapix-indexer`: media scanning and ignore-rule evaluation
+- `librapix-search`: search interfaces and fuzzy strategy
+- `librapix-projections`: gallery/timeline read projections
+- `librapix-thumbnails`: deterministic thumbnail generation/cache paths
+- `librapix-i18n`: keyed UI text and locale handling
 
-- Multiple local library directories
-- Unified Add/Edit Library dialog (browse-first), including display name and chip-based root-level tag management
-- Separate Library Statistics dialog with maintained per-library totals (size, media/image/video counts, size split, indexed/missing/date stats)
-- Gallery and timeline views with justified layout
-- Fuzzy search over filenames, tags, and metadata
-- App-side and game tags
-- Chip-based tag management in Library and Details surfaces (add/edit/remove with deterministic colors)
-- Chip-based ignore-rule management in Settings (add/edit/remove/enable-disable with deterministic colors)
-- Media type filters (images/videos) and extension chips
-- Library filter chips (All libraries or selected library)
-- Open file, show in folder, copy file, copy path actions
-- Keyboard shortcuts: `Cmd/Ctrl+C` (copy file), `Cmd/Ctrl+Shift+C` (copy path)
-- Live filesystem watching with new-file announcement dialog
-- Deterministic thumbnail cache (images and videos)
-- Header About dialog with product and creator information
-- Header update-status chip backed by GitHub Releases latest checks
-  - checks once after startup render
-  - re-checks every 24 hours while app remains open
-  - click-to-recheck with 5-minute cooldown
-  - click opens latest release page when a newer version is available
+## System design principles in the current implementation
 
-## Build & Run
+- **Non-destructive behavior**: source media is scanned/read, not modified.
+- **Local-first operation**: config, database, tags, ignore rules, and thumbnails are stored locally.
+- **Explicit state transitions**: message-driven update flow (`Message` + update logic) in the desktop app.
+- **Separation of concerns**: storage, indexing, projections, search, config, and UI are split into dedicated crates.
+- **Deterministic caching**: thumbnail output paths are hash-derived from source fingerprint fields.
+- **Background work for responsiveness**: indexing, projection refreshes, thumbnail work, and update checks are scheduled as background tasks.
+
+## Project structure
+
+```text
+.
+├── crates/
+│   ├── librapix-app/
+│   ├── librapix-config/
+│   ├── librapix-core/
+│   ├── librapix-i18n/
+│   ├── librapix-indexer/
+│   ├── librapix-projections/
+│   ├── librapix-search/
+│   ├── librapix-storage/
+│   └── librapix-thumbnails/
+├── docs/
+├── assets/
+└── .github/workflows/
+```
+
+## Data flow and state management
+
+High-level runtime flow:
+
+1. Load/create config and resolve app-owned paths.
+2. Open SQLite storage and apply migrations.
+3. Reconcile configured library roots and lifecycle states.
+4. Scan roots through the indexer with ignore rules and optional size filtering.
+5. Persist indexed rows and maintain catalog/read models.
+6. Build gallery/timeline projections for the active surface.
+7. Resolve/reuse/generate thumbnails from app-owned cache.
+8. Render UI from current app state; user actions emit messages that trigger explicit update steps.
+
+## Storage and persistence
+
+LibraPix persists application state in app-owned storage only:
+
+- `config.toml` for preferences and path overrides
+- SQLite database for roots, indexed media, tags, ignore rules, statistics, catalog data, and snapshots
+- Thumbnail/cache files under app cache directories
+- Startup/runtime logs under app state/log directories
+
+No app metadata is written into user media files.
+
+## Performance-oriented choices already present
+
+- Incremental indexing (`new` / `changed` / `unchanged` detection)
+- Snapshot-assisted startup path for faster initial surface restore
+- Viewport/windowed rendering strategy for large gallery/timeline surfaces
+- Thumbnail reuse before generation, with background catch-up
+- Filesystem watch integration to avoid full manual rescans for new media
+
+## Platform support
+
+- **Windows**: actively packaged in CI (`.exe` release artifact)
+- **Linux**: actively packaged in CI (AppImage release artifact)
+- **macOS**: codebase is cross-platform, but CI DMG packaging is currently disabled
+
+## Installation
 
 ### Prerequisites
 
-- Rust 1.85 or later (MSRV)
-- FFmpeg (for video thumbnails)
+- Rust `1.85` or newer
+- `ffmpeg` available on `PATH` (required for video thumbnail extraction)
 
-### Commands
+### Clone and build
+
+```bash
+git clone <repository-url>
+cd LibraPix
+cargo build -p librapix-app
+```
+
+## Running the app
+
+```bash
+cargo run -p librapix-app
+```
+
+## Development checks
 
 ```bash
 cargo fmt --all
 cargo check --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
-cargo run -p librapix-app
 ```
 
-### Platform Notes
+## Release notes
 
-- **Windows**: Copy File uses native `CF_HDROP` clipboard (Explorer-paste compatible). UI icons/logo are embedded in the executable binary for release builds.
-- **macOS**: Apple Silicon DMG for releases.
-- **Linux**: AppImage for releases with embedded UI icons/logo.
+- Release artifacts are built by `.github/workflows/release.yml`.
+- Current CI packaging targets: Linux AppImage and Windows executable.
+- macOS DMG packaging is present in workflow logic but disabled until signing/notarization is available in CI.
 
-## Workspace Layout
+## Known limitations and current scope boundaries
 
-| Crate | Purpose |
-|-------|---------|
-| `librapix-app` | Iced desktop executable (presentation + app bootstrap) |
-| `librapix-config` | Typed config, path strategy, TOML load/save |
-| `librapix-core` | Domain and application orchestration |
-| `librapix-indexer` | Indexing pipeline, centralized ignore matching |
-| `librapix-i18n` | Key-based localization with locale fallback |
-| `librapix-projections` | Timeline and gallery read projections |
-| `librapix-search` | Replaceable search contracts, fuzzy strategy |
-| `librapix-storage` | SQLite storage and migrations |
-| `librapix-thumbnails` | App-owned thumbnail cache |
-
-## MVP Usage Flow
-
-1. Add one or more libraries from the Add/Edit Library dialog.
-2. Configure ignore rules as needed.
-3. Run indexing.
-4. Browse gallery or timeline and select media.
-5. Inspect details, attach tags, run search, use open/copy actions.
+- Current localization is effectively `en-US` only in the shipped locale set.
+- Video thumbnail generation depends on external `ffmpeg` availability.
+- Update checking uses GitHub Releases latest endpoint and therefore requires network access.
+- Memories-style resurfacing is listed in roadmap docs but not implemented in the current app baseline.
 
 ## Documentation
 
 - [Documentation index](docs/README.md)
 - [Architecture overview](docs/architecture/overview.md)
-- [Branding guidelines](docs/branding.md)
+- [Repository rules](docs/REPOSITORY_RULES.md)
+- [Troubleshooting](docs/TROUBLESHOOTING.md)
+
+## Contributing
+
+Contributions are welcome. Before opening a PR:
+
+1. Read `AGENTS.md` and `docs/REPOSITORY_RULES.md`.
+2. Keep changes scoped and maintain crate boundaries.
+3. Update relevant docs and `CHANGELOG.md` for meaningful changes.
+4. Run the development checks listed above.
 
 ## License
 
-MIT License. See [LICENSE](LICENSE) for details.
+LibraPix is licensed under the MIT License. See [LICENSE](LICENSE).

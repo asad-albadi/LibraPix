@@ -12,7 +12,7 @@ use iced::time;
 use iced::widget::image::FilterMethod;
 use iced::widget::{
     Id, Space, button, column, container, image, mouse_area, operation, progress_bar, responsive,
-    row, scrollable, stack, svg, text, text_input, vertical_slider,
+    row, scrollable, stack, svg, text, text_input, tooltip, vertical_slider,
 };
 use iced::{ContentFit, Element, Length, Size, Subscription, Task, Theme};
 use librapix_config::{
@@ -2603,22 +2603,6 @@ fn view(app: &Librapix) -> Element<'_, Message> {
     .style(subtle_button_style)
     .padding([SPACE_XS as u16, SPACE_XS as u16]);
 
-    let mut update_chip = button(
-        text(app.i18n.text(update_chip_text_key(&app.update_check_state))).size(FONT_CAPTION),
-    )
-    .padding([SPACE_XS as u16, SPACE_MD as u16]);
-    if !matches!(app.update_check_state, UpdateCheckState::Checking) {
-        update_chip = update_chip.on_press(Message::UpdateChipPressed);
-    }
-    let update_chip = match &app.update_check_state {
-        UpdateCheckState::UpdateAvailable { .. } => update_chip.style(primary_button_style),
-        UpdateCheckState::Checking => update_chip.style(action_button_style),
-        UpdateCheckState::UpToDate => update_chip.style(action_button_style),
-        UpdateCheckState::Unknown | UpdateCheckState::Failed => {
-            update_chip.style(subtle_button_style)
-        }
-    };
-
     let header = container(
         row![
             brand,
@@ -2641,7 +2625,6 @@ fn view(app: &Librapix) -> Element<'_, Message> {
             .spacing(SPACE_SM)
             .align_y(iced::Alignment::Center),
             Space::new().width(Length::Fill),
-            update_chip,
             settings_btn,
             about_btn,
             github_btn,
@@ -2770,11 +2753,17 @@ fn view(app: &Librapix) -> Element<'_, Message> {
     )
     .height(Length::Fill);
     let sidebar_status = container(
-        column![
-            section_heading(app.i18n.text(TextKey::IndexingSectionLabel)),
-            render_activity_status(app),
-        ]
-        .spacing(SPACE_XS),
+        container(
+            column![
+                render_update_chip(app).width(Length::Fill),
+                h_divider(),
+                section_heading(app.i18n.text(TextKey::IndexingSectionLabel)),
+                render_activity_status(app),
+            ]
+            .spacing(SPACE_SM),
+        )
+        .style(card_style)
+        .padding([SPACE_SM as u16, SPACE_SM as u16]),
     )
     .width(Length::Fill)
     .padding([SPACE_SM as u16, SPACE_MD as u16]);
@@ -4263,26 +4252,26 @@ fn render_activity_status(app: &Librapix) -> Element<'_, Message> {
     let indicator_mode = activity_indicator_mode(progress);
     let progress_line = match indicator_mode {
         ActivityIndicatorMode::Determinate { total, done } => format!(
-            "{}: {} / {}",
+            "{} {} / {}",
             app.i18n.text(TextKey::ProgressItemsLabel),
             done,
             total
         ),
         ActivityIndicatorMode::Indeterminate => {
-            format!("{}: --", app.i18n.text(TextKey::ProgressItemsLabel))
+            format!("{} --", app.i18n.text(TextKey::ProgressItemsLabel))
         }
         ActivityIndicatorMode::Idle => {
-            format!("{}: 0 / 0", app.i18n.text(TextKey::ProgressItemsLabel))
+            format!("{} 0 / 0", app.i18n.text(TextKey::ProgressItemsLabel))
         }
     };
     let queue_line = format!(
-        "{}: {}",
+        "{} {}",
         app.i18n.text(TextKey::ProgressQueueLabel),
         progress.queue_depth
     );
     let roots_line = progress.roots_total.map(|total| {
         format!(
-            "{}: {} / {}",
+            "{} {} / {}",
             app.i18n.text(TextKey::ProgressRootsLabel),
             progress.roots_done.min(total),
             total
@@ -4324,18 +4313,20 @@ fn render_activity_status(app: &Librapix) -> Element<'_, Message> {
         ActivityIndicatorMode::Idle => Space::new().into(),
     };
 
+    let mut metrics = vec![progress_line, queue_line];
+    if let Some(roots_line) = roots_line {
+        metrics.push(roots_line);
+    }
+    let metrics_line = metrics.join(" • ");
+
     let mut lines = column![
         text(progress.stage_text.clone())
-            .size(FONT_CAPTION)
-            .color(ACCENT),
+            .size(FONT_BODY)
+            .color(TEXT_PRIMARY),
         indicator,
-        text(progress_line).size(FONT_CAPTION).color(TEXT_TERTIARY),
+        text(metrics_line).size(FONT_CAPTION).color(TEXT_TERTIARY),
     ]
     .spacing(SPACE_2XS);
-    if let Some(roots_line) = roots_line {
-        lines = lines.push(text(roots_line).size(FONT_CAPTION).color(TEXT_TERTIARY));
-    }
-    lines = lines.push(text(queue_line).size(FONT_CAPTION).color(TEXT_TERTIARY));
     if !progress.detail_text.trim().is_empty() {
         lines = lines.push(
             text(progress.detail_text.clone())
@@ -4344,18 +4335,56 @@ fn render_activity_status(app: &Librapix) -> Element<'_, Message> {
         );
     }
     if let Some(error) = progress.last_error.as_ref() {
-        lines = lines.push(
-            text(format!(
-                "{}: {}",
-                app.i18n.text(TextKey::ProgressErrorLabel),
-                error
-            ))
+        let error_line = format!("{}: {}", app.i18n.text(TextKey::ProgressErrorLabel), error);
+        let (error_compact, error_truncated) = truncate_for_sidebar(&error_line, 120);
+        let error_text = text(error_compact)
             .size(FONT_CAPTION)
-            .color(WARNING_COLOR),
-        );
+            .color(WARNING_COLOR)
+            .width(Length::Fill);
+        let error_widget: Element<'_, Message> = if error_truncated {
+            tooltip(
+                error_text,
+                container(text(error_line).size(FONT_CAPTION).color(TEXT_PRIMARY))
+                    .padding([SPACE_XS as u16, SPACE_SM as u16])
+                    .style(card_style),
+                tooltip::Position::Top,
+            )
+            .into()
+        } else {
+            error_text.into()
+        };
+        lines = lines.push(error_widget);
     }
 
     container(lines).width(Length::Fill).into()
+}
+
+fn render_update_chip(app: &Librapix) -> iced::widget::Button<'_, Message> {
+    let mut update_chip = button(
+        text(app.i18n.text(update_chip_text_key(&app.update_check_state))).size(FONT_CAPTION),
+    )
+    .width(Length::Fill)
+    .padding([SPACE_XS as u16, SPACE_MD as u16]);
+    if !matches!(app.update_check_state, UpdateCheckState::Checking) {
+        update_chip = update_chip.on_press(Message::UpdateChipPressed);
+    }
+    match &app.update_check_state {
+        UpdateCheckState::UpdateAvailable { .. } => update_chip.style(primary_button_style),
+        UpdateCheckState::Checking => update_chip.style(action_button_style),
+        UpdateCheckState::UpToDate => update_chip.style(action_button_style),
+        UpdateCheckState::Unknown | UpdateCheckState::Failed => {
+            update_chip.style(subtle_button_style)
+        }
+    }
+}
+
+fn truncate_for_sidebar(value: &str, max_chars: usize) -> (String, bool) {
+    let mut chars = value.chars();
+    let truncated = chars.by_ref().take(max_chars).collect::<String>();
+    if chars.next().is_some() {
+        return (format!("{truncated}..."), true);
+    }
+    (value.to_owned(), false)
 }
 
 fn activity_indicator_mode(progress: &ActivityProgressState) -> ActivityIndicatorMode {

@@ -56,6 +56,7 @@ All notable changes to this project are documented in this file.
 - Removed `packaging/windows/` scripts and packaging README from the repository.
 
 ### Changed
+- Sidebar footer status UI is now a unified system-status panel: the update-status chip moved from the header into the bottom-left sidebar footer above runtime activity/progress, spacing/typography were tightened for clearer hierarchy, metrics were compacted into a single secondary line, and long error text is now compact with hover-to-view-full details.
 - Active thumb-drag preview now freezes the effective scroll range (`max_y`) and skips max-only viewport churn while dragging; settle still applies one exact final viewport snapshot, and logs now include `max_only_skipped` diagnostics.
 - Active scrollbar-thumb drag now uses latest-only pending viewport replacement with cadence-capped preview apply and a forced final settle apply, so one physical drag no longer requires processing every intermediate target.
 - Thumb-drag lifecycle handling now adapts to hard-jump drags: activation can fast-path on a real large jump, settle uses an extended idle guard for large-step interactions, and logs include activation reason, max-step delta, settle profile, and rapid-reactivation anomaly markers.

@@ -42,6 +42,7 @@ For large libraries, the shell no longer builds every justified row at once:
 - The media viewport now has an explicit drag/settle lifecycle; active drag uses tighter overscan and suppresses per-position render-window logs, then the settled viewport restores the normal overscan and full diagnostics.
 - Hard scrollbar-thumb drags also freeze the effective layout width to the last settled justified-layout width for the duration of the drag. This avoids drag-time responsive-width oscillation from invalidating the width-keyed layout cache on every intermediate thumb position while still restoring the exact measured width after settle.
 - Drag diagnostics now record width-freeze and churn summary data through `interaction.surface_layout.drag_width.freeze`, `interaction.surface_layout.drag_width.anomaly`, and the width summary fields on `interaction.viewport.settle.end`.
+- Drag activation is intentionally stricter than generic scrolling: the app now waits for a real burst of viewport movement before entering active-drag mode, and settle waits for a longer idle gap so near-edge scrollbar corrections or resize chatter do not fragment one physical thumb interaction into many tiny logical drags.
 
 ## View modes
 

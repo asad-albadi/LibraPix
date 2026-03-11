@@ -5,6 +5,7 @@ All notable changes to this project are documented in this file.
 ## [Unreleased]
 
 ### Docs
+- Updated troubleshooting and media-UI docs to record the final thumb-drag state-machine fix: drag activation now requires a real scroll burst, settle waits for a longer idle gap, and resize/near-edge correction chatter no longer restarts the drag lifecycle.
 - Updated troubleshooting and media-UI docs to describe the remaining scrollbar-thumb drag regression, the drag-time width-freeze preview layout, and the new width-churn diagnostics.
 - Updated troubleshooting and media-UI docs to describe the scrollbar-drag lag path, the new viewport drag/settle lifecycle, justified-layout caching, and drag-time render-log suppression.
 - Updated troubleshooting and media-UI docs to describe the Timeline large-group virtualization regression, the corrected per-row windowing behavior inside date sections, and the new Timeline render diagnostics.

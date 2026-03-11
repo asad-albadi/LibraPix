@@ -89,6 +89,8 @@ All notable changes to this project are documented in this file.
 - Timeline large-surface logs now report the real total row count instead of echoing the visible-row count, fixing misleading render-window evidence during Timeline investigations.
 - Post-ready background thumbnail failures no longer aggressively retry the same known-bad items on later projection generations in the same session.
 - Failing Windows video thumbnail work no longer stays opaque; logs now show the real ffmpeg failure path needed to debug startup and post-ready lag.
+- Video thumbnail startup now resolves `ffmpeg` from `PATH` before falling back to a same-named file in the current working directory, avoiding false session-wide disablement when the launch directory contains an unrelated `ffmpeg` file.
+- Catalog materialization now preserves literal commas inside tag names instead of splitting them into multiple tags during `media_catalog` refresh/readback.
 
 ### Added
 - Branding integration: blue logo in app header, GitHub link button, asset-based icons throughout UI.

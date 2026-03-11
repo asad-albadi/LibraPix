@@ -1,6 +1,7 @@
 use crate::{IndexedMetadataStatus, Storage, StorageError};
 use chrono::{Datelike, Local, TimeZone};
 use rusqlite::{params, params_from_iter};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -94,7 +95,7 @@ struct CatalogSourceRow {
     width_px: Option<u32>,
     height_px: Option<u32>,
     metadata_status: IndexedMetadataStatus,
-    tags_csv: String,
+    tags: Vec<String>,
 }
 
 impl Storage {
@@ -170,7 +171,7 @@ impl Storage {
                     record.width_px.map(i64::from),
                     record.height_px.map(i64::from),
                     record.metadata_status.as_str(),
-                    record.tags.join(","),
+                    encode_tags_storage(&record.tags),
                     record.search_text,
                     record.timeline_day_key,
                     record.timeline_month_key,
@@ -301,13 +302,10 @@ impl Storage {
         let mut statement = self.connection.prepare(
             "SELECT m.id, m.source_root_id, sr.display_name, m.absolute_path, m.media_kind,
                     m.file_size_bytes, m.modified_unix_seconds, m.width_px, m.height_px,
-                    m.metadata_status, COALESCE(GROUP_CONCAT(t.name, ','), '')
+                    m.metadata_status
              FROM indexed_media m
              JOIN source_roots sr ON sr.id = m.source_root_id
-             LEFT JOIN media_tags mt ON mt.media_id = m.id
-             LEFT JOIN tags t ON t.id = mt.tag_id
              WHERE m.metadata_status != 'missing'
-             GROUP BY m.id
              ORDER BY m.id ASC",
         )?;
         let rows = statement.query_map([], |row| {
@@ -331,16 +329,41 @@ impl Storage {
                     .get::<usize, Option<i64>>(8)?
                     .and_then(|value| u32::try_from(value).ok()),
                 metadata_status,
-                tags_csv: row.get(10)?,
+                tags: Vec::new(),
             })
         })?;
-        let collected: Result<Vec<_>, rusqlite::Error> = rows.collect();
-        Ok(collected?)
+        let mut collected: Vec<_> = rows.collect::<Result<Vec<_>, _>>()?;
+        let mut tags_by_media_id = self.load_catalog_tags_by_media_id()?;
+        for row in &mut collected {
+            row.tags = tags_by_media_id.remove(&row.media_id).unwrap_or_default();
+        }
+        Ok(collected)
+    }
+
+    fn load_catalog_tags_by_media_id(&self) -> Result<HashMap<i64, Vec<String>>, StorageError> {
+        let mut statement = self.connection.prepare(
+            "SELECT mt.media_id, t.name
+             FROM media_tags mt
+             JOIN tags t ON t.id = mt.tag_id
+             JOIN indexed_media m ON m.id = mt.media_id
+             WHERE m.metadata_status != 'missing'
+             ORDER BY mt.media_id ASC, t.name ASC",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok((row.get::<usize, i64>(0)?, row.get::<usize, String>(1)?))
+        })?;
+
+        let mut tags_by_media_id = HashMap::<i64, Vec<String>>::new();
+        for row in rows {
+            let (media_id, tag_name) = row?;
+            tags_by_media_id.entry(media_id).or_default().push(tag_name);
+        }
+        Ok(tags_by_media_id)
     }
 }
 
 fn materialize_catalog_record(row: &CatalogSourceRow) -> CatalogMediaRecord {
-    let tags = split_tags_csv(&row.tags_csv);
+    let tags = row.tags.clone();
     let file_name = row
         .absolute_path
         .file_name()
@@ -424,11 +447,16 @@ fn build_timeline_keys(
     )
 }
 
-fn split_tags_csv(tags_csv: &str) -> Vec<String> {
-    if tags_csv.is_empty() {
+fn encode_tags_storage(tags: &[String]) -> String {
+    serde_json::to_string(tags).unwrap_or_else(|_| "[]".to_owned())
+}
+
+fn decode_tags_storage(tags_storage: &str) -> Vec<String> {
+    if tags_storage.is_empty() {
         Vec::new()
     } else {
-        tags_csv.split(',').map(ToOwned::to_owned).collect()
+        serde_json::from_str(tags_storage)
+            .unwrap_or_else(|_| tags_storage.split(',').map(ToOwned::to_owned).collect())
     }
 }
 
@@ -457,7 +485,7 @@ fn map_catalog_media_row(row: &rusqlite::Row<'_>) -> Result<CatalogMediaRecord, 
             .get::<usize, Option<i64>>(10)?
             .and_then(|value| u32::try_from(value).ok()),
         metadata_status,
-        tags: split_tags_csv(&tags_csv),
+        tags: decode_tags_storage(&tags_csv),
         search_text: row.get(13)?,
         timeline_day_key: row.get(14)?,
         timeline_month_key: row.get(15)?,

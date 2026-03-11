@@ -4,6 +4,7 @@ use image::imageops::FilterType;
 use sha2::{Digest, Sha256};
 use std::env;
 use std::error::Error;
+use std::ffi::OsString;
 use std::fmt::{Display, Formatter};
 use std::fs;
 #[cfg(windows)]
@@ -411,28 +412,54 @@ fn resolve_ffmpeg_binary() -> Result<PathBuf, String> {
 }
 
 fn locate_ffmpeg_binary() -> Result<PathBuf, String> {
-    #[cfg(windows)]
-    let executable = "ffmpeg.exe";
-    #[cfg(not(windows))]
-    let executable = "ffmpeg";
+    let path_var = env::var_os("PATH");
+    let current_dir = env::current_dir().ok();
+    locate_binary_with_path_fallback(ffmpeg_executable_name(), path_var, current_dir.as_deref())
+}
 
-    let local_candidate = PathBuf::from(executable);
-    if local_candidate.is_file() {
-        return Ok(local_candidate);
+fn ffmpeg_executable_name() -> &'static str {
+    #[cfg(windows)]
+    {
+        "ffmpeg.exe"
+    }
+    #[cfg(not(windows))]
+    {
+        "ffmpeg"
+    }
+}
+
+fn locate_binary_with_path_fallback(
+    executable: &str,
+    path_var: Option<OsString>,
+    current_dir: Option<&Path>,
+) -> Result<PathBuf, String> {
+    if let Some(candidate) = locate_binary_on_path(executable, path_var.as_deref()) {
+        return Ok(candidate);
     }
 
-    let Some(path_var) = env::var_os("PATH") else {
-        return Err(format!("{executable} not found because PATH is empty"));
-    };
-
-    for directory in env::split_paths(&path_var) {
-        let candidate = directory.join(executable);
-        if candidate.is_file() {
-            return Ok(candidate);
+    if let Some(current_dir) = current_dir {
+        let local_candidate = current_dir.join(executable);
+        if local_candidate.is_file() {
+            return Ok(local_candidate);
         }
     }
 
-    Err(format!("{executable} not found on PATH"))
+    if path_var.is_none() {
+        Err(format!("{executable} not found because PATH is empty"))
+    } else {
+        Err(format!("{executable} not found on PATH"))
+    }
+}
+
+fn locate_binary_on_path(executable: &str, path_var: Option<&std::ffi::OsStr>) -> Option<PathBuf> {
+    let path_var = path_var?;
+    for directory in env::split_paths(path_var) {
+        let candidate = directory.join(executable);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
 }
 
 fn format_command_line(program: &Path, args: &[String]) -> String {
@@ -499,6 +526,18 @@ fn finalize_video_thumbnail(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_dir(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "librapix-thumbnails-{name}-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time should be after epoch")
+                .as_nanos()
+        ))
+    }
 
     #[test]
     fn thumbnail_path_is_deterministic() {
@@ -551,5 +590,53 @@ mod tests {
         assert!(!cancellation.is_cancelled());
         token.store(8, Ordering::Relaxed);
         assert!(cancellation.is_cancelled());
+    }
+
+    #[test]
+    fn locate_binary_prefers_path_match_over_current_directory_file() {
+        let executable = ffmpeg_executable_name();
+        let path_dir = temp_dir("path");
+        let cwd_dir = temp_dir("cwd");
+        fs::create_dir_all(&path_dir).expect("path dir should exist");
+        fs::create_dir_all(&cwd_dir).expect("cwd dir should exist");
+        let path_candidate = path_dir.join(executable);
+        let cwd_candidate = cwd_dir.join(executable);
+        fs::write(&path_candidate, b"path").expect("path candidate should be created");
+        fs::write(&cwd_candidate, b"cwd").expect("cwd candidate should be created");
+
+        let resolved = locate_binary_with_path_fallback(
+            executable,
+            Some(env::join_paths([path_dir.as_path()]).expect("path should join")),
+            Some(&cwd_dir),
+        )
+        .expect("binary should resolve");
+
+        assert_eq!(resolved, path_candidate);
+
+        let _ = fs::remove_dir_all(path_dir);
+        let _ = fs::remove_dir_all(cwd_dir);
+    }
+
+    #[test]
+    fn locate_binary_falls_back_to_current_directory_when_path_misses() {
+        let executable = ffmpeg_executable_name();
+        let path_dir = temp_dir("empty-path");
+        let cwd_dir = temp_dir("fallback-cwd");
+        fs::create_dir_all(&path_dir).expect("path dir should exist");
+        fs::create_dir_all(&cwd_dir).expect("cwd dir should exist");
+        let cwd_candidate = cwd_dir.join(executable);
+        fs::write(&cwd_candidate, b"cwd").expect("cwd candidate should be created");
+
+        let resolved = locate_binary_with_path_fallback(
+            executable,
+            Some(env::join_paths([path_dir.as_path()]).expect("path should join")),
+            Some(&cwd_dir),
+        )
+        .expect("binary should resolve");
+
+        assert_eq!(resolved, cwd_candidate);
+
+        let _ = fs::remove_dir_all(path_dir);
+        let _ = fs::remove_dir_all(cwd_dir);
     }
 }

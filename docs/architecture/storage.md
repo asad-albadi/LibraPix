@@ -78,7 +78,7 @@ Implemented in `feat/catalog-first-architecture`:
 - `media_catalog` materializes normalized browse/search/timeline fields:
   - `file_name`
   - `file_extension`
-  - `tags_csv`
+  - `tags_csv` (serialized tag payload; legacy column name)
   - `search_text`
   - `timeline_day_key`
   - `timeline_month_key`

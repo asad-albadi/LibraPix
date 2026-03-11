@@ -1687,6 +1687,66 @@ mod tests {
     }
 
     #[test]
+    fn refresh_catalog_preserves_tags_with_commas() {
+        let db = temp_db_file("catalog-refresh-comma-tag");
+        let mut storage = Storage::open(&db).expect("database should open");
+        let root_path = temp_root_path("catalog-comma-root");
+        storage
+            .upsert_source_root(&root_path)
+            .expect("root insert should work");
+        let root = storage
+            .list_source_roots()
+            .expect("roots should list")
+            .into_iter()
+            .next()
+            .expect("root should exist");
+
+        storage
+            .apply_incremental_index(
+                &[IndexedMediaWrite {
+                    source_root_id: root.id,
+                    absolute_path: root_path.join("comma-tag.png"),
+                    media_kind: "image".to_owned(),
+                    file_size_bytes: 42,
+                    modified_unix_seconds: Some(1_710_000_000),
+                    width_px: Some(1920),
+                    height_px: Some(1080),
+                    metadata_status: IndexedMetadataStatus::Ok,
+                }],
+                &[root.id],
+            )
+            .expect("index apply should work");
+        let media_id = storage
+            .list_all_media_read_models()
+            .expect("read models should list")
+            .first()
+            .expect("media row should exist")
+            .media_id;
+        storage
+            .attach_tag_name_to_media(media_id, "Boss, Fight", TagKind::Game)
+            .expect("comma tag attach should work");
+        storage
+            .attach_tag_name_to_media(media_id, "Favorite", TagKind::App)
+            .expect("second tag attach should work");
+
+        let summary = storage
+            .refresh_catalog()
+            .expect("catalog refresh should work");
+        assert_eq!(summary.upserted_count, 1);
+
+        let catalog = storage
+            .list_catalog_media_filtered(None)
+            .expect("catalog rows should list");
+        assert_eq!(catalog.len(), 1);
+        assert_eq!(catalog[0].tags.len(), 2);
+        assert!(catalog[0].tags.iter().any(|tag| tag == "Boss, Fight"));
+        assert!(catalog[0].tags.iter().any(|tag| tag == "Favorite"));
+        assert!(catalog[0].search_text.contains("boss, fight"));
+
+        let _ = std::fs::remove_file(db);
+    }
+
+    #[test]
     fn derived_artifact_round_trip_filters_by_variant_and_media() {
         let db = temp_db_file("derived-artifacts");
         let mut storage = Storage::open(&db).expect("database should open");

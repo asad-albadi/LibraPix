@@ -5,6 +5,7 @@ All notable changes to this project are documented in this file.
 ## [Unreleased]
 
 ### Docs
+- Rewrote the root `README.md` to reflect the current workspace architecture, implemented feature set, runtime/storage flow, platform packaging status, and practical usage/development guidance.
 - Added `docs/architecture/issue-12-runtime-optimization-summary.md` as the final consolidated explanation for the runtime-optimization work on `feat/catalog-first-architecture`.
 - Reconciled `message-flow`, `media-ui`, `thumbnails`, `catalog-first-architecture`, and `TROUBLESHOOTING` so they describe the final startup, projection, rendering, thumbnail, and thumb-drag model consistently.
 - Removed superseded issue-12 audit/checklist docs that only preserved intermediate investigation steps instead of the final architecture story.

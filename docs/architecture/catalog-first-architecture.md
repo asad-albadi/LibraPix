@@ -2,9 +2,9 @@
 
 ## Status
 
-- Document status: implemented for planning on `feat/catalog-first-architecture`
-- Branch baseline: `master` at commit `a1215cd`
-- This document is the source of truth for this branch's architecture direction
+- Document status: implemented foundation on `feat/catalog-first-architecture`
+- This document is the source of truth for the broader catalog/data-model direction of the branch
+- The final runtime and interaction outcome for issue `#12` is documented separately in `docs/architecture/issue-12-runtime-optimization-summary.md`
 
 ## Problem Statement
 

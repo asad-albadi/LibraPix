@@ -5,24 +5,11 @@ All notable changes to this project are documented in this file.
 ## [Unreleased]
 
 ### Docs
-- Updated troubleshooting and media-UI docs with the confirmed remaining thumb-drag root cause (stale intermediate drag targets still being processed) and the final latest-only drag-stream diagnostics.
-- Updated `docs/TROUBLESHOOTING.md` with the confirmed remaining thumb-drag lifecycle cause from the latest Windows log (`premature settle + late hard-drag activation`) and the new adaptive settle/activation diagnostics.
-- Updated troubleshooting and media-UI docs to record the final thumb-drag state-machine fix: drag activation now requires a real scroll burst, settle waits for a longer idle gap, and resize/near-edge correction chatter no longer restarts the drag lifecycle.
-- Updated troubleshooting and media-UI docs to describe the remaining scrollbar-thumb drag regression, the drag-time width-freeze preview layout, and the new width-churn diagnostics.
-- Updated troubleshooting and media-UI docs to describe the scrollbar-drag lag path, the new viewport drag/settle lifecycle, justified-layout caching, and drag-time render-log suppression.
-- Updated troubleshooting and media-UI docs to describe the Timeline large-group virtualization regression, the corrected per-row windowing behavior inside date sections, and the new Timeline render diagnostics.
-- Updated media-UI, message-flow, and troubleshooting docs to describe startup gallery continuation after snapshot restore, bounded current-surface rendering, and the new large-surface render diagnostics.
-- Added a dedicated thumbnail apply handoff audit covering the Windows completion-to-apply delay, the exact Iced runtime cause, and the corrected timer/runtime policy.
-- Added a dedicated background thumbnail responsiveness audit covering the Windows post-ready lag path, retry loop, and the corrected video/background policy.
-- Added a dedicated startup thumbnail reuse audit covering the exact DB-first reuse failure, the compatible-fallback policy, and the corrected startup-ready boundary.
-- Updated thumbnail, message-flow, startup audit, troubleshooting, and catalog-first checklist docs to reflect projection-time exact/fallback thumbnail reuse, non-blocking startup-ready, and the final background video-throttling/backoff policy.
-- Updated the catalog-first startup audit, message-flow docs, troubleshooting guide, and roadmap checklist to describe the final startup-snapshot policy, startup instrumentation/logging, and deferred catch-up behavior.
+- Added `docs/architecture/issue-12-runtime-optimization-summary.md` as the final consolidated explanation for the runtime-optimization work on `feat/catalog-first-architecture`.
+- Reconciled `message-flow`, `media-ui`, `thumbnails`, `catalog-first-architecture`, and `TROUBLESHOOTING` so they describe the final startup, projection, rendering, thumbnail, and thumb-drag model consistently.
+- Removed superseded issue-12 audit/checklist docs that only preserved intermediate investigation steps instead of the final architecture story.
 - Added `docs/AGENT_KNOWLEDGE_BASE.md` as a single comprehensive, code-verified project knowledge base for future engineering agents, and linked it from `docs/README.md`.
-- Added a catalog-first architecture plan, workstream checklist, and ADR for the new long-lived architecture branch.
-- Added a dedicated catalog-first startup completion audit documenting the current runtime critical path, remaining eager startup work, and the corrected ready-enough policy for finishing this branch.
-- Updated architecture docs to reflect the implemented catalog-first storage, timeline-key, search, thumbnail, and message-flow foundation.
-- Updated startup/runtime architecture docs and troubleshooting notes to record the final ready-enough startup policy, deferred thumbnail catch-up, and current-surface startup projection behavior.
-- Updated troubleshooting, message-flow, media-UI, and catalog-first architecture docs to record the catalog-first startup/runtime regression and its staged activity-state reconciliation.
+- Added the catalog-first architecture plan and ADR for the long-lived branch foundation.
 - Updated media-UI documentation to clarify that runtime activity status is shown in the sidebar footer rather than duplicated in the header.
 
 ### Added
@@ -58,39 +45,14 @@ All notable changes to this project are documented in this file.
 ### Changed
 - Sidebar footer status presentation was corrected to match native sidebar section styling: removed the boxed/card container, renamed the sidebar footer heading to `STATUS`, kept the update chip at the top of the section, and tightened spacing for a flatter, cleaner integration with Browse/Library sections.
 - Sidebar footer status UI is now a unified system-status panel: the update-status chip moved from the header into the bottom-left sidebar footer above runtime activity/progress, spacing/typography were tightened for clearer hierarchy, metrics were compacted into a single secondary line, and long error text is now compact with hover-to-view-full details.
-- Active thumb-drag preview now freezes the effective scroll range (`max_y`) and skips max-only viewport churn while dragging; settle still applies one exact final viewport snapshot, and logs now include `max_only_skipped` diagnostics.
-- Active scrollbar-thumb drag now uses latest-only pending viewport replacement with cadence-capped preview apply and a forced final settle apply, so one physical drag no longer requires processing every intermediate target.
-- Thumb-drag lifecycle handling now adapts to hard-jump drags: activation can fast-path on a real large jump, settle uses an extended idle guard for large-step interactions, and logs include activation reason, max-step delta, settle profile, and rapid-reactivation anomaly markers.
-- Gallery and Timeline thumb-drag scrolling now use a cheaper active-drag path: justified row layouts are reused per surface/width, viewport settle is tracked explicitly, drag-time overscan is tighter, and per-position render-window logs are deferred until the viewport settles.
-- Timeline viewport rendering now stays bounded even when a single date group contains hundreds or thousands of justified rows; the render path virtualizes rows inside each intersecting group instead of rendering an entire oversized section at once.
-- Timeline render diagnostics now record total groups/rows, visible groups/rows, first/last visible row indices, spacer sizes, and anomaly warnings so large-window regressions are provable from Windows logs.
-- Unchanged startup launches now keep the fast bounded gallery snapshot for first paint, mark startup ready immediately after reconcile, and then schedule a non-blocking current-surface gallery continuation so the restored 160-card slice is not the permanent gallery state.
-- Large gallery and timeline surfaces now render through a viewport-bounded window with top/bottom spacer preservation instead of building the entire widget tree at once; runtime logs record the effective visible window via `interaction.surface_render.window`.
-- First-open media selection no longer generates the `detail-800` thumbnail synchronously on the UI thread when startup snapshot state has not warmed the detail cache yet; the details pane now reuses an existing detail artifact when present and otherwise falls back to the already-visible browse thumbnail immediately.
-- Post-startup route, filter, search, and filesystem-driven projection refreshes now use a current-surface-first projection policy instead of always rebuilding both Gallery and Timeline; non-visible route refresh is deferred until the user opens that route.
-- Interaction logs now cover media selection/detail load, route switches, projection request/apply ownership, and slow-step thresholds so post-startup hangs are provable from the Windows runtime logs.
-- Startup no longer forces a current-surface gallery projection on unchanged launches when a compatible gallery snapshot is already restored; after reconcile reports `new_files=0`, `changed_files=0`, and `missing_marked=0`, the app now skips the redundant full-gallery rebuild, marks startup ready immediately, and defers timeline refresh until the user opens that route.
-- Startup/runtime logs now record queued reconcile/projection requests, reconcile failure reasons, explicit gallery-working set/clear ownership, and skipped startup projection reasons so repeated refresh loops are provable from the newest Windows startup log.
-- Periodic app ticks now use `iced::time::every` on the Iced tokio backend instead of blocking `std::thread::sleep` subscription loops, removing the executor-side delay that could leave thumbnail completions unapplied on Windows.
-- Thumbnail runtime logs now record worker-complete -> dispatch-to-UI -> message-received handoff timing, apply-start timing, and slow handoff warnings.
-- Background thumbnail runtime now treats images and videos differently: visible videos defer into slower catch-up, video batches run one item at a time, and in-flight video extraction is cancellation-aware.
-- Thumbnail failures now feed runtime backoff/session-disable policy instead of immediately re-entering the next projection refresh.
-- Thumbnail runtime logs now record batch dispatch/start/end/cancel timing, apply timing, refresh pressure during thumbnail work, result-message rate, and detailed ffmpeg command/exit/timeout/stderr failure context.
-- Startup projection now performs explicit thumbnail reuse lookup before scheduling generation, preferring exact `gallery-400` artifacts, deterministic on-disk browse files, and compatible `detail-800` fallbacks.
-- Startup and runtime logs now record thumbnail artifact lookup timing, exact/fallback reuse counts, placeholder counts, scheduled-generation counts, rejected-artifact reasons, and video slow/failure events.
-- Reconcile/projection refresh requests now cancel thumbnail work instead of waiting behind thumbnail batches.
-- Bootstrap startup no longer opens storage or runs migrations before the first render; those steps now run in the staged background startup flow with timing instrumentation.
-- Persisted startup snapshots now store only a bounded recent-gallery slice plus filter-tag metadata (`projection_snapshots.version = 2`) instead of full gallery+timeline browse state.
-- Startup snapshot application now restores only that bounded gallery slice, allowing `Loading library snapshot` to complete earlier and leaving non-visible browse state to later projection refresh.
-- Startup logging now writes a timestamped log file with stage start/end timing, migration timing, counts, first-usable-gallery, startup-ready, and deferred-thumbnail catch-up milestones.
-- Background browse/search/timeline preparation now reads normalized catalog rows instead of rebuilding those surfaces directly from source-fact joins.
-- Timeline projections can consume persisted day/month/year keys from the catalog layer while retaining timestamp fallback compatibility.
-- Thumbnail generation now records ready/failed named variants (`gallery-400`, `detail-800`) in storage-owned derived-artifact metadata.
-- Startup/runtime orchestration now uses explicit staged jobs (`snapshot hydrate/apply`, `scan`, `projection`, `thumbnail batches`) instead of one silent monolithic background result path.
-- Startup projection now prioritizes the currently visible surface during the startup-critical path instead of always rebuilding both browse routes before the app becomes usable.
-- Startup cache warm-up is now bounded to a visible slice instead of hydrating detail-cache state for the full catalog on every startup projection refresh.
-- Browse-tier thumbnail work is now split into startup-priority work and delayed background catch-up, with lighter batches during deferred catch-up.
-- Projection startup no longer forces eager detail-thumbnail generation across the full catalog; details fall back to browse thumbnails until higher-tier artifacts are ready.
+- Startup now uses a bounded gallery snapshot (`projection_snapshots.version = 2`), an explicit ready-enough boundary, current-surface-first startup projection, and a non-blocking unchanged-launch gallery continuation instead of treating startup like a full-library preload.
+- Large gallery, timeline, and search surfaces now render through viewport-bounded windows; Timeline also virtualizes rows inside intersecting date groups and logs real group/row visibility through the runtime diagnostics.
+- Post-startup route, filter, search, and filesystem refreshes now rebuild only the active surface immediately, while first-open details reuse existing detail/browse artifacts instead of synchronously generating `detail-800`.
+- Startup and runtime thumbnail policy now performs projection-time exact/fallback reuse, records named ready/failed variants, keeps thumbnail batches outside the startup-ready boundary, and cancels queued work when later projection or reconcile requests take priority.
+- Background thumbnail runtime now separates image and video policy, defers visible videos into slower catch-up, throttles video batches to one item, applies runtime backoff/session disable on repeated failures, and logs rich ffmpeg failure context.
+- Periodic coordinator ticks now use `iced::time::every` on the Iced tokio backend, and thumbnail logs now record worker-complete -> dispatch-to-UI -> message-received -> apply timing so handoff delays remain measurable.
+- Scrollbar-thumb drag now uses an explicit preview/settle lifecycle with layout-cache reuse, latest-only pending targets, frozen drag-time width and effective `max_y`, adaptive settle behavior, and one exact final viewport apply.
+- Background browse/search/timeline preparation now reads normalized catalog rows instead of rebuilding those surfaces directly from source-fact joins, while Timeline projections consume persisted day/month/year keys with timestamp fallback compatibility.
 - The header no longer duplicates runtime activity text; that status now lives only in the left sidebar footer activity panel.
 - About dialog now shows the current app version from package metadata.
 - Header now includes an update-status chip (`Checking...`, `Up to date`, `New release`) with subtle fallback behavior on failed checks.

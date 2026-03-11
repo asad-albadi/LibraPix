@@ -1,12 +1,15 @@
 # Issue #12 Runtime Optimization Summary
 
-GitHub issue: `#12`
-Branch: `feat/catalog-first-architecture`
-Scope: final runtime, rendering, and interaction behavior for the catalog-first branch.
-
 This document is the final source of truth for issue `#12`. It consolidates the branch outcome into one coherent explanation and intentionally replaces the earlier audit-by-audit narrative.
 
-## 1. Why This Work Was Needed
+## 1. Title And Issue Reference
+
+- Title: `Issue #12 Runtime Optimization Summary`
+- Issue: `#12` (`https://github.com/asad-albadi/LibraPix/issues/12`)
+- Branch: `feat/catalog-first-architecture`
+- Scope: final runtime, rendering, and interaction behavior for the branch
+
+## 2. Why This Work Was Needed
 
 The catalog-first branch established the right storage and data-model direction, but the runtime still felt wrong on large real libraries.
 
@@ -20,7 +23,7 @@ The main problem was not correctness. The app could load the right data, but it 
 
 Issue `#12` was therefore a runtime-optimization pass, not a feature rewrite.
 
-## 2. User-Visible Symptoms Before The Fix
+## 3. User-Visible Symptoms Before The Fix
 
 - `Loading library snapshot` still felt like broad startup work instead of a quick restore.
 - `startup.ready` could stay late because thumbnail work was still treated like startup-critical work.
@@ -30,7 +33,7 @@ Issue `#12` was therefore a runtime-optimization pass, not a feature rewrite.
 - Dragging the media scrollbar thumb on large surfaces could feel sticky and over-processed.
 - Repeated failing video thumbnails could keep re-entering later projection generations.
 
-## 3. Root Causes Discovered
+## 4. Root Causes Discovered
 
 The branch exposed five root-cause groups.
 
@@ -62,7 +65,7 @@ The branch exposed five root-cause groups.
 - scrollbar-thumb drag still processed too many stale intermediate targets and let drag-time width/range churn invalidate layout work
 - blocking timer subscriptions delayed thumbnail-completion messages before they reached `update`
 
-## 4. Final Runtime / Rendering / Interaction Model After The Fix
+## 5. Final Runtime / Rendering / Interaction Model After The Fix
 
 ### Startup model
 
@@ -109,7 +112,7 @@ The branch exposed five root-cause groups.
   - frozen drag-time effective `max_y`
   - exact final settle apply
 
-## 5. Major Fixes Implemented
+## 6. Major Fixes Implemented
 
 - Moved storage open and migrations off the pre-render bootstrap path.
 - Replaced broad startup snapshot restore with a bounded gallery-only snapshot (`projection_snapshots.version = 2`).
@@ -125,7 +128,7 @@ The branch exposed five root-cause groups.
 - Replaced blocking timer subscriptions with `iced::time::every(...)`.
 - Reworked thumb-drag handling to use latest-only preview plus stable drag-time layout inputs.
 
-## 6. Before vs After Comparison
+## 7. Before vs After Comparison
 
 | Area | Before | After | Evidence |
 |---|---|---|---|
@@ -144,7 +147,7 @@ Two rows above are intentionally partly qualitative:
 
 The final docs therefore state the exact before numbers and the exact after model truthfully, without inventing missing measurements.
 
-## 7. Measured Improvements
+## 8. Measured Improvements
 
 All timings below are environment-specific Windows validation numbers from the committed logs and should be read as branch evidence, not universal guarantees.
 
@@ -155,13 +158,13 @@ All timings below are environment-specific Windows validation numbers from the c
   - `2087ms` with `13` thumbnails deferred
   - `2502ms` with `13` thumbnails deferred
 - Thumbnail result handoff:
-  - before: `159704ms` completion-to-apply gap in the handoff audit
+  - before: `159704ms` completion-to-apply gap in the earlier Windows handoff analysis
   - after: `8ms..49ms` dispatch-to-receive in the final committed logs
 - Failed thumbnail retry suppression:
   - before: generation `2` requeued the same `13` failures
   - after: generation `2` reports `suppressed_backoff=13`, `startup_priority=0`, and `deferred=0`
 
-## 8. What Changed Architecturally
+## 9. What Changed Architecturally
 
 - The catalog-first data model stayed intact, but runtime ownership became explicit:
   - snapshot hydrate/apply
@@ -175,7 +178,7 @@ All timings below are environment-specific Windows validation numbers from the c
 - Iced runtime timer usage now follows the supported timer API instead of blocking sleep-based subscriptions.
 - Scrollbar-thumb drag is now treated as a preview/settle interaction, not as a requirement to process every intermediate viewport literally.
 
-## 9. What Was Intentionally Not Changed
+## 10. What Was Intentionally Not Changed
 
 - No user source media is moved, renamed, or rewritten.
 - No non-destructive guarantee changed.
@@ -184,7 +187,7 @@ All timings below are environment-specific Windows validation numbers from the c
 - The coordinator still lives in `crates/librapix-app/src/main.rs`.
 - The branch still does not introduce FTS, a new search engine, aggregate timeline tables, or a deeper thumbnail pyramid.
 
-## 10. Validation Performed
+## 11. Validation Performed
 
 - Reviewed the final runtime behavior against the committed Windows logs:
   - `logs/librapix-startup-20260310-185012-14648.log`
@@ -199,7 +202,7 @@ All timings below are environment-specific Windows validation numbers from the c
   - Windows runtime automation hook via `LIBRAPIX_AUTOMATION_SCRIPT`
   - regression coverage for startup readiness, thumbnail reuse/backoff/cancellation, and runtime message handoff
 
-## 11. Final Result / Expected User Experience
+## 12. Final Result / Expected User Experience
 
 On a large populated library, the app should now feel like a desktop gallery again instead of a preload pipeline.
 
@@ -212,14 +215,9 @@ On a large populated library, the app should now feel like a desktop gallery aga
 - Missing or failing thumbnails stay honest placeholders instead of trapping the app in repeated expensive retry loops.
 - Large surfaces stay bounded to the viewport.
 - Scrollbar-thumb drags preview cheaply and settle exactly.
-
-## 12. Final Source Of Truth
-
-For this issue:
-
-- final branch summary: this document
-- runtime message behavior: `docs/architecture/message-flow.md`
-- media rendering and drag behavior: `docs/architecture/media-ui.md`
-- thumbnail policy: `docs/architecture/thumbnails.md`
-- recurring regression notes: `docs/TROUBLESHOOTING.md`
-- broader catalog/data-model foundation: `docs/architecture/catalog-first-architecture.md`
+- Primary supporting docs:
+  - runtime message behavior: `docs/architecture/message-flow.md`
+  - media rendering and drag behavior: `docs/architecture/media-ui.md`
+  - thumbnail policy: `docs/architecture/thumbnails.md`
+  - recurring regression notes: `docs/TROUBLESHOOTING.md`
+  - broader catalog/data-model foundation: `docs/architecture/catalog-first-architecture.md`

@@ -1,922 +1,158 @@
 # Troubleshooting
 
-## Dragging the scrollbar thumb still lags even after viewport windowing is bounded
+Issue `#12` is summarized in `docs/architecture/issue-12-runtime-optimization-summary.md`. This file keeps the recurring regression patterns and the final fixes that matter if those problems return.
+
+## Catalog-first startup still feels like a preload or reaches ready too late
 
 - Symptoms
-  - Dragging the media-pane scrollbar thumb far up or down still feels sticky or briefly hung, especially in large Gallery and Timeline surfaces.
-  - Projection logs stay fast and `interaction.timeline_render.window` stays bounded, yet the UI still stutters while the viewport is moving.
-  - Gallery logs can show long runs of `interaction.surface_layout.cache_build` during a single drag where `measured_width` keeps changing even though the user is only dragging vertically.
-  - In the real Windows drag log, Gallery width climbed from `438` to `1165` during one thumb drag while `coalesced=0`, forcing repeated justified-layout rebuilds on the UI path.
+  - `Loading library snapshot` feels broad instead of giving a quick first useful gallery.
+  - `startup.ready` stays late even though the visible surface is already usable.
+  - Unchanged launches either waste time on a redundant gallery rebuild or stay stuck on the restored 160-item gallery slice.
 - Affected area
-  - Media viewport updates and justified-layout rendering in `crates/librapix-app/src/main.rs`.
+  - Startup/runtime orchestration in `crates/librapix-app/src/main.rs`.
 - Confirmed cause
-  - The width-freeze and adaptive settle fixes reduced layout churn, but active drag still processed too many intermediate viewport targets literally.
-  - Real Windows drag logs still showed high per-drag processed counts (`processed=38..50`) even when the drag should have behaved like a cheap preview stream.
-  - Coalescing only removed near-identical snapshots; it did not replace stale intermediate drag targets with newest-only handling.
-  - Width churn became secondary; the remaining lag path was stale-update processing volume during one physical thumb drag.
+  - Earlier runtime states kept too much work inside the startup-critical path:
+    - broad snapshot restore
+    - eager offscreen surface refresh
+    - startup-critical thumbnail work
+    - redundant unchanged-launch gallery projection
+  - Startup also needed an explicit continuation path so the fast snapshot slice did not become the permanent gallery state.
 - Resolution
-  - Keep the explicit viewport drag/settle lifecycle and bounded drag-time overscan.
-  - Freeze justified-layout width during active drag so transient width jitter still cannot rebuild the whole layout.
-  - Keep burst-based activation with large-jump fast-path activation so drag mode starts early for hard thumb motion.
-  - Keep adaptive settle policy, but shorten idle guards so drag preview does not linger too long before final settle (`260ms` default, `360ms` for large jumps).
-  - Switch active drag to a latest-only preview stream:
-    - incoming drag updates replace stale pending targets
-    - drag-time apply is cadence-capped to bound UI work
-    - settle forces one final exact apply of the latest pending viewport target
-  - Freeze the effective drag preview scroll range (`max_y`) during active drag, then restore accurate `max_y` at settle, so thumb movement is not fighting high-frequency max-range churn from intermediate layout updates.
-  - Skip max-only active-drag updates in preview mode (recorded as `max_only_skipped`) so drag-time processing remains focused on real viewport position movement.
-  - Freeze the effective justified-layout width to the last settled layout for the duration of an active thumb drag (`interaction.surface_layout.drag_width.freeze`), so Gallery and Timeline preview the drag using a stable layout width.
-  - Record suppressed drag-time width churn with:
-    - `interaction.surface_layout.drag_width.freeze`
-    - `interaction.surface_layout.drag_width.anomaly`
-    - `interaction.viewport.settle.end` width summary fields
-  - Record drag-lifecycle diagnostics needed to catch thrash:
-    - `activation_reason` on `interaction.viewport.drag.start`
-    - `applied`, `deferred`, `replaced`, and `applied_now` on `interaction.viewport.drag.update`
-    - `processed`, `deferred`, `replaced`, `max_only_skipped`, and `settle_applied_latest` on `interaction.viewport.settle.end`
-    - `max_step_delta`, `idle_ms`, `settle_delay_ms`, and `settle_profile` on drag update/settle logs
-    - `interaction.viewport.drag.lifecycle.anomaly` for rapid reactivation after settle
-  - Restore the exact measured width and final layout after drag settle so final correctness remains intact.
-  - Track an explicit viewport active-drag vs settled lifecycle with:
-    - `interaction.viewport.drag.start`
-    - `interaction.viewport.drag.update`
-    - `interaction.viewport.settle.start`
-    - `interaction.viewport.settle.end`
-  - Suppress per-position render-window logs during active drag; keep the settled render diagnostics and drag-width summary instead.
+  - Keep storage open and migrations off the pre-render bootstrap path.
+  - Restore only the bounded version-2 recent-gallery snapshot during startup.
+  - Treat startup-ready as complete after snapshot apply, reconcile, and current-surface projection settle.
+  - Skip the redundant unchanged-launch gallery rebuild when the restored default gallery snapshot is still valid.
+  - Schedule a later non-blocking gallery continuation so the 160-card startup slice expands to the full gallery without blocking readiness.
+  - Leave the non-visible route deferred until the user opens it.
 - Prevention guidance
-  - Bounding the visible window is not enough if drag-time geometry jitter can still invalidate the full justified-layout cache.
-  - Do not infer an active thumb drag from any two nearby viewport events; require evidence of a real scroll burst.
-  - Keep settle conservative enough that sparse near-edge drag events do not immediately end and restart the drag lifecycle.
-  - Treat hard scrollbar-thumb drags as preview mode: keep layout inputs stable during the drag, then reconcile to the true settled width afterward.
-  - Avoid synchronous high-volume logging on the hot viewport path, especially on Windows where each line is flushed immediately.
+  - Keep startup-critical work limited to the first useful visible surface.
+  - Do not move storage open or migrations back into the pre-render path.
+  - Do not make thumbnail backlog or offscreen route refresh part of the startup-ready boundary.
+  - If startup snapshots stay intentionally narrow, always pair them with an explicit continuation path.
 
-## Timeline still hangs even though projection finishes quickly
-
-- Symptoms
-  - Opening Timeline or scrolling inside Timeline causes long UI stalls even though projection logs show completion in a few milliseconds.
-  - Windows logs can show `startup.projection.project_timeline` finishing quickly, followed later by `interaction.surface_render.window` spikes where Timeline suddenly reports hundreds or thousands of visible rows for a normal viewport.
-- Affected area
-  - Timeline rendering/windowing in `crates/librapix-app/src/main.rs`.
-- Confirmed cause
-  - Timeline virtualization was only applied at the date-section level.
-  - Once a section intersected the viewport, the view path rendered every justified row inside that section.
-  - On the real large library, some date groups were extremely large, so a single intersecting section could force the UI thread to build 215 or 1,215 rows at once even though the viewport only needed a small slice.
-  - The existing Timeline render log was also misleading because it logged `visible_rows` in both the `total_rows` and `visible_rows` fields.
-- Resolution
-  - Keep full logical Timeline data, but virtualize rows inside each intersecting date section.
-  - Preserve total scroll extent with section-local spacer blocks above and below the visible row slice.
-  - Add explicit Timeline render diagnostics:
-    - `interaction.timeline_render.window`
-    - `interaction.timeline_render.window.anomaly`
-  - Correct `interaction.surface_render.window` so Timeline logs the actual total row count.
-- Prevention guidance
-  - For grouped virtualized surfaces, do not stop at group-level windowing if an individual group can itself become very large.
-  - Keep logs explicit about total rows, visible rows, visible groups, and spacer sizes so oversized in-group rendering is immediately obvious.
-
-## Timeline, gallery, or filter switches hang after projection completes
+## Background thumbnail work still makes the app feel hung after ready
 
 - Symptoms
-  - Startup or a route/filter change appears to finish projection work in the log, but the window becomes unresponsive or feels stuck immediately afterward.
-  - Logs show `interaction.projection.apply` or `startup.projection.end`, but the next visible frame never arrives promptly.
-  - Large-library runs are worst when Gallery or Timeline suddenly switch from a small restored/snapshot surface to a full 6k+ logical result set.
+  - Existing thumbnails are not reused early enough, so startup or route refreshes schedule avoidable thumbnail work.
+  - The same failing video items reappear on later projection generations.
+  - A thumbnail worker batch finishes, but UI apply happens much later than worker completion.
 - Affected area
-  - Large-surface rendering in `crates/librapix-app/src/main.rs`.
+  - Thumbnail scheduling/runtime policy in `crates/librapix-app/src/main.rs`.
+  - Video extraction in `crates/librapix-thumbnails/src/lib.rs`.
+  - Timer subscriptions in the Iced runtime path.
 - Confirmed cause
-  - Projection/search work was already off the UI thread, but the view path still tried to build the full gallery or timeline widget tree in one frame.
-  - Timeline was especially expensive because every date bucket built its own justified grid, but gallery/filter paths could hit the same problem once a full current-surface projection applied.
-  - The hang therefore happened after the background worker finished, not during storage/projection itself.
+  - Earlier projection-time reuse trusted exact ready `gallery-400` rows too narrowly and missed deterministic-file or compatible `detail-800` fallback reuse.
+  - Failed items could re-enter the next projection refresh without runtime backoff.
+  - Video work was still too eager and too coarse immediately after startup-ready.
+  - Blocking sleep-based timer subscriptions could delay `ThumbnailBatchComplete` before it reached `update`.
 - Resolution
-  - Keep full logical result sets in memory, but render only the current viewport plus overscan.
-  - Preserve scroll extent with top/bottom spacer blocks so scrolling correctness and full-library completeness remain intact.
-  - Log the effective render window with `interaction.surface_render.window` so large-surface rendering stays measurable in Windows runtime logs.
-- Prevention guidance
-  - Do not assume background projection alone makes large-surface interactions safe.
-  - If a route/filter applies thousands of items, verify the view path is also bounded to the visible window.
-
-## Fast startup snapshot restore leaves Gallery permanently incomplete
-
-- Symptoms
-  - Startup becomes ready quickly from the bounded 160-item gallery snapshot, but Gallery never grows beyond that restored slice on unchanged launches.
-  - Logs show `startup.projection.skipped` and `startup.ready`, but there is no later gallery continuation.
-- Affected area
-  - Startup reconcile/projection handoff in `crates/librapix-app/src/main.rs`.
-- Confirmed cause
-  - The earlier ready-enough startup policy intentionally skipped the redundant unchanged gallery projection after reconcile.
-  - That removed the blocking full-library rebuild, but it also meant the bounded snapshot slice had no non-blocking follow-up path and could become the permanent gallery state.
-- Resolution
-  - Keep the fast snapshot-backed first paint.
-  - After unchanged reconcile, mark startup ready immediately and schedule a delayed non-blocking gallery continuation on the current surface.
-  - Record that lifecycle explicitly in logs:
-    - `startup.gallery_continuation.scheduled`
-    - `startup.gallery_continuation.kickoff`
-    - `interaction.surface_render.window`
-- Prevention guidance
-  - When startup snapshots are intentionally narrow, always pair them with an explicit continuation path.
-  - Do not fix startup latency by skipping the only path that restores full gallery completeness.
-
-## First-open media selection hangs after startup
-
-- Symptoms
-  - Clicking an image or video for the first time after startup can leave the app feeling hung before the details pane populates.
-  - Windows interaction logs show `interaction.media_select.cache.miss` followed by `interaction.detail_thumbnail.lookup.start`.
-  - Before the fix, the next slow step was synchronous `interaction.detail_thumbnail.generate.end` on the UI thread, often taking multiple seconds.
-- Affected area
-  - Details load path in `crates/librapix-app/src/main.rs`.
-- Confirmed cause
-  - When startup restored only the snapshot gallery slice, some first-open selections missed `media_cache`.
-  - That cache miss fell through to `load_media_details(...)`, which synchronously generated the `detail-800` thumbnail in the selection path before clearing detail-working state.
-  - The same code path applied to both images and videos because `load_media_details(...)` always resolved a detail thumbnail before finishing the selection.
-- Resolution
-  - Stop generating detail thumbnails synchronously during selection.
-  - Prefer an existing `detail-800` file when one already exists.
-  - Otherwise reuse the already-visible browse thumbnail immediately and finish the detail load without extra blocking work.
-  - Keep the interaction logs explicit about cache miss/hit, preview source, and detail-working ownership.
-- Prevention guidance
-  - Do not put thumbnail generation on the synchronous details-selection path.
-  - Treat first-open details as placeholder-first and enrich only from already-available artifacts.
-
-## Route or filter switches rebuild too much work after startup
-
-- Symptoms
-  - Opening Timeline, switching back to Gallery, or changing filters can briefly push the app back into `Refreshing gallery` / `Working` even when only one surface is visible.
-  - Windows interaction logs show `interaction.projection.start` after a route/filter action, with the old behavior rebuilding both routes (`refreshed_gallery=true refreshed_timeline=true`) even when only Timeline was requested.
-- Affected area
-  - Projection policy selection in `crates/librapix-app/src/main.rs`.
-- Confirmed cause
-  - After startup became ready, projection policy always fell back to `Full`.
-  - Route switches, filter changes, search submits, and filesystem-driven updates therefore rebuilt both Gallery and Timeline and expanded the cache warm-up scope even when the user could only see one surface.
-- Resolution
-  - Use a current-surface-first projection policy for route, filter, search, and filesystem-driven refreshes.
-  - Refresh only the active surface immediately.
-  - Mark the other route deferred and rebuild it only when the user explicitly opens that route.
-  - Log the accepted projection trigger, policy, refreshed surfaces, and working-state ownership.
-- Prevention guidance
-  - Do not treat every post-startup refresh as a full dual-surface rebuild.
-  - Keep non-visible route refresh outside the critical interaction path unless correctness requires it immediately.
-
-## Startup still enters `Refreshing gallery` even when nothing changed
-
-- Symptoms
-  - Every launch briefly restores the snapshot gallery, then immediately flips back into `Refreshing gallery` / `Working` / `Loading gallery...`.
-  - Startup logs show `startup.first_usable_gallery` from the snapshot, `startup.reconcile.scan_roots` with `new=0 changed=0`, and then a full `startup.projection.start` anyway.
-  - Large libraries spend noticeable extra time validating the whole gallery/artifact set before `startup.ready`.
-- Affected area
-  - Startup reconcile/projection handoff in `crates/librapix-app/src/main.rs`.
-- Confirmed cause
-  - `apply_scan_job_result(...)` unconditionally requested a projection refresh after every successful reconcile.
-  - Even when the current route was already the restored gallery snapshot and reconcile proved there were no catalog changes (`new_files=0`, `changed_files=0`, `missing_marked=0`), startup still rebuilt the full gallery and revalidated every ready gallery artifact before clearing gallery-loading ownership.
-- Resolution
-  - Skip the startup gallery projection when all of these are true:
-    - a compatible startup snapshot is already loaded
-    - the current route is the default unfiltered gallery
-    - reconcile reports no catalog changes
-  - Mark startup ready immediately from the restored snapshot after reconcile settles.
-  - Leave timeline refresh deferred so opening Timeline still triggers a real projection when needed.
-  - Log the skip explicitly as `startup.projection.skipped`.
-- Prevention guidance
-  - Do not schedule startup projection unconditionally after reconcile.
-  - If startup already has a usable snapshot and reconcile finds no catalog changes, treat that snapshot as the startup-complete gallery instead of rebuilding it immediately.
-  - Keep startup logs explicit about why a projection ran, queued, or was skipped.
-
-## Catalog-first startup still feels like a full-library preload
-
-- Symptoms
-  - Startup shows honest activity state, but the app still feels too heavy before it becomes comfortably usable.
-  - `Loading library snapshot` takes a noticeable amount of time before the user gets useful interaction.
-  - Gallery is eventually correct, yet startup still appears to front-load broad restore work.
-- Affected area
-  - Startup/runtime policy in `crates/librapix-app/src/main.rs`.
-- Likely cause
-  - The staged coordinator restored activity reporting, but the persisted startup snapshot was still too broad.
-- Confirmed cause
-  - Startup previously opened storage in bootstrap before the first render.
-  - The persisted projection snapshot still stored full gallery and full timeline browse models, so startup eagerly deserialized and reapplied both during `Loading library snapshot`.
-  - Thumbnail scheduling still queued the full missing browse-tier backlog immediately after projection until the deferred catch-up split was completed.
-- Resolution
-  - Remove storage open/migration work from the pre-render bootstrap path.
-  - Persist a bounded startup snapshot (`projection_snapshots.version = 2`) that restores only a recent gallery slice plus filter-tag metadata.
-  - Discard older broad snapshots instead of eagerly rehydrating them.
-  - Keep startup-ready separate from deferred thumbnail catch-up.
-  - Add timestamped startup logs so the next regression is measurable instead of inferred.
-- Prevention guidance
-  - Keep the startup snapshot intentionally small and limited to the first useful surface.
-  - When runtime activity becomes staged, also classify work by startup-critical vs deferred catch-up.
-  - Do not reintroduce storage open/migration work on the pre-render bootstrap path.
-  - Do not treat non-visible route preparation or full-library thumbnail backfill as mandatory startup completion work.
-
-## Existing thumbnails are not reused at startup and `startup.ready` stays late
-
-- Symptoms
-  - First useful gallery appears, but `startup.ready` still arrives late while startup-priority thumbnails run.
-  - Large libraries appear to regenerate or re-check thumbnails even when thumbnail files already exist.
-  - Video thumbnails are especially visible because ffmpeg work stretches the startup tail.
-- Affected area
-  - Thumbnail lookup and startup/runtime coordinator policy in `crates/librapix-app/src/main.rs`.
-- Confirmed cause
-  - Projection previously trusted only exact ready `gallery-400` rows from `derived_artifacts`.
-  - Deterministic on-disk browse thumbnails were only rediscovered later inside `do_thumbnail_batch(...)`, not during projection-time reuse lookup.
-  - Compatible `detail-800` thumbnails were not accepted as gallery fallback during startup projection.
-  - Startup-ready still waited for the startup-priority thumbnail queue to settle.
-  - Reconcile/projection requests also treated thumbnail work as a blocker instead of canceling it.
-- Resolution
-  - Projection now reuses thumbnails in this order:
-    - exact ready `gallery-400` artifact rows
-    - deterministic on-disk `gallery-400` files
-    - compatible `detail-800` artifact rows
-    - deterministic `detail-800` fallback for visible-priority items
-  - When nothing reusable exists, the UI renders placeholders immediately and schedules generation in background.
-  - Startup-ready now flips after snapshot apply, reconcile, and current-surface projection; thumbnail batches continue honestly after ready.
-  - Later projection/reconcile refreshes cancel thumbnail work instead of waiting behind it.
-  - Startup logs now record artifact lookup timing, reuse counts, placeholder counts, scheduled-generation counts, rejected-artifact reasons, and video slow/failure events.
-- Prevention guidance
-  - Do not make exact catalog-row presence the only startup reuse rule.
-  - Prefer compatible fallback over unnecessary browse-tier regeneration.
-  - Keep thumbnails outside the startup-ready boundary.
-  - Keep thumbnail scheduling observable in logs so reuse regressions are measurable.
-
-## Background thumbnail work still makes the GUI feel hung after `startup.ready`
-
-- Symptoms
-  - `startup.ready` arrives early enough, but the UI still feels laggy during scrolling, route switches, or immediately after startup.
-  - Windows logs show repeated failing video thumbnail jobs and bursts of ffmpeg work after ready.
-  - The same failing video items can appear again on later projection generations.
-- Affected area
-  - Background thumbnail scheduling/runtime policy in `crates/librapix-app/src/main.rs`.
-  - Video subprocess execution in `crates/librapix-thumbnails/src/lib.rs`.
-- Confirmed cause
-  - Failed thumbnail items were entering `derived_artifacts` as `failed`, but projection scheduling only consulted `ready` artifacts, so later projections could immediately retry the same bad items.
-  - Video thumbnail failures were logged as one generic message, hiding the real ffmpeg path, command, exit code, timeout, and stderr.
-  - Visible videos could still join the first post-ready thumbnail burst instead of staying placeholder-first and deferred.
-  - Queue cancellation cleared future work, but stale in-flight batches were not cancellation-aware enough.
-- Resolution
-  - Visible videos are now deferred into slower background catch-up instead of joining the first startup-priority thumbnail burst.
-  - Background batches now throttle video work to one item per batch.
-  - Video extraction is now timeout-bound and cancellation-aware while waiting on ffmpeg.
-  - Failed items now enter session backoff and are not immediately requeued on the next projection refresh.
-  - ffmpeg resolution/spawn failures now disable repeated video attempts for the rest of the session.
-  - Logs now record thumbnail batch dispatch/start/end/cancel timing, apply timing, refresh pressure during thumbnail work, and detailed video failure context.
-- Prevention guidance
-  - Keep image and video thumbnail policy separate.
-  - Never let known-bad items re-enter the hot path without backoff.
-  - Keep background thumbnail logs rich enough to distinguish worker time from app-state apply time.
-
-## Thumbnail batches finish quickly but the UI applies them much later
-
-- Symptoms
-  - Logs show `startup.thumbnail.batch.end`, but `startup.thumbnail.apply` does not appear until much later.
-  - The app is already `startup.ready`, yet thumbnail results do not show up promptly.
-  - Windows large-library runs can feel wrong even when worker elapsed time is short.
-- Affected area
-  - Iced timer subscriptions and thumbnail result handoff in `crates/librapix-app/src/main.rs`.
-- Confirmed cause
-  - The app previously implemented periodic subscriptions with `Subscription::run(...)` plus `std::thread::sleep(...)` inside async loops.
-  - Librapix was still using Iced's default native executor selection, which falls back to the thread-pool backend when `tokio`/`smol` are not enabled.
-  - Those blocking timer loops could delay unrelated runtime message forwarding, including `ThumbnailBatchComplete`.
-- Resolution
-  - Enable Iced's `tokio` runtime feature.
-  - Replace the blocking tick streams with `iced::time::every(...)`.
-  - Log thumbnail handoff stages explicitly:
+  - Reuse browse thumbnails in this order:
+    1. exact ready `gallery-400`
+    2. deterministic on-disk `gallery-400`
+    3. compatible ready `detail-800`
+    4. deterministic `detail-800` fallback for visible items
+    5. placeholder plus background generation
+  - Keep startup-ready independent from all thumbnail batches.
+  - Defer visible videos into slower background catch-up, throttle video batches to one item, and make in-flight video extraction cancellation-aware.
+  - Apply runtime backoff and session disable for repeated or global video failures.
+  - Use `iced::time::every(...)` instead of blocking sleep-based subscriptions so thumbnail completion messages are forwarded promptly.
+  - Keep handoff logs explicit:
     - worker complete
     - dispatch to UI
     - message received
     - apply start/end
 - Prevention guidance
-  - Do not implement periodic Iced subscriptions with blocking `std::thread::sleep(...)`.
-  - Prefer `iced::time::every(...)` or another non-blocking timer source supported by the active Iced executor.
-  - When background work updates visible UI state, keep message-delivery logs explicit so executor starvation can be distinguished from slow worker time.
+  - Keep exact and compatible reuse ahead of generation.
+  - Treat video work as placeholder-first background catch-up, not startup-critical work.
+  - Never reintroduce blocking timer subscriptions built around `std::thread::sleep`.
+  - Keep backoff/session-disable policy observable in logs so retry storms stay provable.
+
+## Route switches, filter changes, or first-open details still stall
+
+- Symptoms
+  - Opening Timeline, changing filters, or switching back to Gallery briefly feels like a full refresh.
+  - First-open details after startup can feel hung before the details pane populates.
+- Affected area
+  - Projection ownership and detail loading in `crates/librapix-app/src/main.rs`.
+- Confirmed cause
+  - Earlier post-startup refresh policy rebuilt both Gallery and Timeline even when only one surface was visible.
+  - First-open details could still synchronously generate `detail-800` when the detail cache was cold.
+- Resolution
+  - Use a current-surface-first projection policy for route, filter, search, and filesystem refreshes.
+  - Refresh only the active surface immediately and defer the non-visible surface until it is opened.
+  - Keep detail loading placeholder-first:
+    - reuse existing `detail-800` when present
+    - otherwise reuse the browse thumbnail immediately
+    - never generate a detail thumbnail synchronously on selection
+- Prevention guidance
+  - Do not treat every post-startup refresh as a full dual-surface rebuild.
+  - Keep selection/details paths free of synchronous thumbnail generation.
+
+## Large gallery or timeline surfaces still hang after projection
+
+- Symptoms
+  - Projection completes quickly, but the UI still stalls when Gallery or Timeline becomes visible.
+  - Timeline is worst on libraries where one date section contains hundreds or thousands of justified rows.
+- Affected area
+  - Large-surface rendering in `crates/librapix-app/src/main.rs`.
+- Confirmed cause
+  - Projection work already moved off the UI thread, but the view path still tried to build too much widget tree in one frame.
+  - Timeline virtualization originally stopped at the section level, so one intersecting group could still force rendering `215` or `1,215` rows at once.
+- Resolution
+  - Render Gallery, Timeline, and Search through a viewport-bounded window with top/bottom spacers that preserve the full scroll extent.
+  - Virtualize rows inside each intersecting Timeline date section, not only the sections themselves.
+  - Keep render-window diagnostics explicit:
+    - `interaction.surface_render.window`
+    - `interaction.timeline_render.window`
+    - `interaction.timeline_render.window.anomaly`
+- Prevention guidance
+  - Treat view-layer rendering cost separately from background projection cost.
+  - For grouped virtualized surfaces, do not stop at group-level windowing if individual groups can still become huge.
+
+## Dragging the media scrollbar thumb still lags
+
+- Symptoms
+  - Dragging the scrollbar thumb on large Gallery or Timeline surfaces feels sticky or briefly hung.
+  - Earlier Windows drag traces showed width churn from `438` to `1165` during a single drag and `processed=38..50` intermediate drag updates.
+- Affected area
+  - Viewport drag handling and justified-layout reuse in `crates/librapix-app/src/main.rs`.
+- Confirmed cause
+  - Drag-time width churn and scroll-range churn could still invalidate layout work repeatedly.
+  - Active drag still processed too many stale intermediate viewport targets.
+  - Drag lifecycle boundaries were too easy to fragment with sparse or near-edge events.
+- Resolution
+  - Treat thumb drag as an explicit preview/settle lifecycle.
+  - Require a real movement burst before entering active drag mode.
+  - Use latest-only pending target replacement with cadence-capped preview applies.
+  - Freeze drag-time justified-layout width and effective `max_y`.
+  - Skip max-only active-drag updates and apply one exact final viewport snapshot at settle.
+  - Keep diagnostics explicit:
+    - `interaction.viewport.drag.start`
+    - `interaction.viewport.drag.update`
+    - `interaction.viewport.settle.start`
+    - `interaction.viewport.settle.end`
+    - `interaction.surface_layout.drag_width.freeze`
+    - `interaction.surface_layout.drag_width.anomaly`
+- Prevention guidance
+  - Do not process every thumb position literally when preview-mode behavior is sufficient.
+  - Keep drag-time geometry inputs stable and restore exact correctness only at settle.
+  - Avoid synchronous high-volume logging on the drag hot path.
 
 ## Startup logs are hard to find
 
 - Symptoms
-  - Startup instrumentation exists, but it is unclear where the active log file was written.
+  - Runtime instrumentation exists, but it is unclear where the active log file was written.
 - Affected area
-  - Startup logging bootstrap in `crates/librapix-app/src/startup_log.rs`.
+  - Logging bootstrap in `crates/librapix-app/src/startup_log.rs`.
 - Confirmed behavior
-  - In development or portable-style runs, LibraPix first attempts to write logs to a nearby `logs/` directory.
-  - Otherwise it falls back to the app log directory resolved from `directories::ProjectDirs`.
-  - The active path is written to the log itself, printed to stderr on startup, and exposed in the in-app diagnostics panel.
+  - Development or portable-style runs first try a nearby `logs/` directory.
+  - Other runs fall back to the platform log directory resolved from `directories::ProjectDirs`.
+  - The active log path is:
+    - written into the log itself
+    - printed to stderr on startup
+    - exposed in the diagnostics panel
 - Resolution
-  - Open Diagnostics and inspect the `startup log:` line.
-  - If running from a terminal, check the startup stderr line beginning with `Librapix log:`.
+  - Check the diagnostics panel `startup log:` line.
+  - If launching from a terminal, check the stderr line starting with `Librapix log:`.
 - Prevention guidance
-  - Keep active log-path visibility in diagnostics whenever logging bootstrap changes.
-
-## Startup shows no loading/activity state on catalog-first branch
-
-- Symptoms
-  - On startup with a real populated library, background work is clearly happening but the runtime activity panel remains blank or the app appears idle.
-  - Gallery/timeline/search can appear idle or empty while reconcile/projection work is still running.
-  - The app may compile, test, and launch, but product-visible startup/runtime state does not behave honestly.
-- Affected area
-  - Catalog-first startup/runtime orchestration in `crates/librapix-app/src/main.rs`.
-  - Database migration lineage between the older staged-runtime branch history and the catalog-first branch storage migrations.
-- Likely cause
-  - Existing user databases were already on migration version `10` from older projection-snapshot work, while the early catalog-first branch only knew migrations through `0009`, so `media_catalog` and `derived_artifacts` were never created for those real databases.
-  - Catalog refresh/query failures were swallowed with `unwrap_or_default()`, collapsing browse/search/timeline preparation silently to empty results.
-  - The branch partially introduced staged activity UI state, but still routed real startup work through the old monolithic background worker and then cleared activity state unconditionally.
-- Confirmed cause
-  - Migration lineage mismatch prevented catalog tables from being added to existing real databases.
-  - Silent error swallowing in catalog-backed background preparation hid the storage failure from the UI/runtime state machine.
-  - Startup/runtime activity state had been regressed from a staged coordinator to a single silent `BackgroundWorkComplete` flow.
-- Resolution
-  - Add compatibility migrations so existing version-10 databases receive both `projection_snapshots` and the catalog/artifact tables.
-  - Restore staged runtime flow:
-    - snapshot hydrate
-    - snapshot apply ticks
-    - delayed startup reconcile kickoff
-    - scan job
-    - projection job
-    - thumbnail batches
-  - Only set startup-ready when snapshot apply, reconcile, and projection have settled; keep thumbnail batches as honest background work instead.
-  - Stop generating detail thumbnails eagerly during projection startup; load ready detail artifacts and fall back to browse thumbnails for selection/details while background thumbnail work progresses.
-- Prevention guidance
-  - Never advance storage schema direction on a long-lived branch without reconciling real migration lineage from adjacent branch history.
-  - Do not swallow catalog refresh/query failures in startup/runtime paths; surface them into structured activity/error state.
-  - When introducing staged activity UI, make sure the actual background orchestration uses the same staged messages instead of leaving a silent monolithic worker active.
-
-## Update chip stays on "Updates" and does not show release state
-
-- Symptoms
-  - Header update chip remains on `Updates`.
-  - Clicking the chip may not visibly change state right away.
-- Affected area
-  - GitHub release update check flow.
-- Likely cause
-  - Network unavailable, GitHub API temporarily unavailable, or API request failed.
-  - Manual check cooldown (5 minutes) blocked repeated click-triggered checks.
-- Resolution
-  - Ensure internet access and retry after a few minutes.
-  - Wait for the next automatic re-check window.
-  - If a manual click was just used, wait for cooldown expiry before trying again.
-- Prevention guidance
-  - Keep update-check failure UX subtle and non-blocking.
-  - Keep manual check cooldown logic explicit to avoid request bursts.
-
-## Library Statistics dialog shows no values yet
-
-- Symptoms
-  - Library Statistics dialog opens, but shows that no maintained statistics are available.
-- Affected area
-  - Per-library statistics display (`source_root_statistics` read path).
-- Confirmed cause
-  - Statistics are maintained during indexing/re-indexing, not computed on dialog open.
-  - If a root has not been indexed since stats maintenance was introduced, no persisted row exists yet.
-- Resolution
-  - Run indexing/refresh for the target library root.
-  - Re-open the Library Statistics dialog.
-- Prevention guidance
-  - Keep statistics maintenance in the indexing path and avoid adding on-demand heavy aggregation to UI dialog handlers.
-
-## Icons appear jagged or have poor antialiasing
-
-- Symptoms
-  - UI icons (sidebar, details, media badges) look pixelated or have visible aliasing.
-- Affected area
-  - All asset-based icons rendered via `image` widget.
-- Likely cause
-  - PNG icons are scaled from source resolution to display size. Iced's image widget scales images; sub-pixel or non-integer scaling can produce aliasing.
-  - Source icons may be at a different resolution than display size (e.g. 32×32 displayed at 16×16, or 16×16 displayed at 18×18).
-- Resolution
-  - All icon images use `FilterMethod::Linear` (bilinear interpolation) and `ContentFit::Contain` for smoother scaling.
-  - Provide icons at exact display sizes where possible (16×16, 18×18, 20×20, 32×32).
-  - For retina/high-DPI displays, provide 2× or 3× assets and use the same display dimensions; the framework will scale, but integer multiples often look better.
-  - Ensure source PNGs use transparency and clean edges; pre-rendered antialiasing in the asset helps.
-- Prevention guidance
-  - Export icons at target sizes from the design tool.
-  - Prefer SVG sources and export to PNG at needed resolutions.
-
-## Settings/Details scrollbar overlaps controls
-
-- Symptoms
-  - Scrollbar appears on top of form controls or text inside Settings or the Details pane.
-- Affected area
-  - Settings dialog scrollable and right Details-pane scrollable.
-- Confirmed cause
-  - Default scrollable behavior rendered floating scrollbar chrome over content instead of reserving a gutter.
-- Resolution
-  - Applied embedded vertical scrollbar spacing (same pattern as media pane) so scrollbar occupies a dedicated gutter beside content.
-- Prevention guidance
-  - For control-heavy panels, always configure scrollables with explicit vertical scrollbar spacing rather than relying on ad-hoc content padding.
-
-## Release assets on Linux/macOS are extensionless binaries
-
-- Symptoms
-  - GitHub release uploads include `librapix-linux` or `librapix-macos-apple-silicon` without `.AppImage`/`.dmg`.
-- Affected area
-  - CI release packaging workflow (`.github/workflows/release.yml`).
-- Confirmed cause
-  - Workflow copied raw target binaries directly into release assets for Linux/macOS instead of packaging into platform-specific distributables.
-- Resolution
-  - Linux release asset now builds and uploads as `.AppImage`.
-  - macOS release asset now builds and uploads as `.dmg` (Apple Silicon).
-  - Windows remains a raw `.exe` asset by design.
-- Prevention guidance
-  - Keep release artifact naming and packaging policy explicit in workflow matrix fields (`asset_name`, `package`).
-  - For workflow reruns on existing tags, use `workflow_dispatch` with explicit tag input.
-
-## Timeline scrubber is hidden or appears inactive
-
-- Symptoms
-  - Right-side fast date scrubber does not appear.
-  - Scrubber appears but does not move timeline content.
-- Affected area
-  - Timeline media pane (anchor generation + scroll operation wiring).
-- Confirmed cause
-  - Scrubber only renders in `Timeline` route and only when timeline anchors exist.
-  - When timeline has no grouped media (empty index, restrictive filters, or all results excluded), no anchors are produced.
-- Resolution
-  - Switch to `Timeline` tab.
-  - Clear restrictive type/extension filters and verify indexed media exists.
-  - Run indexing/refresh to repopulate timeline groups.
-- Prevention guidance
-  - Keep timeline anchor generation tied to projection output and avoid widget-derived fallback state.
-  - Preserve stable scrollable `Id` wiring (`media-pane-scrollable`) so scrub events can issue scroll operations.
-
-## Timeline scrubber feels stuck on certain dates/years
-
-- Symptoms
-  - Dragging the scrubber can appear to stall on a date/year.
-  - Year labels appear detached from their actual timeline positions.
-  - Scrubber movement feels jumpy or visually inconsistent with timeline scroll position.
-- Affected area
-  - Timeline scrubber marker layout + anchor mapping + programmatic scroll behavior.
-- Confirmed cause
-  - Year labels were rendered as a detached stacked list, not at their anchor-aligned Y positions.
-  - Scrub state was quantized to nearest anchor/index during sync, so movement looked sticky between anchors.
-  - Marker placement and scroll targeting were not both derived from the same normalized anchor-position model.
-- Resolution
-  - Timeline anchors now use structure-weighted normalized positions derived from timeline bucket sizes.
-  - Year markers are rendered on a position-aligned track using those same anchor normalized positions.
-  - Scrub value now stays continuous and viewport sync no longer forces hard snapping to anchor positions.
-  - Programmatic scroll uses absolute offset operations (`operation::scroll_to`) with relative fallback during early initialization.
-- Prevention guidance
-  - Keep marker placement, scrub mapping, and scroll targeting sourced from the same anchor model.
-  - Avoid rendering year markers as detached/evenly stacked labels independent of anchor positions.
-
-## Main media scrollbar overlaps cards/grid content
-
-- Symptoms
-  - Vertical scrollbar appears on top of gallery/timeline cards.
-  - Card thumbnails or metadata can be visually covered by the scrollbar gutter area.
-- Affected area
-  - Main media-pane scrollable layout (gallery + timeline browsing surfaces).
-- Confirmed cause
-  - Media-pane `scrollable` used default scrollbar behavior (`spacing: None`), which renders a floating scrollbar over content instead of reserving layout space.
-- Resolution
-  - Media pane now uses an embedded vertical scrollbar with explicit spacing (`scrollable::Scrollbar::spacing(...)`), which reserves a dedicated gutter beside content.
-- Prevention guidance
-  - For card/grid browsing surfaces, prefer embedded scrollbars when content must never be obscured.
-  - Avoid relying on ad-hoc content padding for scrollbar overlap issues.
-
-## Timeline scrubber snaps sideways on first click
-
-- Symptoms
-  - On initial scrubber click/press, the scrubber control appears to jump laterally before drag feels stable.
-  - Date chip appears misaligned with thumb position on first interaction.
-- Affected area
-  - Timeline scrubber interaction/layout in the media pane.
-- Confirmed cause
-  - The date-chip track was conditionally inserted only while scrubbing, changing row width on pointer-down and shifting the slider lane horizontally.
-  - Date-chip vertical placement used nearest-anchor position instead of the live continuous scrub value, causing first-click visual desync.
-- Resolution
-  - Scrubber now reserves a stable chip lane width at all times, so entering scrub mode does not change horizontal layout.
-  - Date-chip vertical placement now tracks continuous scrub value while label selection still uses nearest anchor.
-- Prevention guidance
-  - Keep scrubber interaction-state overlays layout-stable across pointer-down transitions.
-  - Keep displayed scrub visuals driven by continuous pointer state; use anchor mapping for labels/targets only.
-
-## New file appears under \"yesterday\" in timeline after midnight
-
-- Symptoms
-  - A file added after local midnight appears in the prior day bucket.
-  - Details panel modified timestamp appears correct, but timeline day grouping is wrong.
-- Affected area
-  - Timeline day/month/year grouping projection.
-- Confirmed cause
-  - Projection grouped by UTC calendar date from `modified_unix_seconds` instead of local timezone day boundaries.
-- Resolution
-  - Timeline projection now converts timestamps using local timezone before deriving day/month/year keys.
-  - Added regression test covering UTC-midnight boundary behavior under non-UTC offsets.
-- Prevention guidance
-  - Keep timeline grouping semantics aligned with user-facing local date formatting.
-  - Include timezone-boundary tests when changing projection date logic.
-
-## Details action buttons are clipped/cut off
-
-- Symptoms
-  - Last details action button is partially hidden in narrow details pane widths.
-- Affected area
-  - Details action layout in right pane.
-- Confirmed cause
-  - Actions were rendered in one fixed horizontal row that exceeded available width.
-- Resolution
-  - Details actions now use responsive layout:
-    - single-column stack for very narrow widths
-    - 2x2 grid for normal details widths
-    - one-row layout only when space allows
-- Prevention guidance
-  - Treat actions as responsive UI controls and avoid fixed-row assumptions in constrained panes.
-
-## Top media counts near Refresh are inconsistent
-
-- Symptoms
-  - Header count near Refresh does not match what is currently being browsed.
-- Affected area
-  - Media-pane header stats.
-- Confirmed cause
-  - Count was derived from route browse list only, even while search results were active.
-- Resolution
-  - Header stats now show `Shown`, `Images`, and `Videos` from the active result source:
-    - search result set when query is active
-    - otherwise current route browse projection
-- Prevention guidance
-  - Derive displayed stats from the exact rendered result source, not adjacent or stale state.
-
-## Search only returns 20 results
-
-- Symptoms
-  - Search appears to stop at 20 items even when more matches exist.
-- Affected area
-  - App-side search query orchestration (`RunSearchQuery`).
-- Confirmed cause
-  - Search query was created with `SearchQuery { limit: 20 }`, truncating hit output after ranking.
-- Resolution
-  - Search now sets limit from current read-model dataset size (`rows.len()`), removing hidden fixed truncation.
-- Prevention guidance
-  - Avoid hard-coded result caps in aggregate browse/search surfaces unless pagination is explicit and user-visible.
-
-## New-file announcement does not appear during live refresh
-
-- Symptoms
-  - Filesystem changes refresh gallery/timeline, but no in-app new-file dialog is shown.
-- Affected area
-  - Filesystem-triggered background refresh + announcement derivation.
-- Confirmed cause
-  - Announcement is intentionally only emitted for newly indexed media IDs (not edits/removals).
-  - If a created file is ignored/excluded or unsupported, it will not produce a new indexed media row.
-- Resolution
-  - Verify file is supported and not excluded by ignore/min-size filters.
-  - Ensure root is active and filesystem watcher is running.
-- Prevention guidance
-  - Keep new-file notification logic tied to indexed-media deltas to avoid noisy false positives.
-
-## Copy File action fails
-
-- Symptoms
-  - `Copy File` action reports failure.
-- Affected area
-  - Platform clipboard integration for file-object copy.
-- Confirmed cause
-  - Platform command/runtime support missing:
-    - Linux: `xclip` unavailable.
-    - Windows (previous implementation): PowerShell-based clipboard indirection was brittle and did not provide a robust native clipboard-ownership path for CF_HDROP writes.
-    - macOS: AppleScript clipboard call failed.
-  - Platform difference:
-    - macOS path works when `osascript` successfully sets a file reference directly on the system pasteboard.
-    - Windows file paste expects a shell file-drop payload (CF_HDROP); text clipboard semantics are insufficient.
-- Resolution
-  - Install required host tools (`xclip` on Linux).
-  - On Windows, write CF_HDROP payload directly with native Win32 clipboard APIs (`SetClipboardData` + DROPFILES payload).
-  - Keep `Copy Path` as text clipboard (`clip`) and `Copy File` as shell file-object payload behavior.
-  - Retry with accessible file path and verify filesystem permissions.
-  - Use `Copy Path` as fallback when platform file-clipboard integration is unavailable.
-- Prevention guidance
-  - Prefer native clipboard APIs for Windows file-object copy over shelling out to external script hosts.
-  - Keep platform clipboard requirements documented and validated in release notes/testing.
-
-## Windows shows "Unknown publisher"
-
-- Symptoms
-  - Windows launch/install surfaces `Unknown publisher`.
-- Affected area
-  - Distribution/signing pipeline (not UI labels).
-- Confirmed cause
-  - EXE binary is unsigned or signed with an untrusted certificate.
-- Resolution
-  - Sign the EXE using SignTool with the intended certificate subject (`CN=Asad` baseline for local/dev flow).
-  - For local testing, generate/import a dev self-signed cert.
-  - For public release, use a trusted OV/EV certificate and timestamp signatures.
-- Prevention guidance
-  - Verify signatures before distribution (`signtool verify /pa /v`).
-
-## "All" filter misses videos or only shows part of the library
-
-- Symptoms
-  - "All" can appear image-only while "Videos" still shows video files.
-  - Gallery/timeline can show only a subset of indexed media across registered roots.
-- Affected area
-  - App browse pipeline (read-model hydration + projection input), gallery/timeline rendering.
-- Confirmed cause
-  - Hidden truncation was applied in multiple layers:
-    - Gallery rendering used `.take(120)` before layout.
-    - Timeline rendering capped processing to `min(200)` items.
-    - Browse/index/search hydration paths used paginated reads with a hard upper bound.
-  - When recent images dominated earlier slices, videos and older media were pushed out of "All".
-- Resolution
-  - Removed gallery and timeline UI caps so projected items are fully renderable.
-  - Added storage API `list_all_media_read_models()` (no SQL `LIMIT`).
-  - Updated browse/index/search hydration paths to use the unbounded read-model API.
-  - Added regression tests for:
-    - unbounded read-model retrieval including older video rows
-    - recursive multi-root indexing across deeply nested folders
-- Prevention guidance
-  - Avoid hidden hard caps in aggregate browse surfaces.
-  - If pagination is needed for performance, make it explicit and user-visible.
-  - Keep correctness tests for "All includes images+videos" and deep multi-root recursion.
-
-## Auto refresh does not react to file changes
-
-- Symptoms
-  - Adding/modifying media files in active roots does not update gallery/timeline automatically.
-  - Manual Index + Refresh still works.
-- Affected area
-  - Filesystem watch subscription and runtime message delivery.
-- Likely cause
-  - Filesystem events are detected, but the app does not receive the refresh message.
-- Confirmed cause
-  - The watcher worker used a blocking `std::sync::mpsc::recv()` inside an async Iced subscription stream.
-  - This blocked runtime delivery of `Message::FilesystemChanged` even though events were detected.
-- Resolution
-  - Switched watcher event transport to async `iced::futures::channel::mpsc::unbounded`.
-  - Replaced blocking `recv()` with `next().await`.
-  - On `FilesystemChanged`, app now runs incremental indexing and refreshes gallery/timeline (and active search results).
-- Prevention guidance
-  - Avoid blocking std channels inside async subscription workers.
-  - Use async stream/channel primitives for all Iced subscription event pipelines.
-
-## Clipboard action fails on Linux
-
-- Symptoms
-  - Copy-path action reports failure while the app is otherwise healthy.
-- Affected area
-  - Media actions (clipboard integration).
-- Likely cause
-  - `xclip` command not installed on host OS.
-- Confirmed cause
-  - Baseline Linux clipboard flow invokes `xclip -selection clipboard`.
-- Resolution
-  - Install `xclip` package and retry copy action.
-- Prevention guidance
-  - Keep platform action dependencies documented and validate them in release notes.
-
-## Dimensions not showing for previously indexed files
-
-- Symptoms
-  - Dimensions display as "—" in details panel for files that were indexed before the dimension extraction feature.
-  - Newly indexed files show dimensions correctly.
-- Affected area
-  - Storage upsert SQL for indexed_media; indexer dimension extraction logic.
-- Likely cause
-  - The indexer originally skipped dimension extraction for unchanged files. Files indexed before dimensions were supported retained NULL width/height.
-- Confirmed cause
-  - `ON CONFLICT DO UPDATE SET width_px = excluded.width_px` replaced stored dimensions with NULL for unchanged files (fixed with COALESCE).
-  - Indexer only extracted dimensions for new/changed files, never backfilling unchanged files with missing dimensions.
-- Resolution
-  - Storage upsert uses `COALESCE(excluded.width_px, indexed_media.width_px)` to preserve existing values.
-  - Indexer now checks for missing dimensions on unchanged images and re-extracts them.
-  - `IndexedMediaSnapshot` and `ExistingIndexedEntry` now carry `width_px`/`height_px` so the indexer can detect missing dimensions.
-- Prevention guidance
-  - Use COALESCE for nullable metadata fields in upsert statements.
-  - When adding new metadata extraction, ensure backfill logic for existing records.
-
-## First-click selection lag
-
-- Symptoms
-  - Clicking a thumbnail for the first time causes a visible stutter before details appear.
-  - Subsequent clicks on previously-viewed items feel faster.
-- Affected area
-  - Media selection path, detail-size thumbnail resolution.
-- Confirmed cause
-  - `load_media_details_cached` called `resolve_thumbnail` (which runs `ensure_image_thumbnail` / `ensure_video_thumbnail` I/O) synchronously for the DETAIL_THUMB_SIZE on every cache hit.
-  - This meant disk I/O happened in the click handler path even when the gallery thumbnail was already cached.
-- Resolution
-  - Detail-size thumbnail paths are now pre-resolved during projection builds (alongside gallery thumbnails) and stored in `CachedDetails.detail_thumbnail_path`.
-  - `load_media_details_cached` reads the cached path directly without I/O.
-- Prevention guidance
-  - Keep the click/selection path free of disk I/O, network calls, or expensive computation.
-  - Pre-compute expensive data during batch operations (projections, indexing), not during interactive handlers.
-
-## App freezes or shows "Not Responding" on startup (Windows)
-
-- Symptoms
-  - App window appears but becomes unresponsive ("Not Responding") for seconds to minutes while indexing runs.
-  - Especially noticeable with large libraries or multiple roots containing thousands of images.
-- Affected area
-  - Startup restore path, indexing, thumbnail generation, projection builds.
-- Confirmed cause
-  - `StartupRestore` handler called `run_indexing`, `run_gallery_projection`, and `run_timeline_projection` synchronously inside the `update` function, blocking the UI thread for the entire duration of filesystem scanning, SQLite writes, thumbnail generation, and projection computation.
-- Resolution
-  - All heavyweight startup work now runs via staged `Task::perform` jobs on background threads.
-  - The UI renders immediately, hydrates any persisted snapshot, then reconciles/indexes/projects/thumbnails asynchronously without blocking `update`.
-  - `FilesystemChanged`, `RunIndexing`, `ApplyMinFileSize`, `AddRoot`, and auto-tag operations also use the async staged path.
-- Prevention guidance
-  - Never perform blocking I/O (filesystem, SQLite, thumbnail generation) inside the `update` function.
-  - Use `Task::perform` for any work that takes more than a few milliseconds.
-  - Keep the click/update path free of synchronous heavy operations.
-
-## App stalls during refresh/search/filter on large libraries
-
-- Symptoms
-  - Pressing refresh, running search, or changing filter chips can stall interaction for noticeable periods with large media libraries.
-- Affected area
-  - Projection/search refresh path in app update handlers.
-- Confirmed cause
-  - `RunSearchQuery`, `RunGalleryProjection`, `RunTimelineProjection`, and filter-change handlers previously executed read-model hydration + projection/search + thumbnail resolution synchronously in the UI update path.
-- Resolution
-  - Projection and search refresh now run through background work mode (`Task::perform`) instead of synchronous update execution.
-  - Header activity status now reports projection/search loading while background work runs.
-- Prevention guidance
-  - Treat large read-model projection/search workloads as background tasks, not immediate update-path work.
-  - Keep update handlers limited to state transitions and task scheduling.
-
-## New-file dialog stretches with window height
-
-- Symptoms
-  - Announcement dialog appears to consume too much vertical space and feels like a full-height sheet.
-- Affected area
-  - Modal layout constraints for the in-app new-file dialog.
-- Confirmed cause
-  - Dialog surface lacked explicit vertical constraints and relied on unconstrained layout sizing.
-- Resolution
-  - Modal now uses centered placement with explicit max width/max height and scrollable dialog body.
-- Prevention guidance
-  - Use explicit modal constraints for announcement/detail dialogs so they remain product-like across window sizes.
-
-## "All" filter shows only images, not videos
-
-- Symptoms
-  - Clicking "All" shows only images; videos appear only when "Videos" filter is selected.
-- Affected area
-  - Read-model query ordering and limits.
-- Confirmed cause
-  - Query used `ORDER BY modified_unix_seconds DESC` with a 50k limit. When images vastly outnumber videos and have more recent timestamps, the top 50k by date were all images.
-- Resolution
-  - Read-model query now uses per-root and per-media-kind caps: up to 10k items per root, and up to 5k images and 5k videos per root. This guarantees both kinds appear in "All" when both exist.
-- Prevention guidance
-  - For "All" browse mode, ensure query design balances representation across media kinds and roots.
-
-## Gallery or timeline shows media from only one or two libraries
-
-- Symptoms
-  - Multiple library roots are registered, but gallery/timeline appear to show media from only one or two of them.
-- Affected area
-  - Read-model query ordering.
-- Confirmed cause
-  - Query used `ORDER BY absolute_path ASC` with a 50,000-row limit. Paths sort alphabetically, so roots whose paths sort first (e.g. `C:\A\...` before `C:\B\...`) filled the limit before media from other roots appeared.
-- Resolution
-  - Query now uses ROW_NUMBER() with PARTITION BY source_root_id to cap at 10,000 items per root, then orders by modified_unix_seconds DESC. This guarantees all active roots are represented in the 50k result set.
-- Prevention guidance
-  - Ordering for unified multi-library views should prioritize recency or interleaving, not alphabetical path order.
-
-## Gallery or timeline shows only a subset of media from multiple libraries
-
-- Symptoms
-  - Only a fraction of indexed media appears in gallery or timeline views.
-  - Adding more library roots does not increase visible media proportionally.
-- Affected area
-  - Read-model query limits, gallery projection limits, thumbnail generation limits.
-- Confirmed cause
-  - Hard-coded query limits truncated results:
-    - `list_media_read_models(200, 0)` during thumbnail generation — only 200 images got thumbnails.
-    - `list_media_read_models(500, 0)` for projections — only 500 items in timeline/gallery source data.
-    - `GalleryQuery.limit: 120` — gallery display truncated to 120 items regardless of how many matched.
-    - `list_media_read_models(200, 0)` for search — only 200 items searchable.
-- Resolution
-  - All query limits increased to 50,000 (`MEDIA_QUERY_LIMIT`), effectively removing artificial truncation.
-  - Gallery display limit also uses `MEDIA_QUERY_LIMIT`.
-- Prevention guidance
-  - Do not hard-code low query limits for aggregate views.
-  - When limits are needed for performance, make them configurable or document them clearly.
-  - Multi-library aggregation is a core product requirement; limits must not silently exclude data.
-
-## Video thumbnails not showing on Windows
-
-- Symptoms
-  - Video files show placeholder instead of thumbnail in gallery/timeline/details.
-  - Images show thumbnails correctly.
-- Affected area
-  - Video thumbnail generation via ffmpeg subprocess.
-- Likely cause
-  - ffmpeg not in PATH when app is launched from Explorer/Start Menu.
-  - Path format (backslashes) causing ffmpeg to fail on Windows.
-- Resolution
-  - App now uses `ffmpeg.exe` explicitly on Windows.
-  - Paths are normalized to forward slashes before passing to ffmpeg (ffmpeg accepts these on Windows).
-- Prevention guidance
-  - Install ffmpeg and add to system PATH, or ensure it is in PATH for GUI-launched apps.
-  - See "Video thumbnails not showing" below for general ffmpeg requirements.
-
-## Terminal windows flicker on Windows during indexing/startup
-
-- Symptoms
-  - Terminal/command windows repeatedly open and close during startup restore.
-  - Flicker returns when filesystem watch triggers re-indexing (for example, when a new screenshot appears).
-- Affected area
-  - Video thumbnail generation subprocess spawning (`ffmpeg.exe`) on Windows GUI builds.
-- Confirmed cause
-  - GUI subsystem builds (`windows_subsystem = "windows"`) do not have a parent console, so each `ffmpeg.exe` invocation can create its own console window unless explicitly suppressed.
-- Resolution
-  - Launch `ffmpeg.exe` with Windows `CREATE_NO_WINDOW` creation flags in the thumbnail subprocess path.
-  - Keep stdout/stderr redirected to null to avoid noisy subprocess output.
-- Prevention guidance
-  - For Windows subprocesses used in background work, always set no-window creation flags when no interactive console is required.
-  - Re-check subprocess behavior after changing crate subsystem attributes.
-
-## Opening media on Windows is slow and flashes terminal
-
-- Symptoms
-  - Double-clicking or using Open on image/video feels slow.
-  - A command/terminal window briefly opens and closes before media opens.
-- Affected area
-  - Open-file/open-folder action path on Windows.
-- Confirmed cause
-  - The open action used `cmd /C start ...`, which can spawn visible command windows and adds process startup overhead.
-- Resolution
-  - Replaced Windows open action with `opener::open(...)`, using native shell opening without command prompt flashing.
-- Prevention guidance
-  - Avoid `cmd /C start` for GUI open actions in Windows desktop builds.
-  - Prefer shell/native open APIs for user-facing launch actions.
-
-## Filter chips overflow horizontally in Filters dialog
-
-- Symptoms
-  - Filter chips continue in a single horizontal line and can trigger a horizontal scrollbar in the dialog.
-- Affected area
-  - Filter dialog chip groups (`Type`, `Extension`, `Library`, `Tags`).
-- Confirmed cause
-  - Chip rows were rendered in fixed horizontal containers with overflow handled by horizontal `scrollable` widgets instead of adaptive wrapping.
-- Resolution
-  - Chip groups now use width-aware wrapped rows so chips continue on the next line when space is constrained.
-- Prevention guidance
-  - For chip/button groups in modals, prefer wrapped responsive rows over horizontal overflow scrolling unless carousel behavior is explicitly intended.
-
-## Removed/deactivated libraries reappear after restart
-
-- Symptoms
-  - After removing a library and reopening the app, the same library is back.
-  - After deactivating a library and reopening the app, it returns as active.
-- Affected area
-  - Startup root restoration and config synchronization for library lifecycle actions.
-- Confirmed cause
-  - Startup always re-imported roots from config into storage, and config updates were append-only; removed roots were not removed from config, and re-import forced lifecycle back to active.
-- Resolution
-  - Library lifecycle mutations now synchronize config roots from current storage state.
-  - Startup config import now runs only when storage has no roots.
-- Prevention guidance
-  - Keep config as a faithful snapshot of storage roots after lifecycle mutations.
-  - Avoid startup import paths that overwrite lifecycle state for already-persisted roots.
-
-## Dialog backdrop clicks do not close dialog / clicks pass through
-
-- Symptoms
-  - Clicking outside a dialog does not close it.
-  - Clicking within dialog whitespace can interact with underlying UI unexpectedly.
-- Affected area
-  - Modal overlay interaction handling for filter/settings/about/library/statistics/new-file dialogs.
-- Confirmed cause
-  - Modal overlays lacked explicit pointer handling for backdrop close and in-dialog event consumption.
-- Resolution
-  - Backdrop now emits a unified close-all-dialogs action.
-  - Centered dialog surface now explicitly consumes clicks so pointer events do not pass through to app content behind the modal.
-- Prevention guidance
-  - Route all modal overlays through a shared backdrop/content click-capture helper.
-  - Avoid ad-hoc per-dialog overlay containers that skip pointer capture semantics.
-
-## Video thumbnails not showing
-
-- Symptoms
-  - Video files show placeholder instead of thumbnail in gallery/timeline.
-- Affected area
-  - Thumbnail pipeline (video extraction).
-- Likely cause
-  - `ffmpeg` is not installed or not in the system PATH.
-- Resolution
-  - Install `ffmpeg` and ensure it's available in PATH: `brew install ffmpeg` (macOS), `apt install ffmpeg` (Linux), or download from ffmpeg.org (Windows).
-  - Re-index library to generate video thumbnails.
-- Prevention guidance
-  - Video thumbnails are optional; the app degrades gracefully to placeholder display.
-
-## Intermittent missing media in "All" / multi-root browse views
-
-- Symptoms
-  - "All" sometimes appeared to miss videos or showed disproportionate results from some roots.
-  - With large libraries, users reported that visible items did not always match expectations.
-- Affected area
-  - Read-model query strategy, projection inputs, and diagnostics visibility.
-- What we tried so far
-  - Increased aggregate browse/search/projection limits to `50,000` (`MEDIA_QUERY_LIMIT`) to remove low truncation ceilings.
-  - Introduced per-kind balancing (images/videos) to force representation in "All".
-  - Introduced per-root balancing to force multi-root representation.
-  - Added a diagnostics panel in the sidebar (counts + filter state + status).
-  - Added an event log in diagnostics to show processed app messages with timestamps.
-- Current confirmed findings
-  - Indexer traversal is recursive across nested folders (`WalkDir::new(...).into_iter()` with no `max_depth`), so deep subfolder depth is not currently capped by scan logic.
-  - Per-kind/per-root balancing logic was removed again to avoid artificial shaping of results; browse now uses straightforward ordering plus global `LIMIT/OFFSET`.
-  - Missing items are more likely explained by filter state, ignore rules, eligibility/lifecycle of roots, min-size threshold, or media-type recognition than by shallow directory traversal.
-- Resolution status
-  - Partial: observability improved (diagnostics + event log), and hard low limits were removed.
-  - Ongoing: continue validating root eligibility, ignore matches, and filter/min-size configuration against user datasets.
-- Prevention guidance
-  - Keep diagnostics enabled when changing query/indexing behavior.
-  - Prefer explicit instrumentation over heuristic query shaping when debugging cross-root/media-kind visibility.
-  - When introducing balancing logic, document tradeoffs and verify it does not hide real underlying causes.
+  - Keep active log-path visibility intact whenever startup logging changes.

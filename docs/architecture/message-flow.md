@@ -2,6 +2,8 @@
 
 Current baseline follows Iced's explicit state/update/view loop.
 
+Issue `#12` runtime rationale and evidence are consolidated in `docs/architecture/issue-12-runtime-optimization-summary.md`. This document describes the final runtime flow only.
+
 ## Flow
 
 1. `view` renders controls from current `AppState`.
@@ -187,6 +189,7 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
   - Ready-enough and background catch-up are now distinct runtime concepts:
     - startup completion no longer waits for any thumbnail batch
     - deferred thumbnail catch-up is delayed and batched more lightly after startup becomes usable
+    - unchanged snapshot-backed startup can still schedule a later non-blocking gallery continuation for completeness
   - Background thumbnail policy is no longer uniform:
     - images can remain higher-priority background work
     - videos are throttled more aggressively, with one-item batches plus backoff/cancellation

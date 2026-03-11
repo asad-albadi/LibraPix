@@ -14,10 +14,7 @@ This repository is documentation-driven. Architecture and operational decisions 
 
 - `docs/architecture/overview.md`
 - `docs/architecture/catalog-first-architecture.md`
-- `docs/architecture/catalog-first-startup-completion-audit.md`
-- `docs/architecture/background-thumbnail-responsiveness-audit.md`
-- `docs/architecture/thumbnail-apply-handoff-audit.md`
-- `docs/architecture/startup-thumbnail-reuse-audit.md`
+- `docs/architecture/issue-12-runtime-optimization-summary.md`
 - `docs/architecture/layers.md`
 - `docs/architecture/message-flow.md`
 - `docs/architecture/indexing.md`
@@ -38,7 +35,6 @@ This repository is documentation-driven. Architecture and operational decisions 
 
 - `docs/roadmap/mvp.md`
 - `docs/roadmap/future.md`
-- `docs/roadmap/catalog-first-architecture-checklist.md`
 - `docs/roadmap/bootstrap-checklist.md`
 - `docs/roadmap/config-storage-checklist.md`
 - `docs/roadmap/library-indexing-foundation-checklist.md`

@@ -2,6 +2,8 @@
 
 Librapix uses a centralized media-view architecture that underpins gallery, timeline, and search browsing.
 
+Issue `#12` runtime rationale and before/after evidence are consolidated in `docs/architecture/issue-12-runtime-optimization-summary.md`. This document describes the final rendering and interaction model only.
+
 ## Unified data model
 
 All browsing views consume `BrowseItem` which carries:
@@ -116,5 +118,6 @@ For large libraries, the shell no longer builds every justified row at once:
   - current-route browse state is prioritized first
   - non-visible route refresh can remain deferred until later
   - startup thumbnail work is bounded to a first useful slice
+- Unchanged snapshot-backed startup can still schedule a later non-blocking gallery continuation so fast first paint does not become a permanently truncated gallery.
 - Deferred thumbnail catch-up can continue after the app is already usable.
 - Activity text remains visible while real work is in flight, but startup readiness no longer waits for the full browse-tier thumbnail backlog.

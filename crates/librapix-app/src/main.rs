@@ -696,6 +696,7 @@ struct ViewportDragState {
     last_logged_at: Option<Instant>,
     update_count: usize,
     coalesced_updates: usize,
+    max_step_delta_px: f32,
     candidate_started_at: Option<Instant>,
     candidate_last_event_at: Option<Instant>,
     candidate_event_count: usize,
@@ -761,6 +762,7 @@ struct Librapix {
     layout_cache: RefCell<MediaLayoutCache>,
     drag_layout_preview: RefCell<DragLayoutPreviewState>,
     viewport_drag: ViewportDragState,
+    last_viewport_drag_settled_at: Option<Instant>,
     new_media_announcement: Option<NewMediaAnnouncement>,
     filter_dialog_open: bool,
     settings_open: bool,
@@ -900,11 +902,16 @@ const TIMELINE_GROUP_HEADER_HEIGHT: f32 = 40.0;
 const AUTOMATION_TICK_INTERVAL: Duration = Duration::from_millis(100);
 const VIEWPORT_SETTLE_TICK_INTERVAL: Duration = Duration::from_millis(40);
 const VIEWPORT_SETTLE_DELAY: Duration = Duration::from_millis(320);
+const VIEWPORT_SETTLE_DELAY_LARGE_JUMP: Duration = Duration::from_millis(620);
 const VIEWPORT_ACTIVE_LOG_INTERVAL: Duration = Duration::from_millis(200);
+const VIEWPORT_DRAG_THRASH_WINDOW: Duration = Duration::from_millis(700);
 const VIEWPORT_DRAG_ACTIVATION_WINDOW: Duration = Duration::from_millis(220);
 const VIEWPORT_DRAG_ACTIVATION_EVENTS: usize = 3;
+const VIEWPORT_DRAG_FAST_ACTIVATION_EVENTS: usize = 2;
 const VIEWPORT_DRAG_ACTIVATION_DELTA_PX: f32 = 120.0;
+const VIEWPORT_DRAG_FAST_ACTIVATION_DELTA_PX: f32 = 280.0;
 const VIEWPORT_DRAG_HEIGHT_STABILITY_PX: f32 = 4.0;
+const VIEWPORT_SETTLE_LARGE_JUMP_THRESHOLD_PX: f32 = 1_500.0;
 static LARGE_SURFACE_RENDER_LOGS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
 #[derive(Debug, Clone)]
@@ -973,6 +980,7 @@ impl Default for Librapix {
             layout_cache: RefCell::new(MediaLayoutCache::default()),
             drag_layout_preview: RefCell::new(DragLayoutPreviewState::default()),
             viewport_drag: ViewportDragState::default(),
+            last_viewport_drag_settled_at: None,
             new_media_announcement: None,
             filter_dialog_open: false,
             settings_open: false,
@@ -5248,15 +5256,38 @@ fn update_viewport_drag_candidate(
         app.viewport_drag.candidate_event_count.saturating_add(1);
 }
 
-fn should_activate_viewport_drag(app: &Librapix, absolute_y: f32, viewport_height: f32) -> bool {
-    if app.viewport_drag.candidate_event_count < VIEWPORT_DRAG_ACTIVATION_EVENTS {
-        return false;
-    }
-
+fn should_activate_viewport_drag(
+    app: &Librapix,
+    absolute_y: f32,
+    viewport_height: f32,
+) -> Option<&'static str> {
     let scroll_delta = (absolute_y - app.viewport_drag.candidate_origin_y).abs();
     let height_delta = (viewport_height - app.viewport_drag.candidate_origin_height).abs();
-    scroll_delta >= VIEWPORT_DRAG_ACTIVATION_DELTA_PX
-        && height_delta <= VIEWPORT_DRAG_HEIGHT_STABILITY_PX
+    if height_delta > VIEWPORT_DRAG_HEIGHT_STABILITY_PX {
+        return None;
+    }
+
+    if app.viewport_drag.candidate_event_count >= VIEWPORT_DRAG_ACTIVATION_EVENTS
+        && scroll_delta >= VIEWPORT_DRAG_ACTIVATION_DELTA_PX
+    {
+        return Some("sustained_burst");
+    }
+
+    if app.viewport_drag.candidate_event_count >= VIEWPORT_DRAG_FAST_ACTIVATION_EVENTS
+        && scroll_delta >= VIEWPORT_DRAG_FAST_ACTIVATION_DELTA_PX
+    {
+        return Some("large_jump_fast_path");
+    }
+
+    None
+}
+
+fn viewport_settle_profile(drag: &ViewportDragState) -> (Duration, &'static str) {
+    if drag.max_step_delta_px >= VIEWPORT_SETTLE_LARGE_JUMP_THRESHOLD_PX {
+        (VIEWPORT_SETTLE_DELAY_LARGE_JUMP, "large_jump_idle_guard")
+    } else {
+        (VIEWPORT_SETTLE_DELAY, "default_idle_guard")
+    }
 }
 
 fn handle_media_viewport_changed(
@@ -5276,8 +5307,10 @@ fn handle_media_viewport_changed(
 
     let now = Instant::now();
     let route = viewport_route_label(app.state.active_route);
+    let step_delta = (absolute_y - app.media_scroll_absolute_y).abs();
     if app.viewport_drag.active {
         app.viewport_drag.update_count = app.viewport_drag.update_count.saturating_add(1);
+        app.viewport_drag.max_step_delta_px = app.viewport_drag.max_step_delta_px.max(step_delta);
         let should_log_update = app
             .viewport_drag
             .last_logged_at
@@ -5286,9 +5319,10 @@ fn handle_media_viewport_changed(
             startup_log::log_info(
                 "interaction.viewport.drag.update",
                 &format!(
-                    "route={route} updates={} coalesced={} viewport_y={absolute_y:.1} max_y={max_y:.1} viewport_height={viewport_height:.1} overscan_px={:.1} projection_in_flight={} thumbnail_in_flight={} pending_projection={} pending_reconcile={}",
+                    "route={route} updates={} coalesced={} max_step_delta={:.1} viewport_y={absolute_y:.1} max_y={max_y:.1} viewport_height={viewport_height:.1} overscan_px={:.1} projection_in_flight={} thumbnail_in_flight={} pending_projection={} pending_reconcile={}",
                     app.viewport_drag.update_count,
                     app.viewport_drag.coalesced_updates,
+                    app.viewport_drag.max_step_delta_px,
                     media_virtual_overscan_px(true),
                     app.background.projection_in_flight,
                     app.background.thumbnail_in_flight,
@@ -5302,19 +5336,42 @@ fn handle_media_viewport_changed(
         update_viewport_drag_candidate(app, now, absolute_y, viewport_height);
     }
 
-    if !app.viewport_drag.active && should_activate_viewport_drag(app, absolute_y, viewport_height)
-    {
+    let activation_reason = if !app.viewport_drag.active {
+        should_activate_viewport_drag(app, absolute_y, viewport_height)
+    } else {
+        None
+    };
+    if let Some(activation_reason) = activation_reason {
+        if app
+            .last_viewport_drag_settled_at
+            .is_some_and(|last| now.duration_since(last) <= VIEWPORT_DRAG_THRASH_WINDOW)
+        {
+            startup_log::log_warn(
+                "interaction.viewport.drag.lifecycle.anomaly",
+                &format!(
+                    "route={route} kind=rapid_reactivation idle_since_settle_ms={} candidate_updates={} candidate_scroll_delta={:.1}",
+                    app.last_viewport_drag_settled_at
+                        .map(|last| now.duration_since(last).as_millis())
+                        .unwrap_or_default(),
+                    app.viewport_drag.candidate_event_count,
+                    (absolute_y - app.viewport_drag.candidate_origin_y).abs(),
+                ),
+            );
+        }
         app.viewport_drag.active = true;
         app.viewport_drag.started_at = Some(now);
         app.viewport_drag.update_count = 0;
         app.viewport_drag.coalesced_updates = 0;
+        app.viewport_drag.max_step_delta_px = (absolute_y - app.viewport_drag.candidate_origin_y)
+            .abs()
+            .max(step_delta);
         app.viewport_drag.last_logged_at = None;
         app.viewport_drag.candidate_started_at = None;
         app.viewport_drag.candidate_last_event_at = None;
         startup_log::log_info(
             "interaction.viewport.drag.start",
             &format!(
-                "route={route} viewport_y={absolute_y:.1} max_y={max_y:.1} viewport_height={viewport_height:.1} overscan_px={:.1} render_window_logs_deferred=true candidate_updates={} candidate_scroll_delta={:.1} projection_in_flight={} thumbnail_in_flight={} pending_projection={} pending_reconcile={}",
+                "route={route} viewport_y={absolute_y:.1} max_y={max_y:.1} viewport_height={viewport_height:.1} overscan_px={:.1} render_window_logs_deferred=true activation_reason={activation_reason} candidate_updates={} candidate_scroll_delta={:.1} projection_in_flight={} thumbnail_in_flight={} pending_projection={} pending_reconcile={}",
                 media_virtual_overscan_px(true),
                 app.viewport_drag.candidate_event_count,
                 (absolute_y - app.viewport_drag.candidate_origin_y).abs(),
@@ -5329,9 +5386,10 @@ fn handle_media_viewport_changed(
         startup_log::log_info(
             "interaction.viewport.drag.update",
             &format!(
-                "route={route} updates={} coalesced={} viewport_y={absolute_y:.1} max_y={max_y:.1} viewport_height={viewport_height:.1} overscan_px={:.1} projection_in_flight={} thumbnail_in_flight={} pending_projection={} pending_reconcile={}",
+                "route={route} updates={} coalesced={} max_step_delta={:.1} viewport_y={absolute_y:.1} max_y={max_y:.1} viewport_height={viewport_height:.1} overscan_px={:.1} projection_in_flight={} thumbnail_in_flight={} pending_projection={} pending_reconcile={}",
                 app.viewport_drag.update_count,
                 app.viewport_drag.coalesced_updates,
+                app.viewport_drag.max_step_delta_px,
                 media_virtual_overscan_px(true),
                 app.background.projection_in_flight,
                 app.background.thumbnail_in_flight,
@@ -5358,7 +5416,9 @@ fn settle_media_viewport_drag(app: &mut Librapix) {
         return;
     };
     let now = Instant::now();
-    if now.duration_since(last_event_at) < VIEWPORT_SETTLE_DELAY {
+    let idle_for = now.duration_since(last_event_at);
+    let (settle_delay, settle_profile) = viewport_settle_profile(&app.viewport_drag);
+    if idle_for < settle_delay {
         return;
     }
 
@@ -5367,8 +5427,12 @@ fn settle_media_viewport_drag(app: &mut Librapix) {
     startup_log::log_info(
         "interaction.viewport.settle.start",
         &format!(
-            "route={route} viewport_y={:.1} max_y={:.1} viewport_height={:.1}",
-            app.media_scroll_absolute_y, app.media_scroll_max_y, app.media_viewport_height,
+            "route={route} viewport_y={:.1} max_y={:.1} viewport_height={:.1} idle_ms={} settle_delay_ms={} settle_profile={settle_profile}",
+            app.media_scroll_absolute_y,
+            app.media_scroll_max_y,
+            app.media_viewport_height,
+            idle_for.as_millis(),
+            settle_delay.as_millis(),
         ),
     );
     let drag_elapsed = app
@@ -5380,12 +5444,13 @@ fn settle_media_viewport_drag(app: &mut Librapix) {
     startup_log::log_info(
         "interaction.viewport.settle.end",
         &format!(
-            "route={route} updates={} coalesced={} processed={} overscan_px={:.1} viewport_y={:.1} max_y={:.1} viewport_height={:.1} projection_in_flight={} thumbnail_in_flight={} pending_projection={} pending_reconcile={} frozen_width={} measured_width={} width_changes={} suppressed_layout_rebuilds={} elapsed_ms={}",
+            "route={route} updates={} coalesced={} processed={} max_step_delta={:.1} overscan_px={:.1} viewport_y={:.1} max_y={:.1} viewport_height={:.1} projection_in_flight={} thumbnail_in_flight={} pending_projection={} pending_reconcile={} frozen_width={} measured_width={} width_changes={} suppressed_layout_rebuilds={} idle_ms={} settle_delay_ms={} settle_profile={settle_profile} elapsed_ms={}",
             app.viewport_drag.update_count,
             app.viewport_drag.coalesced_updates,
             app.viewport_drag
                 .update_count
                 .saturating_sub(app.viewport_drag.coalesced_updates),
+            app.viewport_drag.max_step_delta_px,
             media_virtual_overscan_px(false),
             app.media_scroll_absolute_y,
             app.media_scroll_max_y,
@@ -5404,11 +5469,14 @@ fn settle_media_viewport_drag(app: &mut Librapix) {
                 .unwrap_or_else(|| "none".to_owned()),
             preview_summary.width_change_count,
             preview_summary.suppressed_rebuilds,
+            idle_for.as_millis(),
+            settle_delay.as_millis(),
             drag_elapsed.as_millis(),
         ),
     );
     *app.drag_layout_preview.borrow_mut() = DragLayoutPreviewState::default();
     app.viewport_drag = ViewportDragState::default();
+    app.last_viewport_drag_settled_at = Some(now);
 }
 
 fn apply_timeline_scrub(
@@ -10820,6 +10888,7 @@ mod tests {
             layout_cache: RefCell::new(MediaLayoutCache::default()),
             drag_layout_preview: RefCell::new(DragLayoutPreviewState::default()),
             viewport_drag: ViewportDragState::default(),
+            last_viewport_drag_settled_at: None,
             new_media_announcement: None,
             filter_dialog_open: false,
             settings_open: false,
@@ -11746,6 +11815,19 @@ mod tests {
     }
 
     #[test]
+    fn large_jump_fast_path_activates_drag_lifecycle_with_two_events() {
+        let mut app = test_app();
+        app.state.active_route = Route::Gallery;
+
+        handle_media_viewport_changed(&mut app, 0.0, 174_502.2, 1_251.0);
+        handle_media_viewport_changed(&mut app, 340.0, 174_502.2, 1_251.0);
+
+        assert!(app.viewport_drag.active);
+        assert_eq!(app.viewport_drag.update_count, 1);
+        assert!(app.viewport_drag.max_step_delta_px >= 340.0);
+    }
+
+    #[test]
     fn viewport_settle_tick_clears_active_drag_after_pause() {
         let mut app = test_app();
         app.state.active_route = Route::Gallery;
@@ -11785,6 +11867,20 @@ mod tests {
         app.viewport_drag.active = true;
         app.viewport_drag.started_at = Some(Instant::now() - Duration::from_millis(450));
         app.viewport_drag.last_event_at = Some(Instant::now() - Duration::from_millis(200));
+
+        settle_media_viewport_drag(&mut app);
+
+        assert!(app.viewport_drag.active);
+    }
+
+    #[test]
+    fn viewport_settle_large_jump_profile_requires_longer_idle_gap() {
+        let mut app = test_app();
+        app.state.active_route = Route::Gallery;
+        app.viewport_drag.active = true;
+        app.viewport_drag.started_at = Some(Instant::now() - Duration::from_millis(1_200));
+        app.viewport_drag.last_event_at = Some(Instant::now() - Duration::from_millis(400));
+        app.viewport_drag.max_step_delta_px = 8_000.0;
 
         settle_media_viewport_drag(&mut app);
 

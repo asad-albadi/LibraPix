@@ -40,6 +40,8 @@ For large libraries, the shell no longer builds every justified row at once:
 - Runtime logs record the large-surface render window as `interaction.surface_render.window`.
 - Gallery and Timeline also cache justified layouts per surface and responsive width, so scrollbar-thumb drags do not rebuild full row math for every intermediate viewport update.
 - The media viewport now has an explicit drag/settle lifecycle; active drag uses tighter overscan and suppresses per-position render-window logs, then the settled viewport restores the normal overscan and full diagnostics.
+- Hard scrollbar-thumb drags also freeze the effective layout width to the last settled justified-layout width for the duration of the drag. This avoids drag-time responsive-width oscillation from invalidating the width-keyed layout cache on every intermediate thumb position while still restoring the exact measured width after settle.
+- Drag diagnostics now record width-freeze and churn summary data through `interaction.surface_layout.drag_width.freeze`, `interaction.surface_layout.drag_width.anomaly`, and the width summary fields on `interaction.viewport.settle.end`.
 
 ## View modes
 

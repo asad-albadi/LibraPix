@@ -5,24 +5,32 @@
 - Symptoms
   - Dragging the media-pane scrollbar thumb far up or down still feels sticky or briefly hung, especially in large Gallery and Timeline surfaces.
   - Projection logs stay fast and `interaction.timeline_render.window` stays bounded, yet the UI still stutters while the viewport is moving.
-  - Windows logs can accumulate thousands of unique `interaction.surface_render.window` / `interaction.timeline_render.window` lines during a single manual drag session.
+  - Gallery logs can show long runs of `interaction.surface_layout.cache_build` during a single drag where `measured_width` keeps changing even though the user is only dragging vertically.
+  - In the real Windows drag log, Gallery width climbed from `438` to `1165` during one thumb drag while `coalesced=0`, forcing repeated justified-layout rebuilds on the UI path.
 - Affected area
   - Media viewport updates and justified-layout rendering in `crates/librapix-app/src/main.rs`.
 - Confirmed cause
-  - The earlier Timeline fix bounded how many rows were rendered, but Gallery and Timeline still rebuilt justified row layouts for the full logical dataset on every intermediate viewport update.
-  - The render path also wrote synchronous per-position diagnostics to the startup log file, and `startup_log` flushes each line immediately on the UI path.
-  - Together, repeated thumb-drag viewport changes kept paying avoidable layout work and log I/O even though no projection, thumbnail scheduling, or detail load was actually needed.
+  - The earlier Timeline fix bounded how many rows were rendered, and the first drag pass cached layouts per width, but Gallery thumb dragging still let the responsive measured width oscillate during active drag.
+  - Because the measured width changed almost every drag step, the width-keyed justified-layout cache kept missing and rebuilding for the full logical Gallery surface even though the interaction was only a temporary preview position.
+  - Duplicate viewport coalescing stayed low because the drag updates were not duplicates: `viewport_y` and `max_y` kept changing as the transient width/layout changed.
+  - The render-path logging was no longer the dominant cost, but width-driven cache churn kept enough UI-thread work alive to make hard thumb drags feel hung.
 - Resolution
-  - Reuse justified layouts per surface and responsive width instead of rebuilding them for every viewport movement.
+  - Keep the explicit viewport drag/settle lifecycle and bounded drag-time overscan.
+  - Freeze the effective justified-layout width to the last settled layout for the duration of an active thumb drag (`interaction.surface_layout.drag_width.freeze`), so Gallery and Timeline preview the drag using a stable layout width.
+  - Record suppressed drag-time width churn with:
+    - `interaction.surface_layout.drag_width.freeze`
+    - `interaction.surface_layout.drag_width.anomaly`
+    - `interaction.viewport.settle.end` width summary fields
+  - Restore the exact measured width and final layout after drag settle so final correctness remains intact.
   - Track an explicit viewport active-drag vs settled lifecycle with:
     - `interaction.viewport.drag.start`
     - `interaction.viewport.drag.update`
     - `interaction.viewport.settle.start`
     - `interaction.viewport.settle.end`
-  - Use tighter overscan while drag is active and restore the full overscan after settle so final correctness remains intact.
-  - Suppress per-position render-window logs during active drag; keep the settled render diagnostics and cache-build logs instead.
+  - Suppress per-position render-window logs during active drag; keep the settled render diagnostics and drag-width summary instead.
 - Prevention guidance
-  - Bounding the visible window is not enough if row math is still recomputed for the full dataset on every scroll message.
+  - Bounding the visible window is not enough if drag-time geometry jitter can still invalidate the full justified-layout cache.
+  - Treat hard scrollbar-thumb drags as preview mode: keep layout inputs stable during the drag, then reconcile to the true settled width afterward.
   - Avoid synchronous high-volume logging on the hot viewport path, especially on Windows where each line is flushed immediately.
 
 ## Timeline still hangs even though projection finishes quickly

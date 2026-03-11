@@ -5,6 +5,7 @@ All notable changes to this project are documented in this file.
 ## [Unreleased]
 
 ### Docs
+- Updated troubleshooting and media-UI docs to describe the remaining scrollbar-thumb drag regression, the drag-time width-freeze preview layout, and the new width-churn diagnostics.
 - Updated troubleshooting and media-UI docs to describe the scrollbar-drag lag path, the new viewport drag/settle lifecycle, justified-layout caching, and drag-time render-log suppression.
 - Updated troubleshooting and media-UI docs to describe the Timeline large-group virtualization regression, the corrected per-row windowing behavior inside date sections, and the new Timeline render diagnostics.
 - Updated media-UI, message-flow, and troubleshooting docs to describe startup gallery continuation after snapshot restore, bounded current-surface rendering, and the new large-surface render diagnostics.

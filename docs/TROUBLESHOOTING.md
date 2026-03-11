@@ -18,11 +18,13 @@
   - Keep the explicit viewport drag/settle lifecycle and bounded drag-time overscan.
   - Freeze justified-layout width during active drag so transient width jitter still cannot rebuild the whole layout.
   - Keep burst-based activation with large-jump fast-path activation so drag mode starts early for hard thumb motion.
-  - Keep adaptive settle policy (`320ms` default, `620ms` for large jumps).
+  - Keep adaptive settle policy, but shorten idle guards so drag preview does not linger too long before final settle (`260ms` default, `360ms` for large jumps).
   - Switch active drag to a latest-only preview stream:
     - incoming drag updates replace stale pending targets
-    - drag-time apply is cadence-capped (`24ms`) to bound UI work
+    - drag-time apply is cadence-capped to bound UI work
     - settle forces one final exact apply of the latest pending viewport target
+  - Freeze the effective drag preview scroll range (`max_y`) during active drag, then restore accurate `max_y` at settle, so thumb movement is not fighting high-frequency max-range churn from intermediate layout updates.
+  - Skip max-only active-drag updates in preview mode (recorded as `max_only_skipped`) so drag-time processing remains focused on real viewport position movement.
   - Freeze the effective justified-layout width to the last settled layout for the duration of an active thumb drag (`interaction.surface_layout.drag_width.freeze`), so Gallery and Timeline preview the drag using a stable layout width.
   - Record suppressed drag-time width churn with:
     - `interaction.surface_layout.drag_width.freeze`
@@ -31,7 +33,7 @@
   - Record drag-lifecycle diagnostics needed to catch thrash:
     - `activation_reason` on `interaction.viewport.drag.start`
     - `applied`, `deferred`, `replaced`, and `applied_now` on `interaction.viewport.drag.update`
-    - `processed`, `deferred`, `replaced`, and `settle_applied_latest` on `interaction.viewport.settle.end`
+    - `processed`, `deferred`, `replaced`, `max_only_skipped`, and `settle_applied_latest` on `interaction.viewport.settle.end`
     - `max_step_delta`, `idle_ms`, `settle_delay_ms`, and `settle_profile` on drag update/settle logs
     - `interaction.viewport.drag.lifecycle.anomaly` for rapid reactivation after settle
   - Restore the exact measured width and final layout after drag settle so final correctness remains intact.

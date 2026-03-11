@@ -698,9 +698,11 @@ struct ViewportDragState {
     applied_updates: usize,
     coalesced_updates: usize,
     latest_replacements: usize,
+    max_y_preview_skips: usize,
     max_step_delta_px: f32,
     last_applied_at: Option<Instant>,
     pending_viewport: Option<ViewportSnapshot>,
+    frozen_max_y: Option<f32>,
     candidate_started_at: Option<Instant>,
     candidate_last_event_at: Option<Instant>,
     candidate_event_count: usize,
@@ -911,11 +913,11 @@ const MEDIA_VIRTUAL_OVERSCAN_PX: f32 = 1200.0;
 const MEDIA_VIRTUAL_OVERSCAN_DRAG_PX: f32 = 400.0;
 const TIMELINE_GROUP_HEADER_HEIGHT: f32 = 40.0;
 const AUTOMATION_TICK_INTERVAL: Duration = Duration::from_millis(100);
-const VIEWPORT_SETTLE_TICK_INTERVAL: Duration = Duration::from_millis(40);
-const VIEWPORT_SETTLE_DELAY: Duration = Duration::from_millis(320);
-const VIEWPORT_SETTLE_DELAY_LARGE_JUMP: Duration = Duration::from_millis(620);
+const VIEWPORT_SETTLE_TICK_INTERVAL: Duration = Duration::from_millis(16);
+const VIEWPORT_SETTLE_DELAY: Duration = Duration::from_millis(260);
+const VIEWPORT_SETTLE_DELAY_LARGE_JUMP: Duration = Duration::from_millis(360);
 const VIEWPORT_ACTIVE_LOG_INTERVAL: Duration = Duration::from_millis(200);
-const VIEWPORT_DRAG_APPLY_INTERVAL: Duration = Duration::from_millis(24);
+const VIEWPORT_DRAG_APPLY_INTERVAL: Duration = Duration::from_millis(16);
 const VIEWPORT_DRAG_THRASH_WINDOW: Duration = Duration::from_millis(700);
 const VIEWPORT_DRAG_ACTIVATION_WINDOW: Duration = Duration::from_millis(220);
 const VIEWPORT_DRAG_ACTIVATION_EVENTS: usize = 3;
@@ -5308,14 +5310,29 @@ fn viewport_settle_profile(drag: &ViewportDragState) -> (Duration, &'static str)
     }
 }
 
-fn apply_viewport_snapshot(app: &mut Librapix, snapshot: ViewportSnapshot) {
-    app.media_scroll_absolute_y = snapshot.absolute_y;
-    app.media_scroll_max_y = snapshot.max_y;
+fn apply_viewport_snapshot(app: &mut Librapix, snapshot: ViewportSnapshot, preview_mode: bool) {
+    let (absolute_y, max_y) = if preview_mode && app.viewport_drag.active {
+        let frozen_max_y = app
+            .viewport_drag
+            .frozen_max_y
+            .unwrap_or(snapshot.max_y.max(0.0));
+        let clamped_y = snapshot.absolute_y.clamp(0.0, frozen_max_y);
+        (clamped_y, frozen_max_y)
+    } else {
+        (snapshot.absolute_y, snapshot.max_y)
+    };
+    app.media_scroll_absolute_y = absolute_y;
+    app.media_scroll_max_y = max_y;
     app.media_viewport_height = snapshot.viewport_height;
-    sync_timeline_scrub_from_viewport(app, snapshot.absolute_y, snapshot.max_y);
+    sync_timeline_scrub_from_viewport(app, absolute_y, max_y);
 }
 
-fn maybe_apply_active_drag_snapshot(app: &mut Librapix, now: Instant, force: bool) -> bool {
+fn maybe_apply_active_drag_snapshot(
+    app: &mut Librapix,
+    now: Instant,
+    force: bool,
+    preview_mode: bool,
+) -> bool {
     let Some(snapshot) = app.viewport_drag.pending_viewport else {
         return false;
     };
@@ -5327,7 +5344,7 @@ fn maybe_apply_active_drag_snapshot(app: &mut Librapix, now: Instant, force: boo
     {
         return false;
     }
-    apply_viewport_snapshot(app, snapshot);
+    apply_viewport_snapshot(app, snapshot, preview_mode);
     app.viewport_drag.applied_updates = app.viewport_drag.applied_updates.saturating_add(1);
     app.viewport_drag.last_applied_at = Some(now);
     app.viewport_drag.pending_viewport = None;
@@ -5348,6 +5365,19 @@ fn handle_media_viewport_changed(
     let absolute_y = snapshot.absolute_y;
     let max_y = snapshot.max_y;
     let viewport_height = snapshot.viewport_height;
+    let now = Instant::now();
+
+    if app.viewport_drag.active
+        && (app.media_scroll_absolute_y - absolute_y).abs() < 0.5
+        && (app.media_viewport_height - viewport_height).abs() < 0.5
+    {
+        app.viewport_drag.max_y_preview_skips =
+            app.viewport_drag.max_y_preview_skips.saturating_add(1);
+        app.viewport_drag.coalesced_updates = app.viewport_drag.coalesced_updates.saturating_add(1);
+        app.viewport_drag.pending_viewport = Some(snapshot);
+        app.viewport_drag.last_event_at = Some(now);
+        return;
+    }
 
     let duplicate_pending = app.viewport_drag.active
         && app
@@ -5359,7 +5389,6 @@ fn handle_media_viewport_changed(
         return;
     }
 
-    let now = Instant::now();
     let route = viewport_route_label(app.state.active_route);
     let step_reference_y = app
         .viewport_drag
@@ -5375,7 +5404,6 @@ fn handle_media_viewport_changed(
                 app.viewport_drag.latest_replacements.saturating_add(1);
         }
         app.viewport_drag.pending_viewport = Some(snapshot);
-        let applied_now = maybe_apply_active_drag_snapshot(app, now, false);
         let deferred_updates = app
             .viewport_drag
             .update_count
@@ -5394,7 +5422,7 @@ fn handle_media_viewport_changed(
                     app.viewport_drag.applied_updates,
                     deferred_updates,
                     app.viewport_drag.latest_replacements,
-                    applied_now,
+                    false,
                     app.viewport_drag.max_step_delta_px,
                     media_virtual_overscan_px(true),
                     app.background.projection_in_flight,
@@ -5434,10 +5462,12 @@ fn handle_media_viewport_changed(
         app.viewport_drag.applied_updates = 0;
         app.viewport_drag.coalesced_updates = 0;
         app.viewport_drag.latest_replacements = 0;
+        app.viewport_drag.max_y_preview_skips = 0;
         app.viewport_drag.max_step_delta_px = (absolute_y - app.viewport_drag.candidate_origin_y)
             .abs()
             .max(step_delta);
         app.viewport_drag.pending_viewport = Some(snapshot);
+        app.viewport_drag.frozen_max_y = Some(max_y);
         app.viewport_drag.last_applied_at = None;
         app.viewport_drag.last_logged_at = None;
         app.viewport_drag.candidate_started_at = None;
@@ -5456,7 +5486,7 @@ fn handle_media_viewport_changed(
             ),
         );
         app.viewport_drag.update_count = app.viewport_drag.update_count.saturating_add(1);
-        let _ = maybe_apply_active_drag_snapshot(app, now, true);
+        let _ = maybe_apply_active_drag_snapshot(app, now, true, true);
         let deferred_updates = app
             .viewport_drag
             .update_count
@@ -5483,7 +5513,7 @@ fn handle_media_viewport_changed(
         return;
     }
 
-    apply_viewport_snapshot(app, snapshot);
+    apply_viewport_snapshot(app, snapshot, false);
 }
 
 fn settle_media_viewport_drag(app: &mut Librapix) {
@@ -5491,11 +5521,13 @@ fn settle_media_viewport_drag(app: &mut Librapix) {
         return;
     }
 
+    let now = Instant::now();
+    let _ = maybe_apply_active_drag_snapshot(app, now, false, true);
+
     let Some(last_event_at) = app.viewport_drag.last_event_at else {
         app.viewport_drag = ViewportDragState::default();
         return;
     };
-    let now = Instant::now();
     let idle_for = now.duration_since(last_event_at);
     let (settle_delay, settle_profile) = viewport_settle_profile(&app.viewport_drag);
     if idle_for < settle_delay {
@@ -5515,7 +5547,7 @@ fn settle_media_viewport_drag(app: &mut Librapix) {
             settle_delay.as_millis(),
         ),
     );
-    let settle_applied_latest = maybe_apply_active_drag_snapshot(app, now, true);
+    let settle_applied_latest = maybe_apply_active_drag_snapshot(app, now, true, false);
     let drag_elapsed = app
         .viewport_drag
         .started_at
@@ -5525,7 +5557,7 @@ fn settle_media_viewport_drag(app: &mut Librapix) {
     startup_log::log_info(
         "interaction.viewport.settle.end",
         &format!(
-            "route={route} updates={} coalesced={} processed={} deferred={} replaced={} settle_applied_latest={} max_step_delta={:.1} overscan_px={:.1} viewport_y={:.1} max_y={:.1} viewport_height={:.1} projection_in_flight={} thumbnail_in_flight={} pending_projection={} pending_reconcile={} frozen_width={} measured_width={} width_changes={} suppressed_layout_rebuilds={} idle_ms={} settle_delay_ms={} settle_profile={settle_profile} elapsed_ms={}",
+            "route={route} updates={} coalesced={} processed={} deferred={} replaced={} max_only_skipped={} settle_applied_latest={} max_step_delta={:.1} overscan_px={:.1} viewport_y={:.1} max_y={:.1} viewport_height={:.1} projection_in_flight={} thumbnail_in_flight={} pending_projection={} pending_reconcile={} frozen_width={} measured_width={} width_changes={} suppressed_layout_rebuilds={} idle_ms={} settle_delay_ms={} settle_profile={settle_profile} elapsed_ms={}",
             app.viewport_drag.update_count,
             app.viewport_drag.coalesced_updates,
             app.viewport_drag.applied_updates,
@@ -5533,6 +5565,7 @@ fn settle_media_viewport_drag(app: &mut Librapix) {
                 .update_count
                 .saturating_sub(app.viewport_drag.applied_updates),
             app.viewport_drag.latest_replacements,
+            app.viewport_drag.max_y_preview_skips,
             settle_applied_latest,
             app.viewport_drag.max_step_delta_px,
             media_virtual_overscan_px(false),
@@ -11897,6 +11930,8 @@ mod tests {
         assert!(app.viewport_drag.active);
         assert_eq!(app.viewport_drag.update_count, 1);
         assert_eq!(app.viewport_drag.applied_updates, 1);
+        handle_media_viewport_changed(&mut app, 540.0, 174_502.2, 1_251.0);
+        assert_eq!(app.viewport_drag.applied_updates, 1);
     }
 
     #[test]
@@ -11966,7 +12001,7 @@ mod tests {
         app.state.active_route = Route::Gallery;
         app.viewport_drag.active = true;
         app.viewport_drag.started_at = Some(Instant::now() - Duration::from_millis(1_200));
-        app.viewport_drag.last_event_at = Some(Instant::now() - Duration::from_millis(400));
+        app.viewport_drag.last_event_at = Some(Instant::now() - Duration::from_millis(300));
         app.viewport_drag.max_step_delta_px = 8_000.0;
 
         settle_media_viewport_drag(&mut app);
@@ -12014,6 +12049,73 @@ mod tests {
         assert!(!app.viewport_drag.active);
         assert!((app.media_scroll_absolute_y - 8_400.0).abs() < 0.1);
         assert!((app.media_scroll_max_y - 17_200.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn settle_tick_applies_pending_preview_before_idle_settle() {
+        let mut app = test_app();
+        app.state.active_route = Route::Gallery;
+        app.viewport_drag.active = true;
+        app.viewport_drag.started_at = Some(Instant::now() - Duration::from_millis(250));
+        app.viewport_drag.last_event_at = Some(Instant::now() - Duration::from_millis(30));
+        app.viewport_drag.pending_viewport = Some(ViewportSnapshot {
+            absolute_y: 2_400.0,
+            max_y: 9_100.0,
+            viewport_height: 650.0,
+        });
+
+        settle_media_viewport_drag(&mut app);
+
+        assert!(app.viewport_drag.active);
+        assert_eq!(app.viewport_drag.applied_updates, 1);
+        assert!((app.media_scroll_absolute_y - 2_400.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn active_drag_preview_freezes_max_y_until_final_settle() {
+        let mut app = test_app();
+        app.state.active_route = Route::Gallery;
+        app.viewport_drag.active = true;
+        app.viewport_drag.frozen_max_y = Some(5_000.0);
+        app.viewport_drag.pending_viewport = Some(ViewportSnapshot {
+            absolute_y: 6_200.0,
+            max_y: 8_400.0,
+            viewport_height: 650.0,
+        });
+
+        let now = Instant::now();
+        let preview_applied = maybe_apply_active_drag_snapshot(&mut app, now, true, true);
+        assert!(preview_applied);
+        assert!((app.media_scroll_absolute_y - 5_000.0).abs() < 0.1);
+        assert!((app.media_scroll_max_y - 5_000.0).abs() < 0.1);
+
+        app.viewport_drag.pending_viewport = Some(ViewportSnapshot {
+            absolute_y: 6_200.0,
+            max_y: 8_400.0,
+            viewport_height: 650.0,
+        });
+        let settle_applied = maybe_apply_active_drag_snapshot(&mut app, now, true, false);
+        assert!(settle_applied);
+        assert!((app.media_scroll_absolute_y - 6_200.0).abs() < 0.1);
+        assert!((app.media_scroll_max_y - 8_400.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn active_drag_ignores_max_only_updates_until_settle() {
+        let mut app = test_app();
+        app.state.active_route = Route::Gallery;
+        app.viewport_drag.active = true;
+        app.viewport_drag.started_at = Some(Instant::now());
+        app.media_scroll_absolute_y = 2_400.0;
+        app.media_scroll_max_y = 9_100.0;
+        app.media_viewport_height = 650.0;
+
+        handle_media_viewport_changed(&mut app, 2_400.0, 9_300.0, 650.0);
+
+        assert_eq!(app.viewport_drag.update_count, 0);
+        assert_eq!(app.viewport_drag.max_y_preview_skips, 1);
+        assert_eq!(app.viewport_drag.coalesced_updates, 1);
+        assert!(app.viewport_drag.pending_viewport.is_some());
     }
 
     #[test]

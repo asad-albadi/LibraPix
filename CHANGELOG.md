@@ -56,7 +56,8 @@ All notable changes to this project are documented in this file.
 - Removed `packaging/windows/` scripts and packaging README from the repository.
 
 ### Changed
-- Active scrollbar-thumb drag now uses latest-only pending viewport replacement with cadence-capped apply (`24ms`) and a forced final settle apply, so one physical drag no longer requires processing every intermediate target.
+- Active thumb-drag preview now freezes the effective scroll range (`max_y`) and skips max-only viewport churn while dragging; settle still applies one exact final viewport snapshot, and logs now include `max_only_skipped` diagnostics.
+- Active scrollbar-thumb drag now uses latest-only pending viewport replacement with cadence-capped preview apply and a forced final settle apply, so one physical drag no longer requires processing every intermediate target.
 - Thumb-drag lifecycle handling now adapts to hard-jump drags: activation can fast-path on a real large jump, settle uses an extended idle guard for large-step interactions, and logs include activation reason, max-step delta, settle profile, and rapid-reactivation anomaly markers.
 - Gallery and Timeline thumb-drag scrolling now use a cheaper active-drag path: justified row layouts are reused per surface/width, viewport settle is tracked explicitly, drag-time overscan is tighter, and per-position render-window logs are deferred until the viewport settles.
 - Timeline viewport rendering now stays bounded even when a single date group contains hundreds or thousands of justified rows; the render path virtualizes rows inside each intersecting group instead of rendering an entire oversized section at once.

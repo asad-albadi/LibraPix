@@ -39,9 +39,10 @@ For large libraries, the shell no longer builds every justified row at once:
 - Top/bottom spacer blocks preserve the full scroll extent, so correctness/completeness stays intact without forcing the UI thread to instantiate thousands of cards in one frame.
 - Runtime logs record the large-surface render window as `interaction.surface_render.window`.
 - Gallery and Timeline also cache justified layouts per surface and responsive width, so scrollbar-thumb drags do not rebuild full row math for every intermediate viewport update.
-- The media viewport now has an explicit drag/settle lifecycle; active drag uses tighter overscan, cadence-capped viewport apply, and suppresses per-position render-window logs, then the settled viewport restores the normal overscan and full diagnostics.
+- The media viewport now has an explicit drag/settle lifecycle; active drag uses tighter overscan, latest-only preview applies, and suppresses per-position render-window logs, then the settled viewport restores the normal overscan and full diagnostics.
 - Hard scrollbar-thumb drags also freeze the effective layout width to the last settled justified-layout width for the duration of the drag. This avoids drag-time responsive-width oscillation from invalidating the width-keyed layout cache on every intermediate thumb position while still restoring the exact measured width after settle.
-- Drag diagnostics now record width-freeze/churn plus update-stream behavior through `interaction.surface_layout.drag_width.freeze`, `interaction.surface_layout.drag_width.anomaly`, `interaction.viewport.drag.update` (`applied/deferred/replaced`), and `interaction.viewport.settle.end`.
+- Active drag preview also freezes effective scroll-range `max_y` and skips max-only updates until settle, preventing thumb-fight churn while preserving exact correctness after settle.
+- Drag diagnostics now record width-freeze/churn plus update-stream behavior through `interaction.surface_layout.drag_width.freeze`, `interaction.surface_layout.drag_width.anomaly`, `interaction.viewport.drag.update` (`applied/deferred/replaced`), and `interaction.viewport.settle.end` (`max_only_skipped`).
 - Drag activation is intentionally stricter than generic scrolling: the app now waits for a real burst of viewport movement before entering active-drag mode, keeps only the latest pending drag target while active, and settle waits for a longer idle gap so near-edge scrollbar corrections or resize chatter do not fragment one physical thumb interaction into many tiny logical drags.
 
 ## View modes

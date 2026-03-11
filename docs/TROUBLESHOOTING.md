@@ -10,20 +10,24 @@
 - Affected area
   - Media viewport updates and justified-layout rendering in `crates/librapix-app/src/main.rs`.
 - Confirmed cause
-  - The earlier width-freeze fix removed most drag-time layout churn, but the viewport drag lifecycle still activated too eagerly and settled too quickly.
-  - Any short burst of viewport changes could be classified as a drag, even if it was only resize chatter, near-bottom correction, or scrollbar geometry bounce.
-  - With a `140ms` settle gap, one physical thumb interaction near the end of the surface could fragment into many tiny logical `drag.start -> settle.end` cycles, especially when `viewport_y` and `max_y` bounced between almost-identical values near the bottom.
-  - Width churn is now secondary: once the width-freeze fix landed, the strongest remaining lag path was state-machine churn in the drag lifecycle itself.
+  - The width-freeze fix removed most drag-time layout churn, but thumb-drag lifecycle timing still fragmented under real Windows event cadence.
+  - The newest user log showed a long drag that settled after `320ms` idle (`interaction.viewport.settle.end ... elapsed_ms=950`), followed almost immediately by another large gallery jump with drag mode already off. That reintroduced expensive non-drag rendering right in the middle of a physical thumb interaction.
+  - Activation still required three events, so hard thumb jumps could spend their earliest large movements outside drag mode before the cheaper drag preview path engaged.
+  - Width churn is now secondary: the dominant remaining lag path is drag lifecycle fragmentation (activation timing + settle timing), not layout width volatility.
 - Resolution
   - Keep the explicit viewport drag/settle lifecycle and bounded drag-time overscan.
   - Freeze justified-layout width during active drag so transient width jitter still cannot rebuild the whole layout.
-  - Only activate drag mode after a real scroll burst: multiple closely spaced viewport updates with meaningful `viewport_y` movement and stable viewport height.
-  - Increase the settle idle gap so one physical thumb drag is less likely to split into repeated logical drags when event cadence thins near the top or bottom.
+  - Keep burst-based activation, and add a fast-path activation for real large-jump thumb motion (`2` events + larger delta) so drag mode starts earlier during hard drags.
+  - Make settle policy adaptive: default idle guard remains `320ms`, but large-jump drags now require a longer idle gap (`620ms`) before settle fires.
   - Freeze the effective justified-layout width to the last settled layout for the duration of an active thumb drag (`interaction.surface_layout.drag_width.freeze`), so Gallery and Timeline preview the drag using a stable layout width.
   - Record suppressed drag-time width churn with:
     - `interaction.surface_layout.drag_width.freeze`
     - `interaction.surface_layout.drag_width.anomaly`
     - `interaction.viewport.settle.end` width summary fields
+  - Record drag-lifecycle diagnostics needed to catch thrash:
+    - `activation_reason` on `interaction.viewport.drag.start`
+    - `max_step_delta`, `idle_ms`, `settle_delay_ms`, and `settle_profile` on drag update/settle logs
+    - `interaction.viewport.drag.lifecycle.anomaly` for rapid reactivation after settle
   - Restore the exact measured width and final layout after drag settle so final correctness remains intact.
   - Track an explicit viewport active-drag vs settled lifecycle with:
     - `interaction.viewport.drag.start`

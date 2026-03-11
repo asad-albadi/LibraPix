@@ -2864,6 +2864,31 @@ struct JustifiedRowLayout {
     height: f32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct VisibleRowWindow {
+    start_row: usize,
+    end_row: usize,
+    visible_rows: usize,
+    total_rows: usize,
+    top_spacer: f32,
+    bottom_spacer: f32,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TimelineRenderWindowMetrics {
+    total_items: usize,
+    total_groups: usize,
+    total_rows: usize,
+    visible_groups: usize,
+    visible_rows: usize,
+    first_visible_row: Option<usize>,
+    last_visible_row: Option<usize>,
+    top_spacer: f32,
+    bottom_spacer: f32,
+    viewport_absolute_y: f32,
+    viewport_height: f32,
+}
+
 fn build_justified_row_layouts(
     items: &[&BrowseItem],
     available_width: f32,
@@ -2899,6 +2924,58 @@ fn build_justified_row_layouts(
     layouts
 }
 
+fn compute_visible_row_window(
+    layouts: &[JustifiedRowLayout],
+    rows_top: f32,
+    viewport_top: f32,
+    viewport_bottom: f32,
+    gap: f32,
+) -> VisibleRowWindow {
+    let mut cursor_y = rows_top;
+    let mut first_visible = None;
+    let mut last_visible_exclusive = 0usize;
+    let mut top_spacer = 0.0f32;
+    let mut trailing_spacer = 0.0f32;
+
+    for (index, layout) in layouts.iter().enumerate() {
+        let row_top = cursor_y;
+        let row_bottom = row_top + layout.height;
+        let gap_after = if index + 1 < layouts.len() { gap } else { 0.0 };
+        let segment_height = layout.height + gap_after;
+        let intersects_window = row_bottom >= viewport_top && row_top <= viewport_bottom;
+
+        if intersects_window {
+            if first_visible.is_none() {
+                first_visible = Some(index);
+            }
+            last_visible_exclusive = index + 1;
+        } else if first_visible.is_none() {
+            top_spacer += segment_height;
+        } else {
+            trailing_spacer += segment_height;
+        }
+
+        cursor_y += segment_height;
+    }
+
+    let start_row = first_visible.unwrap_or(0);
+    let visible_rows = last_visible_exclusive.saturating_sub(start_row);
+    let bottom_spacer = if visible_rows == 0 {
+        0.0
+    } else {
+        trailing_spacer
+    };
+
+    VisibleRowWindow {
+        start_row,
+        end_row: last_visible_exclusive,
+        visible_rows,
+        total_rows: layouts.len(),
+        top_spacer,
+        bottom_spacer,
+    }
+}
+
 fn log_large_surface_render_once(
     surface: &str,
     total_items: usize,
@@ -2927,6 +3004,82 @@ fn log_large_surface_render_once(
             "surface={surface} total_items={total_items} total_rows={total_rows} visible_rows={visible_rows} viewport_y={viewport_absolute_y:.1} viewport_height={viewport_height:.1}"
         ),
     );
+}
+
+fn log_timeline_window_once(metrics: TimelineRenderWindowMetrics) {
+    let signature = format!(
+        "timeline:{total_items}:{total_groups}:{total_rows}:{visible_groups}:{visible_rows}:{}:{}:{:.0}:{:.0}:{:.0}:{:.0}",
+        metrics
+            .first_visible_row
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "none".to_owned()),
+        metrics
+            .last_visible_row
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "none".to_owned()),
+        metrics.top_spacer,
+        metrics.bottom_spacer,
+        metrics.viewport_absolute_y,
+        metrics.viewport_height,
+        total_items = metrics.total_items,
+        total_groups = metrics.total_groups,
+        total_rows = metrics.total_rows,
+        visible_groups = metrics.visible_groups,
+        visible_rows = metrics.visible_rows,
+    );
+    let seen = LARGE_SURFACE_RENDER_LOGS.get_or_init(|| Mutex::new(HashSet::new()));
+    let mut seen = seen.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if !seen.insert(signature) {
+        return;
+    }
+
+    startup_log::log_info(
+        "interaction.timeline_render.window",
+        &format!(
+            "surface=timeline total_items={total_items} total_groups={total_groups} total_rows={total_rows} visible_groups={visible_groups} visible_rows={visible_rows} first_visible_row={} last_visible_row={} overscan_px={MEDIA_VIRTUAL_OVERSCAN_PX:.1} top_spacer={top_spacer:.1} bottom_spacer={bottom_spacer:.1} viewport_y={viewport_absolute_y:.1} viewport_height={viewport_height:.1}",
+            metrics
+                .first_visible_row
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "none".to_owned()),
+            metrics
+                .last_visible_row
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "none".to_owned()),
+            total_items = metrics.total_items,
+            total_groups = metrics.total_groups,
+            total_rows = metrics.total_rows,
+            visible_groups = metrics.visible_groups,
+            visible_rows = metrics.visible_rows,
+            top_spacer = metrics.top_spacer,
+            bottom_spacer = metrics.bottom_spacer,
+            viewport_absolute_y = metrics.viewport_absolute_y,
+            viewport_height = metrics.viewport_height,
+        ),
+    );
+
+    if metrics.visible_rows > 200 {
+        startup_log::log_warn(
+            "interaction.timeline_render.window.anomaly",
+            &format!(
+                "visible_rows={visible_rows} total_rows={total_rows} total_groups={total_groups} first_visible_row={} last_visible_row={} overscan_px={MEDIA_VIRTUAL_OVERSCAN_PX:.1} top_spacer={top_spacer:.1} bottom_spacer={bottom_spacer:.1} viewport_y={viewport_absolute_y:.1} viewport_height={viewport_height:.1}",
+                metrics
+                    .first_visible_row
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "none".to_owned()),
+                metrics
+                    .last_visible_row
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "none".to_owned()),
+                visible_rows = metrics.visible_rows,
+                total_rows = metrics.total_rows,
+                total_groups = metrics.total_groups,
+                top_spacer = metrics.top_spacer,
+                bottom_spacer = metrics.bottom_spacer,
+                viewport_absolute_y = metrics.viewport_absolute_y,
+                viewport_height = metrics.viewport_height,
+            ),
+        );
+    }
 }
 
 fn render_justified_gallery<'a>(
@@ -3109,7 +3262,15 @@ fn render_timeline_view<'a>(
         let mut cursor_y = 0.0f32;
         let mut i = 0usize;
         let limit = items.len();
+        let mut total_groups = 0usize;
+        let mut total_rows = 0usize;
+        let mut visible_groups = 0usize;
         let mut visible_rows = 0usize;
+        let mut global_row_index = 0usize;
+        let mut first_visible_row = None;
+        let mut last_visible_row = None;
+        let mut top_spacer_height = 0.0f32;
+        let mut bottom_spacer_height = 0.0f32;
 
         while i < limit {
             if !items[i].is_group_header {
@@ -3117,6 +3278,7 @@ fn render_timeline_view<'a>(
                 continue;
             }
 
+            total_groups = total_groups.saturating_add(1);
             let header_item = &items[i];
             i += 1;
             let group_start = i;
@@ -3126,6 +3288,7 @@ fn render_timeline_view<'a>(
 
             let group_media = items[group_start..i].iter().collect::<Vec<_>>();
             let row_layouts = build_justified_row_layouts(&group_media, size.width);
+            total_rows = total_rows.saturating_add(row_layouts.len());
             let rows_height = row_layouts
                 .iter()
                 .enumerate()
@@ -3151,6 +3314,12 @@ fn render_timeline_view<'a>(
 
             if !intersects_window {
                 pending_spacer += section_height + section_gap;
+                if visible_rows == 0 {
+                    top_spacer_height += section_height + section_gap;
+                } else {
+                    bottom_spacer_height += section_height + section_gap;
+                }
+                global_row_index += row_layouts.len();
                 cursor_y += section_height + section_gap;
                 continue;
             }
@@ -3160,6 +3329,7 @@ fn render_timeline_view<'a>(
                 pending_spacer = 0.0;
             }
 
+            visible_groups = visible_groups.saturating_add(1);
             let count_chips: Element<'_, Message> = if let (Some(img), Some(vid)) =
                 (header_item.group_image_count, header_item.group_video_count)
             {
@@ -3199,13 +3369,49 @@ fn render_timeline_view<'a>(
                 .align_y(iced::Alignment::Center),
             )
             .padding([SPACE_SM as u16, 0]);
-            sections = sections.push(group_header);
+            let body_spacing = if row_layouts.is_empty() {
+                0.0
+            } else {
+                SPACE_XS as f32
+            };
+            let rows_top = section_top + TIMELINE_GROUP_HEADER_HEIGHT + body_spacing;
+            let row_window = compute_visible_row_window(
+                &row_layouts,
+                rows_top,
+                window_top,
+                window_bottom,
+                GALLERY_GAP as f32,
+            );
+            let header_bottom = section_top + TIMELINE_GROUP_HEADER_HEIGHT;
+            let header_visible = header_bottom >= window_top && section_top <= window_bottom;
+            let mut section_pending_spacer = 0.0f32;
 
-            if !row_layouts.is_empty() {
-                sections = sections.push(Space::new().height(Length::Fixed(SPACE_XS as f32)));
+            if header_visible {
+                sections = sections.push(group_header);
+            } else {
+                section_pending_spacer += TIMELINE_GROUP_HEADER_HEIGHT;
             }
 
-            for (index, layout) in row_layouts.iter().enumerate() {
+            section_pending_spacer += body_spacing + row_window.top_spacer;
+
+            if row_window.visible_rows > 0 {
+                if first_visible_row.is_none() {
+                    first_visible_row = Some(global_row_index + row_window.start_row);
+                }
+                last_visible_row = Some(global_row_index + row_window.end_row - 1);
+            }
+
+            if section_pending_spacer > 0.0 {
+                sections =
+                    sections.push(Space::new().height(Length::Fixed(section_pending_spacer)));
+            }
+
+            for (index, layout) in row_layouts
+                .iter()
+                .enumerate()
+                .skip(row_window.start_row)
+                .take(row_window.visible_rows)
+            {
                 let mut row_widget = row![].spacing(GALLERY_GAP);
                 for item in &group_media[layout.start..layout.end] {
                     let portion = (item.aspect_ratio * 1000.0).max(1.0) as u16;
@@ -3216,15 +3422,22 @@ fn render_timeline_view<'a>(
                 }
                 visible_rows = visible_rows.saturating_add(1);
                 sections = sections.push(row_widget);
-                if index + 1 < row_layouts.len() {
+                if index + 1 < row_window.end_row {
                     sections =
                         sections.push(Space::new().height(Length::Fixed(GALLERY_GAP as f32)));
                 }
             }
 
-            if section_gap > 0.0 {
-                sections = sections.push(Space::new().height(Length::Fixed(section_gap)));
+            let trailing_spacer = row_window.bottom_spacer + section_gap;
+            if trailing_spacer > 0.0 {
+                sections = sections.push(Space::new().height(Length::Fixed(trailing_spacer)));
             }
+            if visible_rows == 0 {
+                top_spacer_height += section_pending_spacer + trailing_spacer;
+            } else {
+                bottom_spacer_height += trailing_spacer;
+            }
+            global_row_index += row_layouts.len();
             cursor_y += section_height + section_gap;
         }
 
@@ -3235,11 +3448,24 @@ fn render_timeline_view<'a>(
         log_large_surface_render_once(
             "timeline",
             items.iter().filter(|item| !item.is_group_header).count(),
-            visible_rows,
+            total_rows,
             visible_rows,
             viewport_absolute_y,
             viewport_height,
         );
+        log_timeline_window_once(TimelineRenderWindowMetrics {
+            total_items: items.iter().filter(|item| !item.is_group_header).count(),
+            total_groups,
+            total_rows,
+            visible_groups,
+            visible_rows,
+            first_visible_row,
+            last_visible_row,
+            top_spacer: top_spacer_height,
+            bottom_spacer: bottom_spacer_height,
+            viewport_absolute_y,
+            viewport_height,
+        });
 
         sections.into()
     })
@@ -10711,6 +10937,84 @@ mod tests {
         assert_eq!(
             projection_refresh_policy(&app, BackgroundWorkReason::UserOrSystem, "system"),
             ProjectionRefreshPolicy::Full
+        );
+    }
+
+    #[test]
+    fn timeline_visible_row_window_stays_bounded_for_large_sections() {
+        let layouts = vec![
+            JustifiedRowLayout {
+                start: 0,
+                end: 1,
+                height: 100.0,
+            };
+            1_215
+        ];
+        let rows_top = 400_040.0;
+
+        let window = compute_visible_row_window(
+            &layouts,
+            rows_top,
+            450_911.2,
+            452_029.2,
+            GALLERY_GAP as f32,
+        );
+
+        assert!(window.visible_rows > 0);
+        assert!(window.visible_rows < 40);
+        assert!(window.start_row > 0);
+        assert!(window.end_row < layouts.len());
+    }
+
+    #[test]
+    fn timeline_visible_row_window_preserves_total_height_with_spacers() {
+        let layouts = vec![
+            JustifiedRowLayout {
+                start: 0,
+                end: 2,
+                height: 140.0,
+            },
+            JustifiedRowLayout {
+                start: 2,
+                end: 4,
+                height: 180.0,
+            },
+            JustifiedRowLayout {
+                start: 4,
+                end: 6,
+                height: 160.0,
+            },
+        ];
+
+        let window = compute_visible_row_window(&layouts, 48.0, 190.0, 430.0, GALLERY_GAP as f32);
+        let total_height = layouts
+            .iter()
+            .enumerate()
+            .map(|(index, layout)| {
+                layout.height
+                    + if index + 1 < layouts.len() {
+                        GALLERY_GAP as f32
+                    } else {
+                        0.0
+                    }
+            })
+            .sum::<f32>();
+        let visible_height = layouts[window.start_row..window.end_row]
+            .iter()
+            .enumerate()
+            .map(|(index, layout)| {
+                layout.height
+                    + if window.start_row + index + 1 < window.end_row {
+                        GALLERY_GAP as f32
+                    } else {
+                        0.0
+                    }
+            })
+            .sum::<f32>();
+
+        assert_eq!(window.visible_rows, 2);
+        assert!(
+            (window.top_spacer + visible_height + window.bottom_spacer - total_height).abs() < 0.01
         );
     }
 

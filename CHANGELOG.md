@@ -5,6 +5,7 @@ All notable changes to this project are documented in this file.
 ## [Unreleased]
 
 ### Docs
+- Updated troubleshooting and media-UI docs with the confirmed remaining thumb-drag root cause (stale intermediate drag targets still being processed) and the final latest-only drag-stream diagnostics.
 - Updated `docs/TROUBLESHOOTING.md` with the confirmed remaining thumb-drag lifecycle cause from the latest Windows log (`premature settle + late hard-drag activation`) and the new adaptive settle/activation diagnostics.
 - Updated troubleshooting and media-UI docs to record the final thumb-drag state-machine fix: drag activation now requires a real scroll burst, settle waits for a longer idle gap, and resize/near-edge correction chatter no longer restarts the drag lifecycle.
 - Updated troubleshooting and media-UI docs to describe the remaining scrollbar-thumb drag regression, the drag-time width-freeze preview layout, and the new width-churn diagnostics.
@@ -55,6 +56,7 @@ All notable changes to this project are documented in this file.
 - Removed `packaging/windows/` scripts and packaging README from the repository.
 
 ### Changed
+- Active scrollbar-thumb drag now uses latest-only pending viewport replacement with cadence-capped apply (`24ms`) and a forced final settle apply, so one physical drag no longer requires processing every intermediate target.
 - Thumb-drag lifecycle handling now adapts to hard-jump drags: activation can fast-path on a real large jump, settle uses an extended idle guard for large-step interactions, and logs include activation reason, max-step delta, settle profile, and rapid-reactivation anomaly markers.
 - Gallery and Timeline thumb-drag scrolling now use a cheaper active-drag path: justified row layouts are reused per surface/width, viewport settle is tracked explicitly, drag-time overscan is tighter, and per-position render-window logs are deferred until the viewport settles.
 - Timeline viewport rendering now stays bounded even when a single date group contains hundreds or thousands of justified rows; the render path virtualizes rows inside each intersecting group instead of rendering an entire oversized section at once.

@@ -52,7 +52,11 @@ For large libraries, the shell no longer builds every justified row at once:
 - Each section has a group header (date label plus image/video count chips) followed by a justified mini-grid.
 - Uses full projected item set (no hidden UI cap).
 - Timeline mode includes a right-side fast scrubber driven by projection anchors.
-- Timeline rendering is also viewport-bounded so opening Timeline does not require the UI thread to compose every bucket/card before the route becomes usable.
+- Timeline rendering is viewport-bounded at two levels:
+  - only intersecting date sections are considered
+  - inside each intersecting section, only the visible justified rows plus overscan are composed
+- Section-local spacer blocks preserve the full scroll extent even when a single date bucket contains hundreds or thousands of rows.
+- Runtime logs record Timeline window diagnostics (`interaction.timeline_render.window`) including total groups/rows, visible groups/rows, first/last visible row, and spacer sizes so Windows render regressions remain measurable.
 
 ### Search
 - Renders search results as a justified grid using the same layout as gallery.

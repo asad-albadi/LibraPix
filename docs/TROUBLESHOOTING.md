@@ -1,5 +1,28 @@
 # Troubleshooting
 
+## Timeline still hangs even though projection finishes quickly
+
+- Symptoms
+  - Opening Timeline or scrolling inside Timeline causes long UI stalls even though projection logs show completion in a few milliseconds.
+  - Windows logs can show `startup.projection.project_timeline` finishing quickly, followed later by `interaction.surface_render.window` spikes where Timeline suddenly reports hundreds or thousands of visible rows for a normal viewport.
+- Affected area
+  - Timeline rendering/windowing in `crates/librapix-app/src/main.rs`.
+- Confirmed cause
+  - Timeline virtualization was only applied at the date-section level.
+  - Once a section intersected the viewport, the view path rendered every justified row inside that section.
+  - On the real large library, some date groups were extremely large, so a single intersecting section could force the UI thread to build 215 or 1,215 rows at once even though the viewport only needed a small slice.
+  - The existing Timeline render log was also misleading because it logged `visible_rows` in both the `total_rows` and `visible_rows` fields.
+- Resolution
+  - Keep full logical Timeline data, but virtualize rows inside each intersecting date section.
+  - Preserve total scroll extent with section-local spacer blocks above and below the visible row slice.
+  - Add explicit Timeline render diagnostics:
+    - `interaction.timeline_render.window`
+    - `interaction.timeline_render.window.anomaly`
+  - Correct `interaction.surface_render.window` so Timeline logs the actual total row count.
+- Prevention guidance
+  - For grouped virtualized surfaces, do not stop at group-level windowing if an individual group can itself become very large.
+  - Keep logs explicit about total rows, visible rows, visible groups, and spacer sizes so oversized in-group rendering is immediately obvious.
+
 ## Timeline, gallery, or filter switches hang after projection completes
 
 - Symptoms

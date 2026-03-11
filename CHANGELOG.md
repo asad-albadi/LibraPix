@@ -5,6 +5,7 @@ All notable changes to this project are documented in this file.
 ## [Unreleased]
 
 ### Docs
+- Updated troubleshooting and media-UI docs to describe the Timeline large-group virtualization regression, the corrected per-row windowing behavior inside date sections, and the new Timeline render diagnostics.
 - Updated media-UI, message-flow, and troubleshooting docs to describe startup gallery continuation after snapshot restore, bounded current-surface rendering, and the new large-surface render diagnostics.
 - Added a dedicated thumbnail apply handoff audit covering the Windows completion-to-apply delay, the exact Iced runtime cause, and the corrected timer/runtime policy.
 - Added a dedicated background thumbnail responsiveness audit covering the Windows post-ready lag path, retry loop, and the corrected video/background policy.
@@ -50,6 +51,8 @@ All notable changes to this project are documented in this file.
 - Removed `packaging/windows/` scripts and packaging README from the repository.
 
 ### Changed
+- Timeline viewport rendering now stays bounded even when a single date group contains hundreds or thousands of justified rows; the render path virtualizes rows inside each intersecting group instead of rendering an entire oversized section at once.
+- Timeline render diagnostics now record total groups/rows, visible groups/rows, first/last visible row indices, spacer sizes, and anomaly warnings so large-window regressions are provable from Windows logs.
 - Unchanged startup launches now keep the fast bounded gallery snapshot for first paint, mark startup ready immediately after reconcile, and then schedule a non-blocking current-surface gallery continuation so the restored 160-card slice is not the permanent gallery state.
 - Large gallery and timeline surfaces now render through a viewport-bounded window with top/bottom spacer preservation instead of building the entire widget tree at once; runtime logs record the effective visible window via `interaction.surface_render.window`.
 - First-open media selection no longer generates the `detail-800` thumbnail synchronously on the UI thread when startup snapshot state has not warmed the detail cache yet; the details pane now reuses an existing detail artifact when present and otherwise falls back to the already-visible browse thumbnail immediately.
@@ -109,6 +112,8 @@ All notable changes to this project are documented in this file.
 - New-file detected dialog now uses the same content-sized modal behavior as other dialogs, removing extra bottom gap below actions.
 
 ### Fixed
+- Timeline no longer hangs or heavily stalls when scrolling through very large date buckets; an intersecting group no longer forces the UI thread to build every row in that group.
+- Timeline large-surface logs now report the real total row count instead of echoing the visible-row count, fixing misleading render-window evidence during Timeline investigations.
 - Post-ready background thumbnail failures no longer aggressively retry the same known-bad items on later projection generations in the same session.
 - Failing Windows video thumbnail work no longer stays opaque; logs now show the real ffmpeg failure path needed to debug startup and post-ready lag.
 

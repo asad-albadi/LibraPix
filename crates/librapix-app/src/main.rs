@@ -642,6 +642,52 @@ struct MediaLayoutCache {
     timeline: Option<Arc<CachedTimelineLayout>>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MediaSurfaceKind {
+    Gallery,
+    Timeline,
+}
+
+impl MediaSurfaceKind {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Gallery => "gallery",
+            Self::Timeline => "timeline",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct DragSurfacePreviewState {
+    frozen_width_key: Option<u32>,
+    last_measured_width_key: Option<u32>,
+    width_change_count: usize,
+    suppressed_rebuilds: usize,
+    anomaly_logged: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct DragLayoutPreviewState {
+    gallery: DragSurfacePreviewState,
+    timeline: DragSurfacePreviewState,
+}
+
+impl DragLayoutPreviewState {
+    fn surface(self, kind: MediaSurfaceKind) -> DragSurfacePreviewState {
+        match kind {
+            MediaSurfaceKind::Gallery => self.gallery,
+            MediaSurfaceKind::Timeline => self.timeline,
+        }
+    }
+
+    fn surface_mut(&mut self, kind: MediaSurfaceKind) -> &mut DragSurfacePreviewState {
+        match kind {
+            MediaSurfaceKind::Gallery => &mut self.gallery,
+            MediaSurfaceKind::Timeline => &mut self.timeline,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 struct ViewportDragState {
     active: bool,
@@ -708,6 +754,7 @@ struct Librapix {
     timeline_scroll_max_y: f32,
     browse_layout_generation: u64,
     layout_cache: RefCell<MediaLayoutCache>,
+    drag_layout_preview: RefCell<DragLayoutPreviewState>,
     viewport_drag: ViewportDragState,
     new_media_announcement: Option<NewMediaAnnouncement>,
     filter_dialog_open: bool,
@@ -915,6 +962,7 @@ impl Default for Librapix {
             timeline_scroll_max_y: 0.0,
             browse_layout_generation: 0,
             layout_cache: RefCell::new(MediaLayoutCache::default()),
+            drag_layout_preview: RefCell::new(DragLayoutPreviewState::default()),
             viewport_drag: ViewportDragState::default(),
             new_media_announcement: None,
             filter_dialog_open: false,
@@ -3381,6 +3429,7 @@ fn compute_browse_stats(items: &[BrowseItem]) -> BrowseStats {
 fn invalidate_browse_layout_cache(app: &mut Librapix, reason: &str) {
     app.browse_layout_generation = app.browse_layout_generation.saturating_add(1);
     *app.layout_cache.borrow_mut() = MediaLayoutCache::default();
+    *app.drag_layout_preview.borrow_mut() = DragLayoutPreviewState::default();
     startup_log::log_info(
         "interaction.surface_layout.invalidate",
         &format!(
@@ -3405,11 +3454,76 @@ fn media_virtual_overscan_px(active_drag: bool) -> f32 {
     }
 }
 
+fn cached_layout_width_key(app: &Librapix, surface: MediaSurfaceKind) -> Option<u32> {
+    let cache = app.layout_cache.borrow();
+    match surface {
+        MediaSurfaceKind::Gallery => cache.gallery.as_ref().map(|layout| layout.width_key),
+        MediaSurfaceKind::Timeline => cache.timeline.as_ref().map(|layout| layout.width_key),
+    }
+}
+
+fn layout_width_for_surface(app: &Librapix, surface: MediaSurfaceKind, measured_width: f32) -> f32 {
+    let measured_width_key = layout_width_key(measured_width);
+    if !app.viewport_drag.active {
+        return measured_width_key as f32;
+    }
+
+    let mut preview = app.drag_layout_preview.borrow_mut();
+    let state = preview.surface_mut(surface);
+    if state.frozen_width_key.is_none() {
+        let cached_width_key = cached_layout_width_key(app, surface);
+        let frozen_width_key = cached_width_key.unwrap_or(measured_width_key);
+        state.frozen_width_key = Some(frozen_width_key);
+        state.last_measured_width_key = Some(measured_width_key);
+        startup_log::log_info(
+            "interaction.surface_layout.drag_width.freeze",
+            &format!(
+                "surface={} frozen_width={} measured_width={} source={}",
+                surface.label(),
+                frozen_width_key,
+                measured_width_key,
+                if cached_width_key.is_some() {
+                    "last_settled_layout"
+                } else {
+                    "current_measurement"
+                },
+            ),
+        );
+        return frozen_width_key as f32;
+    }
+
+    let frozen_width_key = state.frozen_width_key.unwrap_or(measured_width_key);
+    if state.last_measured_width_key != Some(measured_width_key) {
+        state.width_change_count = state.width_change_count.saturating_add(1);
+        if measured_width_key != frozen_width_key {
+            state.suppressed_rebuilds = state.suppressed_rebuilds.saturating_add(1);
+            if state.suppressed_rebuilds >= 8 && !state.anomaly_logged {
+                startup_log::log_warn(
+                    "interaction.surface_layout.drag_width.anomaly",
+                    &format!(
+                        "surface={} frozen_width={} measured_width={} width_changes={} suppressed_rebuilds={}",
+                        surface.label(),
+                        frozen_width_key,
+                        measured_width_key,
+                        state.width_change_count,
+                        state.suppressed_rebuilds,
+                    ),
+                );
+                state.anomaly_logged = true;
+            }
+        }
+        state.last_measured_width_key = Some(measured_width_key);
+    }
+
+    frozen_width_key as f32
+}
+
 fn gallery_layout_for_width(
     app: &Librapix,
     items: &[BrowseItem],
-    available_width: f32,
+    measured_width: f32,
 ) -> Arc<CachedGalleryLayout> {
+    let available_width = layout_width_for_surface(app, MediaSurfaceKind::Gallery, measured_width);
     let width_key = layout_width_key(available_width);
     let first_media_id = items.first().map(|item| item.media_id);
     let last_media_id = items.last().map(|item| item.media_id);
@@ -3442,8 +3556,10 @@ fn gallery_layout_for_width(
         "interaction.surface_layout.cache_build",
         started_at.elapsed(),
         &format!(
-            "surface=gallery width={} items={} rows={}",
+            "surface=gallery width={} measured_width={} drag_active={} items={} rows={}",
             width_key,
+            layout_width_key(measured_width),
+            app.viewport_drag.active,
             media.len(),
             layout.rows.len(),
         ),
@@ -3454,8 +3570,9 @@ fn gallery_layout_for_width(
 fn timeline_layout_for_width(
     app: &Librapix,
     items: &[BrowseItem],
-    available_width: f32,
+    measured_width: f32,
 ) -> Arc<CachedTimelineLayout> {
+    let available_width = layout_width_for_surface(app, MediaSurfaceKind::Timeline, measured_width);
     let width_key = layout_width_key(available_width);
     let first_media_id = items.first().map(|item| item.media_id);
     let last_media_id = items.last().map(|item| item.media_id);
@@ -3535,8 +3652,13 @@ fn timeline_layout_for_width(
         "interaction.surface_layout.cache_build",
         started_at.elapsed(),
         &format!(
-            "surface=timeline width={} items={} groups={} rows={}",
-            width_key, layout.total_items, layout.total_groups, layout.total_rows,
+            "surface=timeline width={} measured_width={} drag_active={} items={} groups={} rows={}",
+            width_key,
+            layout_width_key(measured_width),
+            app.viewport_drag.active,
+            layout.total_items,
+            layout.total_groups,
+            layout.total_rows,
         ),
     );
     layout
@@ -5076,6 +5198,13 @@ fn viewport_route_label(route: Route) -> &'static str {
     }
 }
 
+fn route_surface_kind(route: Route) -> MediaSurfaceKind {
+    match route {
+        Route::Gallery => MediaSurfaceKind::Gallery,
+        Route::Timeline => MediaSurfaceKind::Timeline,
+    }
+}
+
 fn handle_media_viewport_changed(
     app: &mut Librapix,
     absolute_y: f32,
@@ -5163,6 +5292,7 @@ fn settle_media_viewport_drag(app: &mut Librapix) {
     }
 
     let route = viewport_route_label(app.state.active_route);
+    let surface_kind = route_surface_kind(app.state.active_route);
     startup_log::log_info(
         "interaction.viewport.settle.start",
         &format!(
@@ -5175,12 +5305,16 @@ fn settle_media_viewport_drag(app: &mut Librapix) {
         .started_at
         .map(|started_at| now.duration_since(started_at))
         .unwrap_or_default();
+    let preview_summary = app.drag_layout_preview.borrow().surface(surface_kind);
     startup_log::log_info(
         "interaction.viewport.settle.end",
         &format!(
-            "route={route} updates={} coalesced={} overscan_px={:.1} viewport_y={:.1} max_y={:.1} viewport_height={:.1} projection_in_flight={} thumbnail_in_flight={} pending_projection={} pending_reconcile={} elapsed_ms={}",
+            "route={route} updates={} coalesced={} processed={} overscan_px={:.1} viewport_y={:.1} max_y={:.1} viewport_height={:.1} projection_in_flight={} thumbnail_in_flight={} pending_projection={} pending_reconcile={} frozen_width={} measured_width={} width_changes={} suppressed_layout_rebuilds={} elapsed_ms={}",
             app.viewport_drag.update_count,
             app.viewport_drag.coalesced_updates,
+            app.viewport_drag
+                .update_count
+                .saturating_sub(app.viewport_drag.coalesced_updates),
             media_virtual_overscan_px(false),
             app.media_scroll_absolute_y,
             app.media_scroll_max_y,
@@ -5189,9 +5323,20 @@ fn settle_media_viewport_drag(app: &mut Librapix) {
             app.background.thumbnail_in_flight,
             app.background.pending_projection,
             app.background.pending_reconcile,
+            preview_summary
+                .frozen_width_key
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "none".to_owned()),
+            preview_summary
+                .last_measured_width_key
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "none".to_owned()),
+            preview_summary.width_change_count,
+            preview_summary.suppressed_rebuilds,
             drag_elapsed.as_millis(),
         ),
     );
+    *app.drag_layout_preview.borrow_mut() = DragLayoutPreviewState::default();
     app.viewport_drag = ViewportDragState::default();
 }
 
@@ -10602,6 +10747,7 @@ mod tests {
             timeline_scroll_max_y: 0.0,
             browse_layout_generation: 0,
             layout_cache: RefCell::new(MediaLayoutCache::default()),
+            drag_layout_preview: RefCell::new(DragLayoutPreviewState::default()),
             viewport_drag: ViewportDragState::default(),
             new_media_announcement: None,
             filter_dialog_open: false,
@@ -11462,6 +11608,47 @@ mod tests {
     }
 
     #[test]
+    fn active_drag_stabilizes_gallery_layout_width_to_last_settled_layout() {
+        let mut app = test_app();
+        app.viewport_drag.active = true;
+        app.layout_cache.borrow_mut().gallery = Some(Arc::new(CachedGalleryLayout {
+            generation: app.browse_layout_generation,
+            width_key: 438,
+            item_count: 10,
+            first_media_id: Some(1),
+            last_media_id: Some(10),
+            rows: Arc::from([]),
+        }));
+
+        let first = layout_width_for_surface(&app, MediaSurfaceKind::Gallery, 793.4);
+        let second = layout_width_for_surface(&app, MediaSurfaceKind::Gallery, 1165.2);
+        let preview = *app.drag_layout_preview.borrow();
+
+        assert_eq!(first, 438.0);
+        assert_eq!(second, 438.0);
+        assert_eq!(preview.gallery.frozen_width_key, Some(438));
+        assert_eq!(preview.gallery.last_measured_width_key, Some(1165));
+        assert!(preview.gallery.width_change_count >= 1);
+        assert!(preview.gallery.suppressed_rebuilds >= 1);
+    }
+
+    #[test]
+    fn active_drag_without_cached_layout_uses_first_measured_width_until_settle() {
+        let mut app = test_app();
+        app.viewport_drag.active = true;
+
+        let first = layout_width_for_surface(&app, MediaSurfaceKind::Timeline, 612.4);
+        let second = layout_width_for_surface(&app, MediaSurfaceKind::Timeline, 944.9);
+
+        assert_eq!(first, 612.0);
+        assert_eq!(second, 612.0);
+        assert_eq!(
+            app.drag_layout_preview.borrow().timeline.frozen_width_key,
+            Some(612)
+        );
+    }
+
+    #[test]
     fn viewport_settle_tick_clears_active_drag_after_pause() {
         let mut app = test_app();
         app.state.active_route = Route::Gallery;
@@ -11472,11 +11659,26 @@ mod tests {
         app.media_scroll_absolute_y = 8_000.0;
         app.media_scroll_max_y = 42_000.0;
         app.media_viewport_height = 700.0;
+        app.drag_layout_preview.borrow_mut().gallery = DragSurfacePreviewState {
+            frozen_width_key: Some(438),
+            last_measured_width_key: Some(1165),
+            width_change_count: 14,
+            suppressed_rebuilds: 13,
+            anomaly_logged: true,
+        };
 
         settle_media_viewport_drag(&mut app);
 
         assert!(!app.viewport_drag.active);
         assert_eq!(app.viewport_drag.update_count, 0);
+        assert_eq!(
+            app.drag_layout_preview.borrow().gallery.frozen_width_key,
+            None
+        );
+        assert_eq!(
+            layout_width_for_surface(&app, MediaSurfaceKind::Gallery, 1165.2),
+            1165.0
+        );
     }
 
     #[test]

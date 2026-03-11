@@ -85,6 +85,7 @@ All notable changes to this project are documented in this file.
 - New-file detected dialog now uses the same content-sized modal behavior as other dialogs, removing extra bottom gap below actions.
 
 ### Fixed
+- Newly discovered media opened from the filesystem-watch announcement dialog now shows an intentional animated loading placeholder while its preview is still being prepared, instead of appearing blank or broken.
 - Timeline no longer hangs or heavily stalls when scrolling through very large date buckets; an intersecting group no longer forces the UI thread to build every row in that group.
 - Timeline large-surface logs now report the real total row count instead of echoing the visible-row count, fixing misleading render-window evidence during Timeline investigations.
 - Post-ready background thumbnail failures no longer aggressively retry the same known-bad items on later projection generations in the same session.

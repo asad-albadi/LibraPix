@@ -126,6 +126,7 @@ enum Message {
     StartupGalleryContinuationKickoff,
     AutomationTick,
     DeferredThumbnailCatchupKickoff,
+    NewMediaPreviewTick,
     OpenMediaById(i64),
     CopyMediaFileById(i64),
     DismissNewMediaAnnouncement,
@@ -171,6 +172,7 @@ enum IntervalMessageKind {
     StartupGalleryContinuationKickoff,
     AutomationTick,
     DeferredThumbnailCatchupKickoff,
+    NewMediaPreviewTick,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -785,6 +787,7 @@ struct Librapix {
     viewport_drag: ViewportDragState,
     last_viewport_drag_settled_at: Option<Instant>,
     new_media_announcement: Option<NewMediaAnnouncement>,
+    new_media_preview_loading_phase: usize,
     filter_dialog_open: bool,
     settings_open: bool,
     about_open: bool,
@@ -921,6 +924,7 @@ const MEDIA_VIRTUAL_OVERSCAN_PX: f32 = 1200.0;
 const MEDIA_VIRTUAL_OVERSCAN_DRAG_PX: f32 = 400.0;
 const TIMELINE_GROUP_HEADER_HEIGHT: f32 = 40.0;
 const AUTOMATION_TICK_INTERVAL: Duration = Duration::from_millis(100);
+const NEW_MEDIA_PREVIEW_TICK_INTERVAL: Duration = Duration::from_millis(180);
 const VIEWPORT_SETTLE_TICK_INTERVAL: Duration = Duration::from_millis(16);
 const VIEWPORT_SETTLE_DELAY: Duration = Duration::from_millis(420);
 const VIEWPORT_SETTLE_DELAY_LARGE_JUMP: Duration = Duration::from_millis(560);
@@ -1006,6 +1010,7 @@ impl Default for Librapix {
             viewport_drag: ViewportDragState::default(),
             last_viewport_drag_settled_at: None,
             new_media_announcement: None,
+            new_media_preview_loading_phase: 0,
             filter_dialog_open: false,
             settings_open: false,
             about_open: false,
@@ -1088,6 +1093,13 @@ fn subscription(app: &Librapix) -> Subscription<Message> {
         AUTOMATION_TICK_INTERVAL,
         IntervalMessageKind::AutomationTick,
     );
+    let new_media_preview_subscription = interval_subscription(
+        app.new_media_announcement
+            .as_ref()
+            .is_some_and(|announcement| announcement.preview_path.is_none()),
+        NEW_MEDIA_PREVIEW_TICK_INTERVAL,
+        IntervalMessageKind::NewMediaPreviewTick,
+    );
     let deferred_thumbnail_subscription = interval_subscription(
         app.background.deferred_thumbnail_due_at.is_some(),
         DEFERRED_THUMBNAIL_TICK_INTERVAL,
@@ -1111,6 +1123,7 @@ fn subscription(app: &Librapix) -> Subscription<Message> {
             snapshot_apply_subscription,
             viewport_settle_subscription,
             automation_subscription,
+            new_media_preview_subscription,
             deferred_thumbnail_subscription,
         ])
     } else {
@@ -1122,6 +1135,7 @@ fn subscription(app: &Librapix) -> Subscription<Message> {
             snapshot_apply_subscription,
             viewport_settle_subscription,
             automation_subscription,
+            new_media_preview_subscription,
             deferred_thumbnail_subscription,
             Subscription::run_with(WatchSubscriptionConfig { roots }, watch_filesystem),
         ])
@@ -1153,6 +1167,7 @@ fn interval_message((message, _instant): (IntervalMessageKind, Instant)) -> Mess
         IntervalMessageKind::DeferredThumbnailCatchupKickoff => {
             Message::DeferredThumbnailCatchupKickoff
         }
+        IntervalMessageKind::NewMediaPreviewTick => Message::NewMediaPreviewTick,
     }
 }
 
@@ -1264,6 +1279,7 @@ fn message_event_label(msg: &Message) -> String {
         Message::StartupGalleryContinuationKickoff => "StartupGalleryContinuationKickoff".into(),
         Message::AutomationTick => "AutomationTick".into(),
         Message::DeferredThumbnailCatchupKickoff => "DeferredThumbnailCatchupKickoff".into(),
+        Message::NewMediaPreviewTick => "NewMediaPreviewTick".into(),
         Message::OpenMediaById(id) => format!("OpenMediaById({id})"),
         Message::CopyMediaFileById(id) => format!("CopyMediaFileById({id})"),
         Message::DismissNewMediaAnnouncement => "DismissNewMediaAnnouncement".into(),
@@ -1409,6 +1425,7 @@ fn close_all_dialogs(app: &mut Librapix) {
     app.library_dialog_open = false;
     app.library_stats_dialog_open = false;
     app.new_media_announcement = None;
+    app.new_media_preview_loading_phase = 0;
 }
 
 fn update(app: &mut Librapix, message: Message) -> Task<Message> {
@@ -1765,6 +1782,18 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
             }
             return Task::none();
         }
+        Message::NewMediaPreviewTick => {
+            if app
+                .new_media_announcement
+                .as_ref()
+                .is_some_and(|announcement| announcement.preview_path.is_none())
+            {
+                app.new_media_preview_loading_phase = (app.new_media_preview_loading_phase + 1) % 6;
+            } else {
+                app.new_media_preview_loading_phase = 0;
+            }
+            return Task::none();
+        }
         Message::FilesystemChanged => {
             return request_reconcile(app, BackgroundWorkReason::FilesystemWatch);
         }
@@ -1905,13 +1934,16 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
         Message::OpenMediaById(media_id) => {
             open_media_by_id(app, media_id, false);
             app.new_media_announcement = None;
+            app.new_media_preview_loading_phase = 0;
         }
         Message::CopyMediaFileById(media_id) => {
             copy_media_file_by_id(app, media_id);
             app.new_media_announcement = None;
+            app.new_media_preview_loading_phase = 0;
         }
         Message::DismissNewMediaAnnouncement => {
             app.new_media_announcement = None;
+            app.new_media_preview_loading_phase = 0;
             refresh_diagnostics(app);
         }
         Message::RefreshDiagnostics => {
@@ -4997,6 +5029,7 @@ fn render_new_media_dialog(app: &Librapix) -> Element<'_, Message> {
     let Some(announcement) = &app.new_media_announcement else {
         return column![].into();
     };
+    const NEW_MEDIA_PREVIEW_HEIGHT: f32 = 220.0;
 
     let more_line: Element<'_, Message> = if announcement.additional_count > 0 {
         text(format!(
@@ -5015,21 +5048,13 @@ fn render_new_media_dialog(app: &Librapix) -> Element<'_, Message> {
         container(
             image(image::Handle::from_path(path))
                 .width(Length::Fill)
-                .height(Length::Fixed(220.0))
+                .height(Length::Fixed(NEW_MEDIA_PREVIEW_HEIGHT))
                 .content_fit(ContentFit::Contain),
         )
         .style(card_style)
         .into()
     } else {
-        container(
-            text(announcement.title.as_str())
-                .size(FONT_CAPTION)
-                .color(TEXT_TERTIARY),
-        )
-        .height(Length::Fixed(180.0))
-        .center_y(Length::Shrink)
-        .style(thumb_placeholder_style)
-        .into()
+        render_new_media_preview_loading_state(app, NEW_MEDIA_PREVIEW_HEIGHT)
     };
 
     let metadata_lines = column![
@@ -5155,6 +5180,93 @@ fn render_new_media_dialog(app: &Librapix) -> Element<'_, Message> {
         .style(modal_dialog_style);
 
     render_modal_overlay(dialog.into())
+}
+
+fn render_new_media_preview_loading_state(app: &Librapix, height: f32) -> Element<'_, Message> {
+    let placeholder = container(
+        column![
+            container(Space::new())
+                .width(Length::Fill)
+                .height(Length::FillPortion(5))
+                .style(preview_loading_block_style),
+            row![
+                container(Space::new())
+                    .width(Length::FillPortion(3))
+                    .height(Length::Fixed(8.0))
+                    .style(preview_loading_block_style),
+                Space::new().width(Length::Fixed(SPACE_SM as f32)),
+                container(Space::new())
+                    .width(Length::FillPortion(2))
+                    .height(Length::Fixed(8.0))
+                    .style(preview_loading_block_style),
+            ]
+            .height(Length::FillPortion(1)),
+        ]
+        .spacing(SPACE_SM)
+        .height(Length::Fill),
+    )
+    .padding(SPACE_MD as u16)
+    .width(Length::Fill)
+    .height(Length::Fixed(height))
+    .style(thumb_placeholder_style);
+
+    let loading_indicator = container(
+        column![
+            row![
+                text(
+                    app.i18n
+                        .text(TextKey::NewFileAnnouncementPreparingPreviewLabel)
+                )
+                .size(FONT_CAPTION)
+                .color(TEXT_SECONDARY),
+                text(new_media_preview_loading_indicator(
+                    app.new_media_preview_loading_phase,
+                ))
+                .size(FONT_CAPTION)
+                .color(ACCENT),
+            ]
+            .spacing(SPACE_XS)
+            .align_y(iced::Alignment::Center),
+            text(new_media_preview_loading_pulse(
+                app.new_media_preview_loading_phase,
+            ))
+            .size(FONT_CAPTION)
+            .color(TEXT_TERTIARY),
+        ]
+        .spacing(SPACE_XS)
+        .align_x(iced::Alignment::Center),
+    )
+    .center_x(Length::Fill)
+    .center_y(Length::Fill)
+    .width(Length::Fill)
+    .height(Length::Fixed(height));
+
+    stack([placeholder.into(), loading_indicator.into()])
+        .width(Length::Fill)
+        .height(Length::Fixed(height))
+        .into()
+}
+
+fn new_media_preview_loading_indicator(phase: usize) -> &'static str {
+    match phase % 6 {
+        0 => "·  ",
+        1 => "·· ",
+        2 => "···",
+        3 => " ··",
+        4 => "  ·",
+        _ => " · ",
+    }
+}
+
+fn new_media_preview_loading_pulse(phase: usize) -> &'static str {
+    match phase % 6 {
+        0 => "○ ● ○",
+        1 => "○ ○ ●",
+        2 => "● ○ ○",
+        3 => "○ ● ○",
+        4 => "○ ○ ●",
+        _ => "● ○ ○",
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -9698,6 +9810,7 @@ fn apply_projection_job_result(app: &mut Librapix, result: ProjectionJobResult) 
         if announcement.preview_path.is_none() {
             announcement.preview_path = browse_thumbnail_path(app, announcement.media_id);
         }
+        app.new_media_preview_loading_phase = 0;
         app.new_media_announcement = Some(announcement);
     }
 
@@ -11098,6 +11211,7 @@ mod tests {
             viewport_drag: ViewportDragState::default(),
             last_viewport_drag_settled_at: None,
             new_media_announcement: None,
+            new_media_preview_loading_phase: 0,
             filter_dialog_open: false,
             settings_open: false,
             about_open: false,

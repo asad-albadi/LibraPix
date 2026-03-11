@@ -4317,7 +4317,7 @@ fn render_activity_status(app: &Librapix) -> Element<'_, Message> {
     if let Some(roots_line) = roots_line {
         metrics.push(roots_line);
     }
-    let metrics_line = metrics.join(" • ");
+    let metrics_line = metrics.join(" | ");
 
     let mut lines = column![
         text(progress.stage_text.clone())

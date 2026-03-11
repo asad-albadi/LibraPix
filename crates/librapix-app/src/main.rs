@@ -43,6 +43,7 @@ use librapix_thumbnails::{
 use notify::{EventKind, RecursiveMode, Watcher};
 use semver::Version;
 use serde::{Deserialize, Serialize};
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -118,6 +119,7 @@ enum Message {
     KeyboardEvent(keyboard::Event),
     HydrateSnapshotComplete(Box<SnapshotHydrateResult>),
     SnapshotApplyTick,
+    ViewportSettleTick,
     ScanJobComplete(Box<ScanJobResult>),
     ProjectionJobComplete(Box<ProjectionJobResult>),
     ThumbnailBatchComplete(Box<ThumbnailBatchResult>),
@@ -165,6 +167,7 @@ enum IntervalMessageKind {
     UpdateCheckTick,
     StartupReconcileKickoff,
     SnapshotApplyTick,
+    ViewportSettleTick,
     StartupGalleryContinuationKickoff,
     AutomationTick,
     DeferredThumbnailCatchupKickoff,
@@ -602,6 +605,53 @@ struct UpdateCheckTaskResult {
     state: UpdateCheckState,
 }
 
+#[derive(Debug, Clone)]
+struct CachedGalleryLayout {
+    generation: u64,
+    width_key: u32,
+    item_count: usize,
+    first_media_id: Option<i64>,
+    last_media_id: Option<i64>,
+    rows: Arc<[JustifiedRowLayout]>,
+}
+
+#[derive(Debug, Clone)]
+struct CachedTimelineSectionLayout {
+    header_index: usize,
+    media_start: usize,
+    row_layouts: Arc<[JustifiedRowLayout]>,
+    section_height: f32,
+}
+
+#[derive(Debug, Clone)]
+struct CachedTimelineLayout {
+    generation: u64,
+    width_key: u32,
+    item_count: usize,
+    first_media_id: Option<i64>,
+    last_media_id: Option<i64>,
+    total_items: usize,
+    total_groups: usize,
+    total_rows: usize,
+    sections: Arc<[CachedTimelineSectionLayout]>,
+}
+
+#[derive(Debug, Default)]
+struct MediaLayoutCache {
+    gallery: Option<Arc<CachedGalleryLayout>>,
+    timeline: Option<Arc<CachedTimelineLayout>>,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct ViewportDragState {
+    active: bool,
+    started_at: Option<Instant>,
+    last_event_at: Option<Instant>,
+    last_logged_at: Option<Instant>,
+    update_count: usize,
+    coalesced_updates: usize,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 struct GitHubLatestReleaseResponse {
     tag_name: String,
@@ -650,11 +700,15 @@ struct Librapix {
     diagnostics_lines: Vec<String>,
     diagnostics_events: Vec<String>,
     media_scroll_absolute_y: f32,
+    media_scroll_max_y: f32,
     media_viewport_height: f32,
     timeline_scrub_value: f32,
     timeline_scrubbing: bool,
     timeline_scrub_anchor_index: Option<usize>,
     timeline_scroll_max_y: f32,
+    browse_layout_generation: u64,
+    layout_cache: RefCell<MediaLayoutCache>,
+    viewport_drag: ViewportDragState,
     new_media_announcement: Option<NewMediaAnnouncement>,
     filter_dialog_open: bool,
     settings_open: bool,
@@ -789,8 +843,12 @@ const PROJECTION_SNAPSHOT_VERSION: u32 = 2;
 const AUTO_UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 const MANUAL_UPDATE_CHECK_COOLDOWN: Duration = Duration::from_secs(5 * 60);
 const MEDIA_VIRTUAL_OVERSCAN_PX: f32 = 1200.0;
+const MEDIA_VIRTUAL_OVERSCAN_DRAG_PX: f32 = 400.0;
 const TIMELINE_GROUP_HEADER_HEIGHT: f32 = 40.0;
 const AUTOMATION_TICK_INTERVAL: Duration = Duration::from_millis(100);
+const VIEWPORT_SETTLE_TICK_INTERVAL: Duration = Duration::from_millis(40);
+const VIEWPORT_SETTLE_DELAY: Duration = Duration::from_millis(140);
+const VIEWPORT_ACTIVE_LOG_INTERVAL: Duration = Duration::from_millis(200);
 static LARGE_SURFACE_RENDER_LOGS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
 #[derive(Debug, Clone)]
@@ -849,11 +907,15 @@ impl Default for Librapix {
             diagnostics_lines: Vec::new(),
             diagnostics_events: Vec::new(),
             media_scroll_absolute_y: 0.0,
+            media_scroll_max_y: 0.0,
             media_viewport_height: 0.0,
             timeline_scrub_value: 0.0,
             timeline_scrubbing: false,
             timeline_scrub_anchor_index: None,
             timeline_scroll_max_y: 0.0,
+            browse_layout_generation: 0,
+            layout_cache: RefCell::new(MediaLayoutCache::default()),
+            viewport_drag: ViewportDragState::default(),
             new_media_announcement: None,
             filter_dialog_open: false,
             settings_open: false,
@@ -924,6 +986,11 @@ fn subscription(app: &Librapix) -> Subscription<Message> {
         SNAPSHOT_APPLY_TICK_INTERVAL,
         IntervalMessageKind::SnapshotApplyTick,
     );
+    let viewport_settle_subscription = interval_subscription(
+        app.viewport_drag.active,
+        VIEWPORT_SETTLE_TICK_INTERVAL,
+        IntervalMessageKind::ViewportSettleTick,
+    );
     let automation_subscription = interval_subscription(
         app.background
             .automation
@@ -953,6 +1020,7 @@ fn subscription(app: &Librapix) -> Subscription<Message> {
             startup_reconcile_subscription,
             startup_gallery_continuation_subscription,
             snapshot_apply_subscription,
+            viewport_settle_subscription,
             automation_subscription,
             deferred_thumbnail_subscription,
         ])
@@ -963,6 +1031,7 @@ fn subscription(app: &Librapix) -> Subscription<Message> {
             startup_reconcile_subscription,
             startup_gallery_continuation_subscription,
             snapshot_apply_subscription,
+            viewport_settle_subscription,
             automation_subscription,
             deferred_thumbnail_subscription,
             Subscription::run_with(WatchSubscriptionConfig { roots }, watch_filesystem),
@@ -990,6 +1059,7 @@ fn interval_message((message, _instant): (IntervalMessageKind, Instant)) -> Mess
             Message::StartupGalleryContinuationKickoff
         }
         IntervalMessageKind::SnapshotApplyTick => Message::SnapshotApplyTick,
+        IntervalMessageKind::ViewportSettleTick => Message::ViewportSettleTick,
         IntervalMessageKind::AutomationTick => Message::AutomationTick,
         IntervalMessageKind::DeferredThumbnailCatchupKickoff => {
             Message::DeferredThumbnailCatchupKickoff
@@ -1098,6 +1168,7 @@ fn message_event_label(msg: &Message) -> String {
         Message::KeyboardEvent(_) => "KeyboardEvent".into(),
         Message::HydrateSnapshotComplete(_) => "HydrateSnapshotComplete".into(),
         Message::SnapshotApplyTick => "SnapshotApplyTick".into(),
+        Message::ViewportSettleTick => "ViewportSettleTick".into(),
         Message::ScanJobComplete(_) => "ScanJobComplete".into(),
         Message::ProjectionJobComplete(_) => "ProjectionJobComplete".into(),
         Message::ThumbnailBatchComplete(_) => "ThumbnailBatchComplete".into(),
@@ -1711,9 +1782,10 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
             max_y,
             viewport_height,
         } => {
-            app.media_scroll_absolute_y = absolute_y.max(0.0);
-            app.media_viewport_height = viewport_height.max(0.0);
-            sync_timeline_scrub_from_viewport(app, absolute_y, max_y);
+            handle_media_viewport_changed(app, absolute_y, max_y, viewport_height);
+        }
+        Message::ViewportSettleTick => {
+            settle_media_viewport_drag(app);
         }
         Message::KeyboardEvent(event) => {
             if let Some(action) = shortcut_action_from_keyboard_event(&event) {
@@ -2809,6 +2881,7 @@ fn render_media_panel(app: &Librapix) -> (Element<'_, Message>, Element<'_, Mess
             column![
                 search_header,
                 render_justified_gallery(
+                    app,
                     &app.search_items,
                     app.state.selected_media_id,
                     app.media_scroll_absolute_y,
@@ -2836,12 +2909,14 @@ fn render_media_panel(app: &Librapix) -> (Element<'_, Message>, Element<'_, Mess
     } else {
         match app.state.active_route {
             Route::Gallery => render_justified_gallery(
+                app,
                 browse_items,
                 app.state.selected_media_id,
                 app.media_scroll_absolute_y,
                 app.media_viewport_height,
             ),
             Route::Timeline => render_timeline_view(
+                app,
                 browse_items,
                 app.state.selected_media_id,
                 app.media_scroll_absolute_y,
@@ -2887,6 +2962,21 @@ struct TimelineRenderWindowMetrics {
     bottom_spacer: f32,
     viewport_absolute_y: f32,
     viewport_height: f32,
+    overscan_px: f32,
+    drag_active: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SurfaceRenderMetrics<'a> {
+    surface: &'a str,
+    total_items: usize,
+    total_rows: usize,
+    visible_rows: usize,
+    viewport_absolute_y: f32,
+    viewport_height: f32,
+    overscan_px: f32,
+    drag_active: bool,
+    render_elapsed: Duration,
 }
 
 fn build_justified_row_layouts(
@@ -2976,21 +3066,24 @@ fn compute_visible_row_window(
     }
 }
 
-fn log_large_surface_render_once(
-    surface: &str,
-    total_items: usize,
-    total_rows: usize,
-    visible_rows: usize,
-    viewport_absolute_y: f32,
-    viewport_height: f32,
-) {
-    if total_items < 1_000 {
+fn log_large_surface_render_once(metrics: SurfaceRenderMetrics<'_>) {
+    if metrics.total_items < 1_000 {
+        return;
+    }
+
+    if metrics.drag_active {
         return;
     }
 
     let signature = format!(
-        "{surface}:{total_items}:{total_rows}:{visible_rows}:{:.0}:{:.0}",
-        viewport_absolute_y, viewport_height
+        "{surface}:{total_items}:{total_rows}:{visible_rows}:{:.0}:{:.0}:{:.0}",
+        (metrics.viewport_absolute_y / 250.0).floor(),
+        metrics.viewport_height,
+        metrics.overscan_px,
+        surface = metrics.surface,
+        total_items = metrics.total_items,
+        total_rows = metrics.total_rows,
+        visible_rows = metrics.visible_rows,
     );
     let seen = LARGE_SURFACE_RENDER_LOGS.get_or_init(|| Mutex::new(HashSet::new()));
     let mut seen = seen.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -3001,14 +3094,45 @@ fn log_large_surface_render_once(
     startup_log::log_info(
         "interaction.surface_render.window",
         &format!(
-            "surface={surface} total_items={total_items} total_rows={total_rows} visible_rows={visible_rows} viewport_y={viewport_absolute_y:.1} viewport_height={viewport_height:.1}"
+            "surface={surface} total_items={total_items} total_rows={total_rows} visible_rows={visible_rows} overscan_px={overscan_px:.1} drag_active={drag_active} viewport_y={viewport_absolute_y:.1} viewport_height={viewport_height:.1} render_elapsed_ms={}",
+            metrics.render_elapsed.as_millis(),
+            surface = metrics.surface,
+            total_items = metrics.total_items,
+            total_rows = metrics.total_rows,
+            visible_rows = metrics.visible_rows,
+            overscan_px = metrics.overscan_px,
+            drag_active = metrics.drag_active,
+            viewport_absolute_y = metrics.viewport_absolute_y,
+            viewport_height = metrics.viewport_height,
         ),
     );
+
+    if metrics.render_elapsed >= Duration::from_millis(16) {
+        startup_log::log_warn(
+            "interaction.surface_render.slow",
+            &format!(
+                "surface={surface} total_items={total_items} total_rows={total_rows} visible_rows={visible_rows} overscan_px={overscan_px:.1} drag_active={drag_active} viewport_y={viewport_absolute_y:.1} viewport_height={viewport_height:.1} render_elapsed_ms={}",
+                metrics.render_elapsed.as_millis(),
+                surface = metrics.surface,
+                total_items = metrics.total_items,
+                total_rows = metrics.total_rows,
+                visible_rows = metrics.visible_rows,
+                overscan_px = metrics.overscan_px,
+                drag_active = metrics.drag_active,
+                viewport_absolute_y = metrics.viewport_absolute_y,
+                viewport_height = metrics.viewport_height,
+            ),
+        );
+    }
 }
 
 fn log_timeline_window_once(metrics: TimelineRenderWindowMetrics) {
+    if metrics.drag_active {
+        return;
+    }
+
     let signature = format!(
-        "timeline:{total_items}:{total_groups}:{total_rows}:{visible_groups}:{visible_rows}:{}:{}:{:.0}:{:.0}:{:.0}:{:.0}",
+        "timeline:{total_items}:{total_groups}:{total_rows}:{visible_groups}:{visible_rows}:{}:{}:{:.0}:{:.0}:{:.0}:{:.0}:{:.0}",
         metrics
             .first_visible_row
             .map(|value| value.to_string())
@@ -3019,8 +3143,9 @@ fn log_timeline_window_once(metrics: TimelineRenderWindowMetrics) {
             .unwrap_or_else(|| "none".to_owned()),
         metrics.top_spacer,
         metrics.bottom_spacer,
-        metrics.viewport_absolute_y,
+        (metrics.viewport_absolute_y / 250.0).floor(),
         metrics.viewport_height,
+        metrics.overscan_px,
         total_items = metrics.total_items,
         total_groups = metrics.total_groups,
         total_rows = metrics.total_rows,
@@ -3036,7 +3161,7 @@ fn log_timeline_window_once(metrics: TimelineRenderWindowMetrics) {
     startup_log::log_info(
         "interaction.timeline_render.window",
         &format!(
-            "surface=timeline total_items={total_items} total_groups={total_groups} total_rows={total_rows} visible_groups={visible_groups} visible_rows={visible_rows} first_visible_row={} last_visible_row={} overscan_px={MEDIA_VIRTUAL_OVERSCAN_PX:.1} top_spacer={top_spacer:.1} bottom_spacer={bottom_spacer:.1} viewport_y={viewport_absolute_y:.1} viewport_height={viewport_height:.1}",
+            "surface=timeline total_items={total_items} total_groups={total_groups} total_rows={total_rows} visible_groups={visible_groups} visible_rows={visible_rows} first_visible_row={} last_visible_row={} overscan_px={overscan_px:.1} drag_active={drag_active} top_spacer={top_spacer:.1} bottom_spacer={bottom_spacer:.1} viewport_y={viewport_absolute_y:.1} viewport_height={viewport_height:.1}",
             metrics
                 .first_visible_row
                 .map(|value| value.to_string())
@@ -3050,6 +3175,8 @@ fn log_timeline_window_once(metrics: TimelineRenderWindowMetrics) {
             total_rows = metrics.total_rows,
             visible_groups = metrics.visible_groups,
             visible_rows = metrics.visible_rows,
+            overscan_px = metrics.overscan_px,
+            drag_active = metrics.drag_active,
             top_spacer = metrics.top_spacer,
             bottom_spacer = metrics.bottom_spacer,
             viewport_absolute_y = metrics.viewport_absolute_y,
@@ -3061,7 +3188,7 @@ fn log_timeline_window_once(metrics: TimelineRenderWindowMetrics) {
         startup_log::log_warn(
             "interaction.timeline_render.window.anomaly",
             &format!(
-                "visible_rows={visible_rows} total_rows={total_rows} total_groups={total_groups} first_visible_row={} last_visible_row={} overscan_px={MEDIA_VIRTUAL_OVERSCAN_PX:.1} top_spacer={top_spacer:.1} bottom_spacer={bottom_spacer:.1} viewport_y={viewport_absolute_y:.1} viewport_height={viewport_height:.1}",
+                "visible_rows={visible_rows} total_rows={total_rows} total_groups={total_groups} first_visible_row={} last_visible_row={} overscan_px={overscan_px:.1} drag_active={drag_active} top_spacer={top_spacer:.1} bottom_spacer={bottom_spacer:.1} viewport_y={viewport_absolute_y:.1} viewport_height={viewport_height:.1}",
                 metrics
                     .first_visible_row
                     .map(|value| value.to_string())
@@ -3073,6 +3200,8 @@ fn log_timeline_window_once(metrics: TimelineRenderWindowMetrics) {
                 visible_rows = metrics.visible_rows,
                 total_rows = metrics.total_rows,
                 total_groups = metrics.total_groups,
+                overscan_px = metrics.overscan_px,
+                drag_active = metrics.drag_active,
                 top_spacer = metrics.top_spacer,
                 bottom_spacer = metrics.bottom_spacer,
                 viewport_absolute_y = metrics.viewport_absolute_y,
@@ -3083,39 +3212,42 @@ fn log_timeline_window_once(metrics: TimelineRenderWindowMetrics) {
 }
 
 fn render_justified_gallery<'a>(
+    app: &'a Librapix,
     items: &'a [BrowseItem],
     selected_id: Option<i64>,
     viewport_absolute_y: f32,
     viewport_height: f32,
 ) -> Element<'a, Message> {
-    let media: Vec<&BrowseItem> = items.iter().filter(|i| !i.is_group_header).collect();
-    if media.is_empty() {
+    let total_items = items.len();
+    if total_items == 0 {
         return column![].into();
     }
 
     responsive(move |size: Size| {
-        let layouts = build_justified_row_layouts(&media, size.width);
+        let render_started_at = Instant::now();
+        let layout = gallery_layout_for_width(app, items, size.width);
+        let overscan_px = media_virtual_overscan_px(app.viewport_drag.active);
         let viewport_height = if viewport_height > 0.0 {
             viewport_height
         } else {
             size.height.clamp(600.0, 900.0)
         };
-        let window_top = (viewport_absolute_y - MEDIA_VIRTUAL_OVERSCAN_PX).max(0.0);
-        let window_bottom = viewport_absolute_y + viewport_height + MEDIA_VIRTUAL_OVERSCAN_PX;
+        let window_top = (viewport_absolute_y - overscan_px).max(0.0);
+        let window_bottom = viewport_absolute_y + viewport_height + overscan_px;
         let mut grid = column![];
         let mut pending_spacer = 0.0f32;
         let mut cursor_y = 0.0f32;
         let mut visible_rows = 0usize;
 
-        for (index, layout) in layouts.iter().enumerate() {
+        for (index, row_layout) in layout.rows.iter().enumerate() {
             let row_top = cursor_y;
-            let row_bottom = row_top + layout.height;
-            let gap_after = if index + 1 < layouts.len() {
+            let row_bottom = row_top + row_layout.height;
+            let gap_after = if index + 1 < layout.rows.len() {
                 GALLERY_GAP as f32
             } else {
                 0.0
             };
-            let segment_height = layout.height + gap_after;
+            let segment_height = row_layout.height + gap_after;
             let intersects_window = row_bottom >= window_top && row_top <= window_bottom;
 
             if !intersects_window {
@@ -3130,10 +3262,10 @@ fn render_justified_gallery<'a>(
             }
 
             let mut row_widget = row![].spacing(GALLERY_GAP);
-            for item in &media[layout.start..layout.end] {
+            for item in &items[row_layout.start..row_layout.end] {
                 let portion = (item.aspect_ratio * 1000.0).max(1.0) as u16;
                 let card =
-                    render_media_card(item, selected_id == Some(item.media_id), layout.height);
+                    render_media_card(item, selected_id == Some(item.media_id), row_layout.height);
                 row_widget = row_widget.push(container(card).width(Length::FillPortion(portion)));
             }
             visible_rows = visible_rows.saturating_add(1);
@@ -3148,14 +3280,17 @@ fn render_justified_gallery<'a>(
             grid = grid.push(Space::new().height(Length::Fixed(pending_spacer)));
         }
 
-        log_large_surface_render_once(
-            "gallery",
-            media.len(),
-            layouts.len(),
+        log_large_surface_render_once(SurfaceRenderMetrics {
+            surface: "gallery",
+            total_items,
+            total_rows: layout.rows.len(),
             visible_rows,
             viewport_absolute_y,
             viewport_height,
-        );
+            overscan_px,
+            drag_active: app.viewport_drag.active,
+            render_elapsed: render_started_at.elapsed(),
+        });
 
         grid.into()
     })
@@ -3243,27 +3378,191 @@ fn compute_browse_stats(items: &[BrowseItem]) -> BrowseStats {
     )
 }
 
+fn invalidate_browse_layout_cache(app: &mut Librapix, reason: &str) {
+    app.browse_layout_generation = app.browse_layout_generation.saturating_add(1);
+    *app.layout_cache.borrow_mut() = MediaLayoutCache::default();
+    startup_log::log_info(
+        "interaction.surface_layout.invalidate",
+        &format!(
+            "reason={reason} generation={} gallery_items={} timeline_items={} search_items={}",
+            app.browse_layout_generation,
+            app.gallery_items.len(),
+            app.timeline_items.len(),
+            app.search_items.len(),
+        ),
+    );
+}
+
+fn layout_width_key(available_width: f32) -> u32 {
+    available_width.max(0.0).round() as u32
+}
+
+fn media_virtual_overscan_px(active_drag: bool) -> f32 {
+    if active_drag {
+        MEDIA_VIRTUAL_OVERSCAN_DRAG_PX
+    } else {
+        MEDIA_VIRTUAL_OVERSCAN_PX
+    }
+}
+
+fn gallery_layout_for_width(
+    app: &Librapix,
+    items: &[BrowseItem],
+    available_width: f32,
+) -> Arc<CachedGalleryLayout> {
+    let width_key = layout_width_key(available_width);
+    let first_media_id = items.first().map(|item| item.media_id);
+    let last_media_id = items.last().map(|item| item.media_id);
+    if let Some(layout) = app.layout_cache.borrow().gallery.as_ref()
+        && layout.generation == app.browse_layout_generation
+        && layout.width_key == width_key
+        && layout.item_count == items.len()
+        && layout.first_media_id == first_media_id
+        && layout.last_media_id == last_media_id
+    {
+        return Arc::clone(layout);
+    }
+
+    let started_at = Instant::now();
+    let media = items
+        .iter()
+        .filter(|item| !item.is_group_header)
+        .collect::<Vec<_>>();
+    let rows = build_justified_row_layouts(&media, available_width);
+    let layout = Arc::new(CachedGalleryLayout {
+        generation: app.browse_layout_generation,
+        width_key,
+        item_count: items.len(),
+        first_media_id,
+        last_media_id,
+        rows: Arc::<[JustifiedRowLayout]>::from(rows),
+    });
+    app.layout_cache.borrow_mut().gallery = Some(Arc::clone(&layout));
+    log_interaction_duration(
+        "interaction.surface_layout.cache_build",
+        started_at.elapsed(),
+        &format!(
+            "surface=gallery width={} items={} rows={}",
+            width_key,
+            media.len(),
+            layout.rows.len(),
+        ),
+    );
+    layout
+}
+
+fn timeline_layout_for_width(
+    app: &Librapix,
+    items: &[BrowseItem],
+    available_width: f32,
+) -> Arc<CachedTimelineLayout> {
+    let width_key = layout_width_key(available_width);
+    let first_media_id = items.first().map(|item| item.media_id);
+    let last_media_id = items.last().map(|item| item.media_id);
+    if let Some(layout) = app.layout_cache.borrow().timeline.as_ref()
+        && layout.generation == app.browse_layout_generation
+        && layout.width_key == width_key
+        && layout.item_count == items.len()
+        && layout.first_media_id == first_media_id
+        && layout.last_media_id == last_media_id
+    {
+        return Arc::clone(layout);
+    }
+
+    let started_at = Instant::now();
+    let mut sections = Vec::new();
+    let mut i = 0usize;
+    let mut total_items = 0usize;
+    let mut total_rows = 0usize;
+    let mut total_groups = 0usize;
+
+    while i < items.len() {
+        if !items[i].is_group_header {
+            i += 1;
+            continue;
+        }
+
+        total_groups = total_groups.saturating_add(1);
+        let header_index = i;
+        i += 1;
+        let media_start = i;
+        while i < items.len() && !items[i].is_group_header {
+            i += 1;
+        }
+
+        total_items = total_items.saturating_add(i.saturating_sub(media_start));
+        let group_media = items[media_start..i].iter().collect::<Vec<_>>();
+        let row_layouts = build_justified_row_layouts(&group_media, available_width);
+        let rows_height = row_layouts
+            .iter()
+            .enumerate()
+            .map(|(index, layout)| {
+                layout.height
+                    + if index + 1 < row_layouts.len() {
+                        GALLERY_GAP as f32
+                    } else {
+                        0.0
+                    }
+            })
+            .sum::<f32>();
+        let body_spacing = if row_layouts.is_empty() {
+            0.0
+        } else {
+            SPACE_XS as f32
+        };
+        total_rows = total_rows.saturating_add(row_layouts.len());
+        sections.push(CachedTimelineSectionLayout {
+            header_index,
+            media_start,
+            row_layouts: Arc::<[JustifiedRowLayout]>::from(row_layouts),
+            section_height: TIMELINE_GROUP_HEADER_HEIGHT + body_spacing + rows_height,
+        });
+    }
+
+    let layout = Arc::new(CachedTimelineLayout {
+        generation: app.browse_layout_generation,
+        width_key,
+        item_count: items.len(),
+        first_media_id,
+        last_media_id,
+        total_items,
+        total_groups,
+        total_rows,
+        sections: Arc::<[CachedTimelineSectionLayout]>::from(sections),
+    });
+    app.layout_cache.borrow_mut().timeline = Some(Arc::clone(&layout));
+    log_interaction_duration(
+        "interaction.surface_layout.cache_build",
+        started_at.elapsed(),
+        &format!(
+            "surface=timeline width={} items={} groups={} rows={}",
+            width_key, layout.total_items, layout.total_groups, layout.total_rows,
+        ),
+    );
+    layout
+}
+
 fn render_timeline_view<'a>(
+    app: &'a Librapix,
     items: &'a [BrowseItem],
     selected_id: Option<i64>,
     viewport_absolute_y: f32,
     viewport_height: f32,
 ) -> Element<'a, Message> {
     responsive(move |size: Size| {
+        let render_started_at = Instant::now();
+        let layout = timeline_layout_for_width(app, items, size.width);
+        let overscan_px = media_virtual_overscan_px(app.viewport_drag.active);
         let viewport_height = if viewport_height > 0.0 {
             viewport_height
         } else {
             size.height.clamp(600.0, 900.0)
         };
-        let window_top = (viewport_absolute_y - MEDIA_VIRTUAL_OVERSCAN_PX).max(0.0);
-        let window_bottom = viewport_absolute_y + viewport_height + MEDIA_VIRTUAL_OVERSCAN_PX;
+        let window_top = (viewport_absolute_y - overscan_px).max(0.0);
+        let window_bottom = viewport_absolute_y + viewport_height + overscan_px;
         let mut sections = column![];
         let mut pending_spacer = 0.0f32;
         let mut cursor_y = 0.0f32;
-        let mut i = 0usize;
-        let limit = items.len();
-        let mut total_groups = 0usize;
-        let mut total_rows = 0usize;
         let mut visible_groups = 0usize;
         let mut visible_rows = 0usize;
         let mut global_row_index = 0usize;
@@ -3272,42 +3571,15 @@ fn render_timeline_view<'a>(
         let mut top_spacer_height = 0.0f32;
         let mut bottom_spacer_height = 0.0f32;
 
-        while i < limit {
-            if !items[i].is_group_header {
-                i += 1;
-                continue;
-            }
-
-            total_groups = total_groups.saturating_add(1);
-            let header_item = &items[i];
-            i += 1;
-            let group_start = i;
-            while i < limit && !items[i].is_group_header {
-                i += 1;
-            }
-
-            let group_media = items[group_start..i].iter().collect::<Vec<_>>();
-            let row_layouts = build_justified_row_layouts(&group_media, size.width);
-            total_rows = total_rows.saturating_add(row_layouts.len());
-            let rows_height = row_layouts
-                .iter()
-                .enumerate()
-                .map(|(index, layout)| {
-                    layout.height
-                        + if index + 1 < row_layouts.len() {
-                            GALLERY_GAP as f32
-                        } else {
-                            0.0
-                        }
-                })
-                .sum::<f32>();
-            let body_spacing = if row_layouts.is_empty() {
-                0.0
+        for (section_index, section_layout) in layout.sections.iter().enumerate() {
+            let header_item = &items[section_layout.header_index];
+            let row_layouts = &section_layout.row_layouts;
+            let section_gap = if section_index + 1 < layout.sections.len() {
+                SPACE_MD as f32
             } else {
-                SPACE_XS as f32
+                0.0
             };
-            let section_gap = if i < limit { SPACE_MD as f32 } else { 0.0 };
-            let section_height = TIMELINE_GROUP_HEADER_HEIGHT + body_spacing + rows_height;
+            let section_height = section_layout.section_height;
             let section_top = cursor_y;
             let section_bottom = section_top + section_height;
             let intersects_window = section_bottom >= window_top && section_top <= window_bottom;
@@ -3376,7 +3648,7 @@ fn render_timeline_view<'a>(
             };
             let rows_top = section_top + TIMELINE_GROUP_HEADER_HEIGHT + body_spacing;
             let row_window = compute_visible_row_window(
-                &row_layouts,
+                row_layouts,
                 rows_top,
                 window_top,
                 window_bottom,
@@ -3413,7 +3685,9 @@ fn render_timeline_view<'a>(
                 .take(row_window.visible_rows)
             {
                 let mut row_widget = row![].spacing(GALLERY_GAP);
-                for item in &group_media[layout.start..layout.end] {
+                for item in &items[section_layout.media_start + layout.start
+                    ..section_layout.media_start + layout.end]
+                {
                     let portion = (item.aspect_ratio * 1000.0).max(1.0) as u16;
                     let card =
                         render_media_card(item, selected_id == Some(item.media_id), layout.height);
@@ -3445,18 +3719,21 @@ fn render_timeline_view<'a>(
             sections = sections.push(Space::new().height(Length::Fixed(pending_spacer)));
         }
 
-        log_large_surface_render_once(
-            "timeline",
-            items.iter().filter(|item| !item.is_group_header).count(),
-            total_rows,
+        log_large_surface_render_once(SurfaceRenderMetrics {
+            surface: "timeline",
+            total_items: layout.total_items,
+            total_rows: layout.total_rows,
             visible_rows,
             viewport_absolute_y,
             viewport_height,
-        );
+            overscan_px,
+            drag_active: app.viewport_drag.active,
+            render_elapsed: render_started_at.elapsed(),
+        });
         log_timeline_window_once(TimelineRenderWindowMetrics {
-            total_items: items.iter().filter(|item| !item.is_group_header).count(),
-            total_groups,
-            total_rows,
+            total_items: layout.total_items,
+            total_groups: layout.total_groups,
+            total_rows: layout.total_rows,
             visible_groups,
             visible_rows,
             first_visible_row,
@@ -3465,6 +3742,8 @@ fn render_timeline_view<'a>(
             bottom_spacer: bottom_spacer_height,
             viewport_absolute_y,
             viewport_height,
+            overscan_px,
+            drag_active: app.viewport_drag.active,
         });
 
         sections.into()
@@ -4777,6 +5056,143 @@ fn scroll_task_to_timeline_position(app: &Librapix, normalized: f32) -> Task<Mes
     } else {
         operation::snap_to(id, operation::RelativeOffset { x: 0.0, y: clamped })
     }
+}
+
+fn viewport_snapshot_matches(
+    app: &Librapix,
+    absolute_y: f32,
+    max_y: f32,
+    viewport_height: f32,
+) -> bool {
+    (app.media_scroll_absolute_y - absolute_y).abs() < 0.5
+        && (app.media_scroll_max_y - max_y).abs() < 0.5
+        && (app.media_viewport_height - viewport_height).abs() < 0.5
+}
+
+fn viewport_route_label(route: Route) -> &'static str {
+    match route {
+        Route::Gallery => "gallery",
+        Route::Timeline => "timeline",
+    }
+}
+
+fn handle_media_viewport_changed(
+    app: &mut Librapix,
+    absolute_y: f32,
+    max_y: f32,
+    viewport_height: f32,
+) {
+    let absolute_y = absolute_y.max(0.0);
+    let max_y = max_y.max(0.0);
+    let viewport_height = viewport_height.max(0.0);
+
+    if viewport_snapshot_matches(app, absolute_y, max_y, viewport_height) {
+        app.viewport_drag.coalesced_updates = app.viewport_drag.coalesced_updates.saturating_add(1);
+        return;
+    }
+
+    let now = Instant::now();
+    let route = viewport_route_label(app.state.active_route);
+    let should_activate_drag = app
+        .viewport_drag
+        .last_event_at
+        .is_some_and(|last| now.duration_since(last) <= VIEWPORT_SETTLE_DELAY);
+
+    if should_activate_drag && !app.viewport_drag.active {
+        app.viewport_drag.active = true;
+        app.viewport_drag.started_at = Some(now);
+        app.viewport_drag.update_count = 0;
+        app.viewport_drag.coalesced_updates = 0;
+        app.viewport_drag.last_logged_at = None;
+        startup_log::log_info(
+            "interaction.viewport.drag.start",
+            &format!(
+                "route={route} viewport_y={absolute_y:.1} max_y={max_y:.1} viewport_height={viewport_height:.1} overscan_px={:.1} render_window_logs_deferred=true projection_in_flight={} thumbnail_in_flight={} pending_projection={} pending_reconcile={}",
+                media_virtual_overscan_px(true),
+                app.background.projection_in_flight,
+                app.background.thumbnail_in_flight,
+                app.background.pending_projection,
+                app.background.pending_reconcile,
+            ),
+        );
+    }
+
+    if app.viewport_drag.active {
+        app.viewport_drag.update_count = app.viewport_drag.update_count.saturating_add(1);
+        let should_log_update = app
+            .viewport_drag
+            .last_logged_at
+            .is_none_or(|last| now.duration_since(last) >= VIEWPORT_ACTIVE_LOG_INTERVAL);
+        if should_log_update {
+            startup_log::log_info(
+                "interaction.viewport.drag.update",
+                &format!(
+                    "route={route} updates={} coalesced={} viewport_y={absolute_y:.1} max_y={max_y:.1} viewport_height={viewport_height:.1} overscan_px={:.1} projection_in_flight={} thumbnail_in_flight={} pending_projection={} pending_reconcile={}",
+                    app.viewport_drag.update_count,
+                    app.viewport_drag.coalesced_updates,
+                    media_virtual_overscan_px(true),
+                    app.background.projection_in_flight,
+                    app.background.thumbnail_in_flight,
+                    app.background.pending_projection,
+                    app.background.pending_reconcile,
+                ),
+            );
+            app.viewport_drag.last_logged_at = Some(now);
+        }
+    }
+
+    app.viewport_drag.last_event_at = Some(now);
+    app.media_scroll_absolute_y = absolute_y;
+    app.media_scroll_max_y = max_y;
+    app.media_viewport_height = viewport_height;
+    sync_timeline_scrub_from_viewport(app, absolute_y, max_y);
+}
+
+fn settle_media_viewport_drag(app: &mut Librapix) {
+    if !app.viewport_drag.active {
+        return;
+    }
+
+    let Some(last_event_at) = app.viewport_drag.last_event_at else {
+        app.viewport_drag = ViewportDragState::default();
+        return;
+    };
+    let now = Instant::now();
+    if now.duration_since(last_event_at) < VIEWPORT_SETTLE_DELAY {
+        return;
+    }
+
+    let route = viewport_route_label(app.state.active_route);
+    startup_log::log_info(
+        "interaction.viewport.settle.start",
+        &format!(
+            "route={route} viewport_y={:.1} max_y={:.1} viewport_height={:.1}",
+            app.media_scroll_absolute_y, app.media_scroll_max_y, app.media_viewport_height,
+        ),
+    );
+    let drag_elapsed = app
+        .viewport_drag
+        .started_at
+        .map(|started_at| now.duration_since(started_at))
+        .unwrap_or_default();
+    startup_log::log_info(
+        "interaction.viewport.settle.end",
+        &format!(
+            "route={route} updates={} coalesced={} overscan_px={:.1} viewport_y={:.1} max_y={:.1} viewport_height={:.1} projection_in_flight={} thumbnail_in_flight={} pending_projection={} pending_reconcile={} elapsed_ms={}",
+            app.viewport_drag.update_count,
+            app.viewport_drag.coalesced_updates,
+            media_virtual_overscan_px(false),
+            app.media_scroll_absolute_y,
+            app.media_scroll_max_y,
+            app.media_viewport_height,
+            app.background.projection_in_flight,
+            app.background.thumbnail_in_flight,
+            app.background.pending_projection,
+            app.background.pending_reconcile,
+            drag_elapsed.as_millis(),
+        ),
+    );
+    app.viewport_drag = ViewportDragState::default();
 }
 
 fn apply_timeline_scrub(
@@ -7238,6 +7654,7 @@ fn begin_snapshot_apply(
     app.search_items.clear();
     app.media_cache.clear();
     app.available_filter_tags.clear();
+    invalidate_browse_layout_cache(app, "snapshot_apply");
     app.state.apply(AppMessage::ReplaceGalleryPreview);
     app.state.replace_gallery_preview(Vec::new());
     app.state.apply(AppMessage::ReplaceTimelinePreview);
@@ -8731,6 +9148,7 @@ fn apply_projection_job_result(app: &mut Librapix, result: ProjectionJobResult) 
     app.state
         .replace_search_preview(result.search_preview_lines);
     app.search_items = result.search_items;
+    invalidate_browse_layout_cache(app, "projection_apply");
 
     if result.refreshed_gallery {
         app.state.apply(AppMessage::ReplaceGalleryPreview);
@@ -10176,11 +10594,15 @@ mod tests {
             diagnostics_lines: Vec::new(),
             diagnostics_events: Vec::new(),
             media_scroll_absolute_y: 0.0,
+            media_scroll_max_y: 0.0,
             media_viewport_height: 0.0,
             timeline_scrub_value: 0.0,
             timeline_scrubbing: false,
             timeline_scrub_anchor_index: None,
             timeline_scroll_max_y: 0.0,
+            browse_layout_generation: 0,
+            layout_cache: RefCell::new(MediaLayoutCache::default()),
+            viewport_drag: ViewportDragState::default(),
             new_media_announcement: None,
             filter_dialog_open: false,
             settings_open: false,
@@ -11016,6 +11438,45 @@ mod tests {
         assert!(
             (window.top_spacer + visible_height + window.bottom_spacer - total_height).abs() < 0.01
         );
+    }
+
+    #[test]
+    fn viewport_snapshot_matches_coalesces_duplicate_updates() {
+        let mut app = test_app();
+        app.media_scroll_absolute_y = 120.0;
+        app.media_scroll_max_y = 600.0;
+        app.media_viewport_height = 720.0;
+
+        assert!(viewport_snapshot_matches(&app, 120.2, 600.2, 720.2));
+        assert!(!viewport_snapshot_matches(&app, 122.0, 600.0, 720.0));
+    }
+
+    #[test]
+    fn media_virtual_overscan_tightens_during_active_drag() {
+        assert_eq!(media_virtual_overscan_px(false), MEDIA_VIRTUAL_OVERSCAN_PX);
+        assert_eq!(
+            media_virtual_overscan_px(true),
+            MEDIA_VIRTUAL_OVERSCAN_DRAG_PX
+        );
+        assert!(media_virtual_overscan_px(true) < media_virtual_overscan_px(false));
+    }
+
+    #[test]
+    fn viewport_settle_tick_clears_active_drag_after_pause() {
+        let mut app = test_app();
+        app.state.active_route = Route::Gallery;
+        app.viewport_drag.active = true;
+        app.viewport_drag.started_at = Some(Instant::now() - Duration::from_millis(320));
+        app.viewport_drag.last_event_at = Some(Instant::now() - VIEWPORT_SETTLE_DELAY);
+        app.viewport_drag.update_count = 6;
+        app.media_scroll_absolute_y = 8_000.0;
+        app.media_scroll_max_y = 42_000.0;
+        app.media_viewport_height = 700.0;
+
+        settle_media_viewport_drag(&mut app);
+
+        assert!(!app.viewport_drag.active);
+        assert_eq!(app.viewport_drag.update_count, 0);
     }
 
     #[test]

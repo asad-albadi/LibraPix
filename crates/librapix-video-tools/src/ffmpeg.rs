@@ -56,6 +56,7 @@ pub fn command_line(executable: &Path, args: &[String]) -> String {
     parts.join(" ")
 }
 
+#[cfg_attr(not(windows), allow(unused_variables))]
 pub fn configure_background_command(command: &mut Command) {
     #[cfg(windows)]
     {

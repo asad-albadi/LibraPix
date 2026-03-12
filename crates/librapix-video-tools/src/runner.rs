@@ -198,6 +198,7 @@ mod tests {
     };
     use std::fs;
     use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn ffmpeg_args_include_expected_script_flags() {
@@ -231,14 +232,40 @@ mod tests {
 
     #[test]
     fn remove_partial_output_keeps_existing_files() {
-        let temp_dir = std::env::temp_dir().join("librapix-runner-tests");
-        fs::create_dir_all(&temp_dir).expect("create temp directory");
+        let temp_dir = unique_runner_test_dir();
         let path = temp_dir.join("existing-output.mp4");
         fs::write(&path, b"existing").expect("write existing file");
 
         remove_partial_output(&path, true).expect("skip removal for existing file");
 
         assert!(path.exists());
-        let _ = fs::remove_file(path);
+        fs::remove_file(&path).expect("remove test file");
+        fs::remove_dir(&temp_dir).expect("remove temp directory");
+    }
+
+    #[test]
+    fn remove_partial_output_deletes_newly_created_files() {
+        let temp_dir = unique_runner_test_dir();
+        let path = temp_dir.join("partial-output.mp4");
+        fs::write(&path, b"partial").expect("write partial file");
+
+        remove_partial_output(&path, false).expect("remove partial output");
+
+        assert!(!path.exists());
+        fs::remove_dir(&temp_dir).expect("remove temp directory");
+    }
+
+    fn unique_runner_test_dir() -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time before unix epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "librapix-runner-tests-{}-{}",
+            std::process::id(),
+            nanos
+        ));
+        fs::create_dir(&dir).expect("create unique temp directory");
+        dir
     }
 }

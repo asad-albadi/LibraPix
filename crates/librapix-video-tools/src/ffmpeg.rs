@@ -2,6 +2,7 @@ use crate::error::VideoShortError;
 use std::env;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 pub fn locate_binary(executable: &str) -> Option<PathBuf> {
     let path_var = env::var_os("PATH")?;
@@ -53,6 +54,15 @@ pub fn command_line(executable: &Path, args: &[String]) -> String {
     let mut parts = vec![shell_escape(executable.as_os_str())];
     parts.extend(args.iter().map(|v| shell_escape(OsStr::new(v))));
     parts.join(" ")
+}
+
+pub fn configure_background_command(command: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
 }
 
 fn shell_escape(value: &OsStr) -> String {

@@ -1910,13 +1910,6 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
         Message::MakeShortPrepared(result) => match result {
             Ok(job) => {
                 app.make_short_dialog.run_state = MakeShortRunState::Running {
-                    stage: GenerationStage::BuildingFilters,
-                    status: app
-                        .i18n
-                        .text(TextKey::MakeShortStageBuildingFilters)
-                        .to_owned(),
-                };
-                app.make_short_dialog.run_state = MakeShortRunState::Running {
                     stage: GenerationStage::Generating,
                     status: app.i18n.text(TextKey::MakeShortStageGenerating).to_owned(),
                 };
@@ -6602,8 +6595,12 @@ fn render_make_short_dialog(app: &Librapix) -> Element<'_, Message> {
             })
             .size(FONT_CAPTION)
             .color(TEXT_SECONDARY),
-            text(status).size(FONT_CAPTION).color(TEXT_TERTIARY),
-            progress_bar(0.0..=1.0, 0.5),
+            row![
+                text("\u{25CF}").size(FONT_CAPTION).color(ACCENT),
+                text(status).size(FONT_CAPTION).color(TEXT_TERTIARY),
+            ]
+            .spacing(SPACE_XS)
+            .align_y(iced::Alignment::Center),
         ]
         .spacing(SPACE_XS)
         .into(),

@@ -1,5 +1,7 @@
 use crate::error::VideoShortError;
-use crate::ffmpeg::{path_for_ffmpeg, resolve_ffmpeg, resolve_ffprobe};
+use crate::ffmpeg::{
+    configure_background_command, path_for_ffmpeg, resolve_ffmpeg, resolve_ffprobe,
+};
 use crate::filters::{audio_filter, video_filter};
 use crate::models::{FfmpegArgs, GenerationStage, ShortGenerationRequest, ShortGenerationResult};
 use crate::probe::read_video_duration_seconds;
@@ -81,11 +83,15 @@ pub fn build_ffmpeg_args_for_request(
 }
 
 pub fn run_generation(prepared: &FfmpegArgs) -> Result<ShortGenerationResult, VideoShortError> {
-    let output = Command::new(&prepared.ffmpeg_path)
+    let mut command = Command::new(&prepared.ffmpeg_path);
+    command
         .args(prepared.args.iter())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    configure_background_command(&mut command);
+
+    let output = command
         .output()
         .map_err(|e| VideoShortError::FfmpegSpawnFailed(e.to_string()))?;
 

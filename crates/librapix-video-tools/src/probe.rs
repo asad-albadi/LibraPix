@@ -1,21 +1,24 @@
 use crate::error::VideoShortError;
-use crate::ffmpeg::{path_for_ffmpeg, resolve_ffprobe};
+use crate::ffmpeg::{configure_background_command, path_for_ffmpeg, resolve_ffprobe};
 use std::process::Command;
 
 pub fn read_video_duration_seconds(path: &std::path::Path) -> Result<f64, VideoShortError> {
     let ffprobe = resolve_ffprobe()?;
     let input = path_for_ffmpeg(path);
 
-    let output = Command::new(ffprobe)
-        .args([
-            "-v",
-            "error",
-            "-show_entries",
-            "format=duration",
-            "-of",
-            "default=noprint_wrappers=1:nokey=1",
-            &input,
-        ])
+    let mut command = Command::new(ffprobe);
+    command.args([
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "default=noprint_wrappers=1:nokey=1",
+        &input,
+    ]);
+    configure_background_command(&mut command);
+
+    let output = command
         .output()
         .map_err(|e| VideoShortError::ProbeFailed(e.to_string()))?;
 

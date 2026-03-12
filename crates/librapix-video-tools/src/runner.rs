@@ -11,6 +11,7 @@ use crate::probe::read_video_duration_seconds;
 use crate::validate::validate_request;
 use std::io::Read;
 use std::process::{Command, Stdio};
+use std::thread::JoinHandle;
 use std::time::Duration;
 
 pub fn prepare_generation(request: &ShortGenerationRequest) -> Result<FfmpegArgs, VideoShortError> {
@@ -106,12 +107,16 @@ pub fn run_generation_with_cancel(
     let mut child = command
         .spawn()
         .map_err(|e| VideoShortError::FfmpegSpawnFailed(e.to_string()))?;
+    let mut stderr_handle = spawn_stderr_drain_thread(&mut child);
+    let output_file = prepared_output_file(prepared);
+    let output_existed_before_generation = output_file.exists();
 
     loop {
         if cancellation.is_some_and(ShortGenerationCancellation::is_cancelled) {
             let _ = child.kill();
             let _ = child.wait();
-            let _ = remove_partial_output(prepared_output_file(prepared));
+            let _ = collect_child_stderr(stderr_handle.take());
+            let _ = remove_partial_output(output_file, output_existed_before_generation);
             return Err(VideoShortError::Cancelled);
         }
 
@@ -119,7 +124,7 @@ pub fn run_generation_with_cancel(
             .try_wait()
             .map_err(|e| VideoShortError::FfmpegSpawnFailed(e.to_string()))?
         {
-            let stderr = read_child_stderr(&mut child);
+            let stderr = collect_child_stderr(stderr_handle.take());
             if !status.success() {
                 return Err(VideoShortError::FfmpegFailed {
                     exit_code: status.code(),
@@ -146,16 +151,28 @@ fn prepared_output_file(prepared: &FfmpegArgs) -> &std::path::Path {
         .unwrap_or(std::path::Path::new(""))
 }
 
-fn read_child_stderr(child: &mut std::process::Child) -> String {
-    let mut stderr = Vec::new();
-    if let Some(mut stream) = child.stderr.take() {
-        let _ = stream.read_to_end(&mut stderr);
-    }
+fn spawn_stderr_drain_thread(child: &mut std::process::Child) -> Option<JoinHandle<Vec<u8>>> {
+    child.stderr.take().map(|mut stream| {
+        std::thread::spawn(move || {
+            let mut stderr = Vec::new();
+            let _ = stream.read_to_end(&mut stderr);
+            stderr
+        })
+    })
+}
+
+fn collect_child_stderr(stderr_handle: Option<JoinHandle<Vec<u8>>>) -> String {
+    let stderr = stderr_handle
+        .and_then(|handle| handle.join().ok())
+        .unwrap_or_default();
     String::from_utf8_lossy(&stderr).to_string()
 }
 
-fn remove_partial_output(path: &std::path::Path) -> std::io::Result<()> {
-    if path.is_file() {
+fn remove_partial_output(
+    path: &std::path::Path,
+    output_existed_before_generation: bool,
+) -> std::io::Result<()> {
+    if !output_existed_before_generation && path.is_file() {
         std::fs::remove_file(path)?;
     }
     Ok(())
@@ -179,6 +196,7 @@ mod tests {
     use crate::models::{
         CropPosition, Effect, Preset, ShortGenerationOptions, ShortGenerationRequest,
     };
+    use std::fs;
     use std::path::PathBuf;
 
     #[test]
@@ -209,5 +227,18 @@ mod tests {
         assert!(built.args.iter().any(|v| v == "aac"));
         assert!(built.args.iter().any(|v| v == "120"));
         assert!(built.args.iter().any(|v| v == "21"));
+    }
+
+    #[test]
+    fn remove_partial_output_keeps_existing_files() {
+        let temp_dir = std::env::temp_dir().join("librapix-runner-tests");
+        fs::create_dir_all(&temp_dir).expect("create temp directory");
+        let path = temp_dir.join("existing-output.mp4");
+        fs::write(&path, b"existing").expect("write existing file");
+
+        remove_partial_output(&path, true).expect("skip removal for existing file");
+
+        assert!(path.exists());
+        let _ = fs::remove_file(path);
     }
 }

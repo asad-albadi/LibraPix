@@ -103,6 +103,8 @@ All notable changes to this project are documented in this file.
 - New-file detected dialog now uses the same content-sized modal behavior as other dialogs, removing extra bottom gap below actions.
 
 ### Fixed
+- Make Short ffmpeg generation now drains `stderr` while the process is active, preventing long-running encodes from hanging when progress logs fill the pipe.
+- Canceling Make Short generation now removes only newly-created partial outputs and preserves pre-existing files at the selected target path.
 - Newly discovered media opened from the filesystem-watch announcement dialog now shows an intentional animated loading placeholder while its preview is still being prepared, instead of appearing blank or broken.
 - Timeline no longer hangs or heavily stalls when scrolling through very large date buckets; an intersecting group no longer forces the UI thread to build every row in that group.
 - Timeline large-surface logs now report the real total row count instead of echoing the visible-row count, fixing misleading render-window evidence during Timeline investigations.

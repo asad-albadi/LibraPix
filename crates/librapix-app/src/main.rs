@@ -6578,32 +6578,26 @@ fn render_make_short_dialog(app: &Librapix) -> Element<'_, Message> {
     };
 
     let running_status: Element<'_, Message> = match &app.make_short_dialog.run_state {
-        MakeShortRunState::Running { stage, status } => column![
-            text(app.i18n.text(TextKey::MakeShortRunningLabel))
-                .size(FONT_BODY)
-                .color(TEXT_PRIMARY),
-            text(match stage {
-                GenerationStage::Preparing => app.i18n.text(TextKey::MakeShortStagePreparing),
-                GenerationStage::Probing => app.i18n.text(TextKey::MakeShortStageProbing),
-                GenerationStage::BuildingFilters => {
-                    app.i18n.text(TextKey::MakeShortStageBuildingFilters)
-                }
-                GenerationStage::Generating => app.i18n.text(TextKey::MakeShortStageGenerating),
-                GenerationStage::Finalizing => app.i18n.text(TextKey::MakeShortStageFinalizing),
-                GenerationStage::Completed => app.i18n.text(TextKey::StageReadyLabel),
-                GenerationStage::Failed => app.i18n.text(TextKey::MakeShortFailureLabel),
-            })
-            .size(FONT_CAPTION)
-            .color(TEXT_SECONDARY),
-            row![
-                text("\u{25CF}").size(FONT_CAPTION).color(ACCENT),
-                text(status).size(FONT_CAPTION).color(TEXT_TERTIARY),
+        MakeShortRunState::Running { stage, status } => {
+            let indicator_color = if matches!(stage, GenerationStage::Finalizing) {
+                SUCCESS_COLOR
+            } else {
+                ACCENT
+            };
+            column![
+                text(status).size(FONT_BODY).color(TEXT_PRIMARY),
+                row![
+                    text("\u{25CF}").size(FONT_CAPTION).color(indicator_color),
+                    text(app.i18n.text(TextKey::ActivityWorkingLabel))
+                        .size(FONT_CAPTION)
+                        .color(TEXT_SECONDARY),
+                ]
+                .spacing(SPACE_XS)
+                .align_y(iced::Alignment::Center),
             ]
             .spacing(SPACE_XS)
-            .align_y(iced::Alignment::Center),
-        ]
-        .spacing(SPACE_XS)
-        .into(),
+            .into()
+        }
         MakeShortRunState::Success { .. } => text(app.i18n.text(TextKey::MakeShortSuccessLabel))
             .size(FONT_CAPTION)
             .color(SUCCESS_COLOR)

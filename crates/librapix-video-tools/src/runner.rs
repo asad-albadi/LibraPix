@@ -112,14 +112,6 @@ pub fn run_generation_with_cancel(
     let output_existed_before_generation = output_file.exists();
 
     loop {
-        if cancellation.is_some_and(ShortGenerationCancellation::is_cancelled) {
-            let _ = child.kill();
-            let _ = child.wait();
-            let _ = collect_child_stderr(stderr_handle.take());
-            let _ = remove_partial_output(output_file, output_existed_before_generation);
-            return Err(VideoShortError::Cancelled);
-        }
-
         if let Some(status) = child
             .try_wait()
             .map_err(|e| VideoShortError::FfmpegSpawnFailed(e.to_string()))?
@@ -137,6 +129,14 @@ pub fn run_generation_with_cancel(
                 ffmpeg_exit_code: status.code(),
                 ffmpeg_stderr: stderr,
             });
+        }
+
+        if cancellation.is_some_and(ShortGenerationCancellation::is_cancelled) {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = collect_child_stderr(stderr_handle.take());
+            let _ = remove_partial_output(output_file, output_existed_before_generation);
+            return Err(VideoShortError::Cancelled);
         }
 
         std::thread::sleep(Duration::from_millis(100));

@@ -20,6 +20,7 @@
 - `theme`
 - `library_source_roots`
 - `path_overrides` for future path relocation support
+- `video_tools.default_shorts_output_dir` (optional default output base directory for Make Short)
 
 ## Validation behavior
 

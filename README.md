@@ -30,6 +30,7 @@ Implemented in the current codebase:
 - App-owned thumbnail cache for images and videos
 - Filesystem watching and new-media announcement UI
 - OS actions: open file, open containing folder, copy file, copy path
+- Video `Make Short` action for videos with script-equivalent options and background generation
 - Background GitHub release check (startup + periodic)
 
 ## Screenshot
@@ -63,6 +64,7 @@ LibraPix is a Rust workspace with focused crates and explicit boundaries:
 - `librapix-search`: search interfaces and fuzzy strategy
 - `librapix-projections`: gallery/timeline read projections
 - `librapix-thumbnails`: deterministic thumbnail generation/cache paths
+- `librapix-video-tools`: video-short generation validation/probe/filter/ffmpeg orchestration
 - `librapix-i18n`: keyed UI text and locale handling
 
 ## System design principles in the current implementation

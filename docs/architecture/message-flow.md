@@ -87,6 +87,13 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
   - App invokes platform-specific open/clipboard commands.
   - Windows copy-file uses native `CF_HDROP` clipboard payload writes (`SetClipboardData`) instead of shelling out to PowerShell.
   - Copy flow supports both path clipboard and file-object clipboard actions.
+- Make Short action (video-only)
+  - Details pane exposes `Make Short` only when the selected media kind is video.
+  - Dialog captures output path, script-equivalent effects, crop, fade, speed, CRF, and preset.
+  - App builds `ShortGenerationRequest` and dispatches background tasks with `Task::perform`.
+  - Stage-based dialog status transitions are explicit (`Preparing` -> `Probing` -> `Building filters` -> `Generating` -> `Finalizing`).
+  - ffprobe/ffmpeg validation/probe/filter/args/process logic stays in `librapix-video-tools`.
+  - Completion feeds explicit success/failure dialog state with open-file/open-folder follow-up actions.
 - Keyboard shortcuts
   - App subscribes to ignored keyboard events via `keyboard::listen`.
   - `Cmd/Ctrl+C` routes to copy-selected-file.

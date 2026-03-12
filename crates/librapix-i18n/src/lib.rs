@@ -204,8 +204,10 @@ pub enum TextKey {
     MakeShortCrfLabel,
     MakeShortPresetLabel,
     MakeShortRunButton,
+    MakeShortCancelButton,
     MakeShortRunningLabel,
     MakeShortSuccessLabel,
+    MakeShortCanceledLabel,
     MakeShortFailureLabel,
     MakeShortOpenFileButton,
     MakeShortOpenFolderButton,
@@ -227,6 +229,7 @@ pub enum TextKey {
     MakeShortStageProbing,
     MakeShortStageBuildingFilters,
     MakeShortStageGenerating,
+    MakeShortStageCanceling,
     MakeShortStageFinalizing,
 }
 
@@ -462,8 +465,10 @@ fn en_us(key: TextKey) -> &'static str {
         TextKey::MakeShortCrfLabel => "CRF",
         TextKey::MakeShortPresetLabel => "Preset",
         TextKey::MakeShortRunButton => "Generate",
+        TextKey::MakeShortCancelButton => "Cancel",
         TextKey::MakeShortRunningLabel => "Generating...",
         TextKey::MakeShortSuccessLabel => "Short generated successfully.",
+        TextKey::MakeShortCanceledLabel => "Short generation canceled.",
         TextKey::MakeShortFailureLabel => "Short generation failed.",
         TextKey::MakeShortOpenFileButton => "Open File",
         TextKey::MakeShortOpenFolderButton => "Open Folder",
@@ -501,6 +506,7 @@ fn en_us(key: TextKey) -> &'static str {
         TextKey::MakeShortStageProbing => "Probing source video",
         TextKey::MakeShortStageBuildingFilters => "Building video filters",
         TextKey::MakeShortStageGenerating => "Generating short",
+        TextKey::MakeShortStageCanceling => "Canceling short",
         TextKey::MakeShortStageFinalizing => "Finalizing output",
     }
 }

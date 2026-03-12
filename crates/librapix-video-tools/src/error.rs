@@ -13,6 +13,7 @@ pub enum VideoShortError {
     ProbeFailed(String),
     ProbeParseFailed(String),
     FfmpegSpawnFailed(String),
+    Cancelled,
     FfmpegFailed {
         exit_code: Option<i32>,
         stderr: String,
@@ -46,6 +47,7 @@ impl Display for VideoShortError {
                 write!(f, "Could not parse ffprobe duration as number: {value}")
             }
             Self::FfmpegSpawnFailed(detail) => write!(f, "ffmpeg could not start: {detail}"),
+            Self::Cancelled => write!(f, "Short generation canceled."),
             Self::FfmpegFailed { exit_code, stderr } => {
                 write!(f, "ffmpeg failed (exit_code={exit_code:?}): {stderr}")
             }

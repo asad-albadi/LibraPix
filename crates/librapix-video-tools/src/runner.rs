@@ -3,10 +3,15 @@ use crate::ffmpeg::{
     configure_background_command, path_for_ffmpeg, resolve_ffmpeg, resolve_ffprobe,
 };
 use crate::filters::{audio_filter, video_filter};
-use crate::models::{FfmpegArgs, GenerationStage, ShortGenerationRequest, ShortGenerationResult};
+use crate::models::{
+    FfmpegArgs, GenerationStage, ShortGenerationCancellation, ShortGenerationRequest,
+    ShortGenerationResult,
+};
 use crate::probe::read_video_duration_seconds;
 use crate::validate::validate_request;
+use std::io::Read;
 use std::process::{Command, Stdio};
+use std::time::Duration;
 
 pub fn prepare_generation(request: &ShortGenerationRequest) -> Result<FfmpegArgs, VideoShortError> {
     validate_request(request)?;
@@ -83,6 +88,13 @@ pub fn build_ffmpeg_args_for_request(
 }
 
 pub fn run_generation(prepared: &FfmpegArgs) -> Result<ShortGenerationResult, VideoShortError> {
+    run_generation_with_cancel(prepared, None)
+}
+
+pub fn run_generation_with_cancel(
+    prepared: &FfmpegArgs,
+    cancellation: Option<&ShortGenerationCancellation>,
+) -> Result<ShortGenerationResult, VideoShortError> {
     let mut command = Command::new(&prepared.ffmpeg_path);
     command
         .args(prepared.args.iter())
@@ -91,29 +103,62 @@ pub fn run_generation(prepared: &FfmpegArgs) -> Result<ShortGenerationResult, Vi
         .stderr(Stdio::piped());
     configure_background_command(&mut command);
 
-    let output = command
-        .output()
+    let mut child = command
+        .spawn()
         .map_err(|e| VideoShortError::FfmpegSpawnFailed(e.to_string()))?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(VideoShortError::FfmpegFailed {
-            exit_code: output.status.code(),
-            stderr,
-        });
-    }
+    loop {
+        if cancellation.is_some_and(ShortGenerationCancellation::is_cancelled) {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = remove_partial_output(prepared_output_file(prepared));
+            return Err(VideoShortError::Cancelled);
+        }
 
-    let output_path = prepared
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|e| VideoShortError::FfmpegSpawnFailed(e.to_string()))?
+        {
+            let stderr = read_child_stderr(&mut child);
+            if !status.success() {
+                return Err(VideoShortError::FfmpegFailed {
+                    exit_code: status.code(),
+                    stderr: stderr.trim().to_owned(),
+                });
+            }
+
+            return Ok(ShortGenerationResult {
+                output_file: prepared_output_file(prepared).to_path_buf(),
+                ffmpeg_exit_code: status.code(),
+                ffmpeg_stderr: stderr,
+            });
+        }
+
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+fn prepared_output_file(prepared: &FfmpegArgs) -> &std::path::Path {
+    prepared
         .args
         .last()
-        .map(std::path::PathBuf::from)
-        .unwrap_or_default();
+        .map(std::path::Path::new)
+        .unwrap_or(std::path::Path::new(""))
+}
 
-    Ok(ShortGenerationResult {
-        output_file: output_path,
-        ffmpeg_exit_code: output.status.code(),
-        ffmpeg_stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-    })
+fn read_child_stderr(child: &mut std::process::Child) -> String {
+    let mut stderr = Vec::new();
+    if let Some(mut stream) = child.stderr.take() {
+        let _ = stream.read_to_end(&mut stderr);
+    }
+    String::from_utf8_lossy(&stderr).to_string()
+}
+
+fn remove_partial_output(path: &std::path::Path) -> std::io::Result<()> {
+    if path.is_file() {
+        std::fs::remove_file(path)?;
+    }
+    Ok(())
 }
 
 pub fn stage_label(stage: GenerationStage) -> &'static str {

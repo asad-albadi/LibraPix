@@ -9,8 +9,8 @@ pub mod validate;
 
 pub use error::VideoShortError;
 pub use models::{
-    CropPosition, Effect, FfmpegArgs, GenerationStage, Preset, ShortGenerationOptions,
-    ShortGenerationRequest, ShortGenerationResult,
+    CropPosition, Effect, FfmpegArgs, GenerationStage, Preset, ShortGenerationCancellation,
+    ShortGenerationOptions, ShortGenerationRequest, ShortGenerationResult,
 };
 pub use paths::default_shorts_output_dir;
-pub use runner::{prepare_generation, run_generation};
+pub use runner::{prepare_generation, run_generation, run_generation_with_cancel};

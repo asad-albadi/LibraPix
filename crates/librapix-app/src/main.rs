@@ -43,8 +43,8 @@ use librapix_thumbnails::{
 use librapix_video_tools::paths::default_output_file_path;
 use librapix_video_tools::{
     CropPosition, Effect as ShortEffect, FfmpegArgs as ShortFfmpegArgs, GenerationStage, Preset,
-    ShortGenerationOptions, ShortGenerationRequest, ShortGenerationResult, prepare_generation,
-    run_generation,
+    ShortGenerationCancellation, ShortGenerationOptions, ShortGenerationRequest,
+    ShortGenerationResult, VideoShortError, prepare_generation, run_generation_with_cancel,
 };
 use notify::{EventKind, RecursiveMode, Watcher};
 use semver::Version;
@@ -110,8 +110,9 @@ enum Message {
     MakeShortCrfChanged(String),
     MakeShortSetPreset(Preset),
     RunMakeShort,
+    CancelMakeShortGeneration,
     MakeShortPrepared(Result<PreparedShortJob, String>),
-    MakeShortGenerated(Result<ShortGenerationResult, String>),
+    MakeShortGenerated(MakeShortGenerationOutcome),
     OpenGeneratedShortFile,
     OpenGeneratedShortFolder,
     IgnoreRuleInputChanged(String),
@@ -772,6 +773,7 @@ struct MakeShortDialogState {
     preset: Preset,
     validation_error: Option<String>,
     run_state: MakeShortRunState,
+    cancellation: Option<ShortGenerationCancellation>,
 }
 
 impl Default for MakeShortDialogState {
@@ -788,6 +790,7 @@ impl Default for MakeShortDialogState {
             preset: Preset::Medium,
             validation_error: None,
             run_state: MakeShortRunState::Idle,
+            cancellation: None,
         }
     }
 }
@@ -803,10 +806,20 @@ enum MakeShortRunState {
     Success {
         output_file: PathBuf,
     },
+    Canceled {
+        summary: String,
+    },
     Failed {
         summary: String,
         details: String,
     },
+}
+
+#[derive(Debug, Clone)]
+enum MakeShortGenerationOutcome {
+    Success(ShortGenerationResult),
+    Canceled,
+    Failed(String),
 }
 
 #[derive(Debug, Clone)]
@@ -1348,6 +1361,7 @@ fn message_event_label(msg: &Message) -> String {
         Message::MakeShortCrfChanged(v) => format!("MakeShortCrfChanged({})", v.len()),
         Message::MakeShortSetPreset(_) => "MakeShortSetPreset".into(),
         Message::RunMakeShort => "RunMakeShort".into(),
+        Message::CancelMakeShortGeneration => "CancelMakeShortGeneration".into(),
         Message::MakeShortPrepared(result) => {
             if result.is_ok() {
                 "MakeShortPrepared(ok)".into()
@@ -1355,12 +1369,14 @@ fn message_event_label(msg: &Message) -> String {
                 "MakeShortPrepared(err)".into()
             }
         }
-        Message::MakeShortGenerated(result) => {
-            if result.is_ok() {
-                "MakeShortGenerated(ok)".into()
-            } else {
-                "MakeShortGenerated(err)".into()
-            }
+        Message::MakeShortGenerated(MakeShortGenerationOutcome::Success(_)) => {
+            "MakeShortGenerated(ok)".into()
+        }
+        Message::MakeShortGenerated(MakeShortGenerationOutcome::Canceled) => {
+            "MakeShortGenerated(canceled)".into()
+        }
+        Message::MakeShortGenerated(MakeShortGenerationOutcome::Failed(_)) => {
+            "MakeShortGenerated(err)".into()
         }
         Message::OpenGeneratedShortFile => "OpenGeneratedShortFile".into(),
         Message::OpenGeneratedShortFolder => "OpenGeneratedShortFolder".into(),
@@ -1857,6 +1873,9 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
             open_make_short_dialog(app);
         }
         Message::CloseMakeShortDialog => {
+            if let Some(cancellation) = app.make_short_dialog.cancellation.take() {
+                cancellation.cancel();
+            }
             app.make_short_dialog.open = false;
             app.make_short_dialog.run_state = MakeShortRunState::Idle;
             app.make_short_dialog.validation_error = None;
@@ -1898,6 +1917,7 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
             let Some(request) = build_short_request_from_dialog(app) else {
                 return Task::none();
             };
+            app.make_short_dialog.cancellation = None;
             app.make_short_dialog.run_state = MakeShortRunState::Running {
                 stage: GenerationStage::Preparing,
                 status: app.i18n.text(TextKey::MakeShortStagePreparing).to_owned(),
@@ -1907,18 +1927,30 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
                 Message::MakeShortPrepared,
             );
         }
+        Message::CancelMakeShortGeneration => {
+            if let Some(cancellation) = app.make_short_dialog.cancellation.take() {
+                cancellation.cancel();
+                app.make_short_dialog.run_state = MakeShortRunState::Running {
+                    stage: GenerationStage::Generating,
+                    status: app.i18n.text(TextKey::MakeShortStageCanceling).to_owned(),
+                };
+            }
+        }
         Message::MakeShortPrepared(result) => match result {
             Ok(job) => {
+                let cancellation = ShortGenerationCancellation::new();
+                app.make_short_dialog.cancellation = Some(cancellation.clone());
                 app.make_short_dialog.run_state = MakeShortRunState::Running {
                     stage: GenerationStage::Generating,
                     status: app.i18n.text(TextKey::MakeShortStageGenerating).to_owned(),
                 };
                 return Task::perform(
-                    async move { do_generate_short(job) },
+                    async move { do_generate_short(job, cancellation) },
                     Message::MakeShortGenerated,
                 );
             }
             Err(error) => {
+                app.make_short_dialog.cancellation = None;
                 app.make_short_dialog.run_state = MakeShortRunState::Failed {
                     summary: app.i18n.text(TextKey::MakeShortFailureLabel).to_owned(),
                     details: error,
@@ -1926,7 +1958,8 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
             }
         },
         Message::MakeShortGenerated(result) => match result {
-            Ok(output) => {
+            MakeShortGenerationOutcome::Success(output) => {
+                app.make_short_dialog.cancellation = None;
                 app.make_short_dialog.run_state = MakeShortRunState::Running {
                     stage: GenerationStage::Finalizing,
                     status: app.i18n.text(TextKey::MakeShortStageFinalizing).to_owned(),
@@ -1935,7 +1968,14 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
                     output_file: output.output_file,
                 };
             }
-            Err(error) => {
+            MakeShortGenerationOutcome::Canceled => {
+                app.make_short_dialog.cancellation = None;
+                app.make_short_dialog.run_state = MakeShortRunState::Canceled {
+                    summary: app.i18n.text(TextKey::MakeShortCanceledLabel).to_owned(),
+                };
+            }
+            MakeShortGenerationOutcome::Failed(error) => {
+                app.make_short_dialog.cancellation = None;
                 app.make_short_dialog.run_state = MakeShortRunState::Failed {
                     summary: app.i18n.text(TextKey::MakeShortFailureLabel).to_owned(),
                     details: error,
@@ -6602,6 +6642,10 @@ fn render_make_short_dialog(app: &Librapix) -> Element<'_, Message> {
             .size(FONT_CAPTION)
             .color(SUCCESS_COLOR)
             .into(),
+        MakeShortRunState::Canceled { summary } => text(summary)
+            .size(FONT_CAPTION)
+            .color(TEXT_SECONDARY)
+            .into(),
         MakeShortRunState::Failed { summary, details } => column![
             text(summary).size(FONT_CAPTION).color(WARNING_COLOR),
             text(details).size(FONT_CAPTION).color(TEXT_TERTIARY),
@@ -6645,15 +6689,28 @@ fn render_make_short_dialog(app: &Librapix) -> Element<'_, Message> {
         generate_button = generate_button.on_press(Message::RunMakeShort);
     }
 
-    let mut actions = row![
-        button(text(app.i18n.text(TextKey::MakeShortCloseButton)).size(FONT_BODY))
-            .on_press(Message::CloseMakeShortDialog)
-            .style(subtle_button_style)
-            .padding([SPACE_XS as u16, SPACE_MD as u16]),
-        generate_button
-    ]
-    .spacing(SPACE_SM)
-    .align_y(iced::Alignment::Center);
+    let mut actions = if is_running {
+        let mut cancel_button =
+            button(text(app.i18n.text(TextKey::MakeShortCancelButton)).size(FONT_BODY))
+                .style(subtle_button_style)
+                .padding([SPACE_XS as u16, SPACE_MD as u16]);
+        if app.make_short_dialog.cancellation.is_some() {
+            cancel_button = cancel_button.on_press(Message::CancelMakeShortGeneration);
+        }
+        row![cancel_button]
+            .spacing(SPACE_SM)
+            .align_y(iced::Alignment::Center)
+    } else {
+        row![
+            button(text(app.i18n.text(TextKey::MakeShortCloseButton)).size(FONT_BODY))
+                .on_press(Message::CloseMakeShortDialog)
+                .style(subtle_button_style)
+                .padding([SPACE_XS as u16, SPACE_MD as u16]),
+            generate_button
+        ]
+        .spacing(SPACE_SM)
+        .align_y(iced::Alignment::Center)
+    };
 
     if matches!(
         app.make_short_dialog.run_state,
@@ -6714,10 +6771,16 @@ fn render_make_short_dialog(app: &Librapix) -> Element<'_, Message> {
                 .size(FONT_TITLE)
                 .color(TEXT_PRIMARY),
             Space::new().width(Length::Fill),
-            button(text(app.i18n.text(TextKey::DismissButton)).size(FONT_BODY))
-                .on_press(Message::CloseMakeShortDialog)
-                .style(subtle_button_style)
-                .padding([SPACE_XS as u16, SPACE_MD as u16]),
+            {
+                let mut dismiss =
+                    button(text(app.i18n.text(TextKey::DismissButton)).size(FONT_BODY))
+                        .style(subtle_button_style)
+                        .padding([SPACE_XS as u16, SPACE_MD as u16]);
+                if !is_running {
+                    dismiss = dismiss.on_press(Message::CloseMakeShortDialog);
+                }
+                dismiss
+            },
         ]
         .align_y(iced::Alignment::Center),
         h_divider(),
@@ -6832,8 +6895,15 @@ fn do_prepare_short(request: ShortGenerationRequest) -> Result<PreparedShortJob,
         .map_err(|error| error.to_string())
 }
 
-fn do_generate_short(job: PreparedShortJob) -> Result<ShortGenerationResult, String> {
-    run_generation(&job.prepared).map_err(|error| error.to_string())
+fn do_generate_short(
+    job: PreparedShortJob,
+    cancellation: ShortGenerationCancellation,
+) -> MakeShortGenerationOutcome {
+    match run_generation_with_cancel(&job.prepared, Some(&cancellation)) {
+        Ok(result) => MakeShortGenerationOutcome::Success(result),
+        Err(VideoShortError::Cancelled) => MakeShortGenerationOutcome::Canceled,
+        Err(error) => MakeShortGenerationOutcome::Failed(error.to_string()),
+    }
 }
 
 fn toggle_make_short_effect(app: &mut Librapix, effect: ShortEffect) {
@@ -6874,6 +6944,7 @@ fn open_make_short_dialog(app: &mut Librapix) {
     app.make_short_dialog.output_file_input = default_output.display().to_string();
     app.make_short_dialog.validation_error = None;
     app.make_short_dialog.run_state = MakeShortRunState::Idle;
+    app.make_short_dialog.cancellation = None;
 }
 
 fn build_short_request_from_dialog(app: &mut Librapix) -> Option<ShortGenerationRequest> {

@@ -1,4 +1,6 @@
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Effect {
@@ -102,4 +104,23 @@ pub struct ShortGenerationResult {
     pub output_file: PathBuf,
     pub ffmpeg_exit_code: Option<i32>,
     pub ffmpeg_stderr: String,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ShortGenerationCancellation {
+    cancelled: Arc<AtomicBool>,
+}
+
+impl ShortGenerationCancellation {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::SeqCst);
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::SeqCst)
+    }
 }

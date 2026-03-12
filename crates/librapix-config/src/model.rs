@@ -28,6 +28,11 @@ pub struct PathOverrides {
     pub database_file: Option<PathBuf>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct VideoToolsConfig {
+    pub default_shorts_output_dir: Option<PathBuf>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AppConfig {
     pub schema_version: u32,
@@ -35,6 +40,8 @@ pub struct AppConfig {
     pub theme: ThemePreference,
     pub library_source_roots: Vec<LibrarySourceRoot>,
     pub path_overrides: PathOverrides,
+    #[serde(default)]
+    pub video_tools: VideoToolsConfig,
 }
 
 impl Default for AppConfig {
@@ -45,6 +52,7 @@ impl Default for AppConfig {
             theme: ThemePreference::System,
             library_source_roots: Vec::new(),
             path_overrides: PathOverrides::default(),
+            video_tools: VideoToolsConfig::default(),
         }
     }
 }

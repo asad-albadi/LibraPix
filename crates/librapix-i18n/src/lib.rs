@@ -91,6 +91,7 @@ pub enum TextKey {
     DetailsOpenFolderButton,
     DetailsCopyFileButton,
     DetailsCopyPathButton,
+    DetailsMakeShortButton,
     DetailsCopyShortcutHint,
     DetailsNoSelectionLabel,
     DetailsActionStatusLabel,
@@ -135,6 +136,8 @@ pub enum TextKey {
     FilterTagsLabel,
     FilterNoTagsLabel,
     MinFileSizeLabel,
+    DefaultShortsOutputDirLabel,
+    DefaultShortsOutputDirPlaceholder,
     MinFileSizeKbSuffix,
     ApplyLabel,
     RootTagsSectionLabel,
@@ -191,6 +194,40 @@ pub enum TextKey {
     LibraryStatsLastIndexedLabel,
     LibraryStatsOldestFileLabel,
     LibraryStatsNewestFileLabel,
+    MakeShortDialogTitle,
+    MakeShortOutputPathLabel,
+    MakeShortChooseOutputButton,
+    MakeShortEffectsLabel,
+    MakeShortCropLabel,
+    MakeShortFadeLabel,
+    MakeShortSpeedLabel,
+    MakeShortCrfLabel,
+    MakeShortPresetLabel,
+    MakeShortRunButton,
+    MakeShortRunningLabel,
+    MakeShortSuccessLabel,
+    MakeShortFailureLabel,
+    MakeShortOpenFileButton,
+    MakeShortOpenFolderButton,
+    MakeShortCloseButton,
+    MakeShortSmoothWarning,
+    MakeShortHelpEffectsClean,
+    MakeShortHelpEffectsEnhanced,
+    MakeShortHelpEffectsCinematic,
+    MakeShortHelpEffectsNight,
+    MakeShortHelpEffectsScenic,
+    MakeShortHelpEffectsSmooth,
+    MakeShortHelpCrop,
+    MakeShortHelpFade,
+    MakeShortHelpSpeed,
+    MakeShortHelpCrf,
+    MakeShortHelpPreset,
+    MakeShortHelpOutput,
+    MakeShortStagePreparing,
+    MakeShortStageProbing,
+    MakeShortStageBuildingFilters,
+    MakeShortStageGenerating,
+    MakeShortStageFinalizing,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -306,6 +343,7 @@ fn en_us(key: TextKey) -> &'static str {
         TextKey::DetailsOpenFolderButton => "Open Folder",
         TextKey::DetailsCopyFileButton => "Copy File",
         TextKey::DetailsCopyPathButton => "Copy Path",
+        TextKey::DetailsMakeShortButton => "Make Short",
         TextKey::DetailsCopyShortcutHint => "Shortcut: Cmd/Ctrl+C (file), Cmd/Ctrl+Shift+C (path)",
         TextKey::DetailsNoSelectionLabel => "Select a photo to see details.",
         TextKey::DetailsActionStatusLabel => "Action status",
@@ -352,6 +390,8 @@ fn en_us(key: TextKey) -> &'static str {
         TextKey::FilterTagsLabel => "Tags",
         TextKey::FilterNoTagsLabel => "No tags",
         TextKey::MinFileSizeLabel => "Min size",
+        TextKey::DefaultShortsOutputDirLabel => "Default shorts output",
+        TextKey::DefaultShortsOutputDirPlaceholder => "Videos/LibraPix-Shorts",
         TextKey::MinFileSizeKbSuffix => "KB",
         TextKey::ApplyLabel => "Apply",
         TextKey::RootTagsSectionLabel => "AUTO TAGS",
@@ -412,5 +452,55 @@ fn en_us(key: TextKey) -> &'static str {
         TextKey::LibraryStatsLastIndexedLabel => "Last indexed",
         TextKey::LibraryStatsOldestFileLabel => "Oldest file",
         TextKey::LibraryStatsNewestFileLabel => "Newest file",
+        TextKey::MakeShortDialogTitle => "Make Short",
+        TextKey::MakeShortOutputPathLabel => "Output File",
+        TextKey::MakeShortChooseOutputButton => "Browse...",
+        TextKey::MakeShortEffectsLabel => "Effects",
+        TextKey::MakeShortCropLabel => "Crop Position",
+        TextKey::MakeShortFadeLabel => "Add fade",
+        TextKey::MakeShortSpeedLabel => "Speed",
+        TextKey::MakeShortCrfLabel => "CRF",
+        TextKey::MakeShortPresetLabel => "Preset",
+        TextKey::MakeShortRunButton => "Generate",
+        TextKey::MakeShortRunningLabel => "Generating...",
+        TextKey::MakeShortSuccessLabel => "Short generated successfully.",
+        TextKey::MakeShortFailureLabel => "Short generation failed.",
+        TextKey::MakeShortOpenFileButton => "Open File",
+        TextKey::MakeShortOpenFolderButton => "Open Folder",
+        TextKey::MakeShortCloseButton => "Close",
+        TextKey::MakeShortSmoothWarning => "Smooth is high-cost and can take much longer.",
+        TextKey::MakeShortHelpEffectsClean => {
+            "No enhancement filters; keeps only base crop/scale pipeline."
+        }
+        TextKey::MakeShortHelpEffectsEnhanced => {
+            "Light brightness/contrast/saturation boost with sharpening."
+        }
+        TextKey::MakeShortHelpEffectsCinematic => {
+            "Enhanced look plus denoise for a cinematic style."
+        }
+        TextKey::MakeShortHelpEffectsNight => {
+            "Stronger brightening/contrast tuned for dark footage."
+        }
+        TextKey::MakeShortHelpEffectsScenic => {
+            "Balanced enhancement, denoise, gradation, and sharpening."
+        }
+        TextKey::MakeShortHelpEffectsSmooth => {
+            "120fps interpolation; smooth but significantly slower."
+        }
+        TextKey::MakeShortHelpCrop => {
+            "Center, left, or right 1080-wide crop from the source frame."
+        }
+        TextKey::MakeShortHelpFade => "Adds a short fade-in and fade-out at clip boundaries.",
+        TextKey::MakeShortHelpSpeed => "Playback speed multiplier. 1.0 keeps original speed.",
+        TextKey::MakeShortHelpCrf => {
+            "x264 quality factor. Lower is higher quality and larger files."
+        }
+        TextKey::MakeShortHelpPreset => "x264 encoding speed/efficiency tradeoff.",
+        TextKey::MakeShortHelpOutput => "Where the generated short will be written.",
+        TextKey::MakeShortStagePreparing => "Preparing short",
+        TextKey::MakeShortStageProbing => "Probing source video",
+        TextKey::MakeShortStageBuildingFilters => "Building video filters",
+        TextKey::MakeShortStageGenerating => "Generating short",
+        TextKey::MakeShortStageFinalizing => "Finalizing output",
     }
 }

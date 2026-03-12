@@ -40,6 +40,12 @@ use librapix_thumbnails::{
     ThumbnailCancellation, ThumbnailError, VideoThumbnailErrorKind, VideoThumbnailOptions,
     ensure_image_thumbnail, ensure_video_thumbnail_with_options, thumbnail_path,
 };
+use librapix_video_tools::paths::default_output_file_path;
+use librapix_video_tools::{
+    CropPosition, Effect as ShortEffect, FfmpegArgs as ShortFfmpegArgs, GenerationStage, Preset,
+    ShortGenerationOptions, ShortGenerationRequest, ShortGenerationResult, prepare_generation,
+    run_generation,
+};
 use notify::{EventKind, RecursiveMode, Watcher};
 use semver::Version;
 use serde::{Deserialize, Serialize};
@@ -93,6 +99,21 @@ enum Message {
     OpenSelectedFolder,
     CopySelectedFile,
     CopySelectedPath,
+    OpenMakeShortDialog,
+    CloseMakeShortDialog,
+    MakeShortOutputPathChanged(String),
+    MakeShortBrowseOutputPath,
+    MakeShortToggleEffect(ShortEffect),
+    MakeShortSetCropPosition(CropPosition),
+    MakeShortSetAddFade(bool),
+    MakeShortSpeedChanged(String),
+    MakeShortCrfChanged(String),
+    MakeShortSetPreset(Preset),
+    RunMakeShort,
+    MakeShortPrepared(Result<PreparedShortJob, String>),
+    MakeShortGenerated(Result<ShortGenerationResult, String>),
+    OpenGeneratedShortFile,
+    OpenGeneratedShortFolder,
     IgnoreRuleInputChanged(String),
     IgnoreRuleAdd,
     IgnoreRuleToggleEnabled(i64),
@@ -161,6 +182,9 @@ enum Message {
     SaveLibraryDialog,
     SaveLibraryAndAddAnother,
     SetFilterLibrary(Option<i64>),
+    ShortsOutputDirInputChanged(String),
+    ShortsOutputDirBrowse,
+    SaveShortsOutputDirSetting,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -735,6 +759,61 @@ struct GitHubLatestReleaseResponse {
     draft: bool,
 }
 
+#[derive(Debug, Clone)]
+struct MakeShortDialogState {
+    open: bool,
+    input_file: Option<PathBuf>,
+    output_file_input: String,
+    effects: Vec<ShortEffect>,
+    crop_position: CropPosition,
+    add_fade: bool,
+    speed_input: String,
+    crf_input: String,
+    preset: Preset,
+    validation_error: Option<String>,
+    run_state: MakeShortRunState,
+}
+
+impl Default for MakeShortDialogState {
+    fn default() -> Self {
+        Self {
+            open: false,
+            input_file: None,
+            output_file_input: String::new(),
+            effects: vec![ShortEffect::Enhanced],
+            crop_position: CropPosition::Center,
+            add_fade: false,
+            speed_input: "1.0".to_owned(),
+            crf_input: "18".to_owned(),
+            preset: Preset::Medium,
+            validation_error: None,
+            run_state: MakeShortRunState::Idle,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+enum MakeShortRunState {
+    #[default]
+    Idle,
+    Running {
+        stage: GenerationStage,
+        status: String,
+    },
+    Success {
+        output_file: PathBuf,
+    },
+    Failed {
+        summary: String,
+        details: String,
+    },
+}
+
+#[derive(Debug, Clone)]
+struct PreparedShortJob {
+    prepared: ShortFfmpegArgs,
+}
+
 struct Librapix {
     state: AppState,
     i18n: Translator,
@@ -750,6 +829,7 @@ struct Librapix {
     details_tags: Vec<DetailsTagChip>,
     details_editing_tag: Option<String>,
     details_loaded_media_ids: HashSet<i64>,
+    make_short_dialog: MakeShortDialogState,
     ignore_rule_input: String,
     ignore_rules: Vec<librapix_storage::IgnoreRuleRecord>,
     ignore_rule_editing_id: Option<i64>,
@@ -770,6 +850,7 @@ struct Librapix {
     available_filter_tags: Vec<String>,
     min_file_size_bytes: u64,
     min_file_size_input: String,
+    shorts_output_dir_input: String,
     media_cache: HashMap<i64, CachedDetails>,
     background: BackgroundCoordinator,
     diagnostics_lines: Vec<String>,
@@ -948,6 +1029,7 @@ struct RuntimeContext {
     thumbnails_dir: PathBuf,
     config_file: PathBuf,
     configured_library_roots: Vec<PathBuf>,
+    default_shorts_output_dir: Option<PathBuf>,
 }
 
 impl Default for Librapix {
@@ -962,6 +1044,7 @@ impl Default for Librapix {
                 thumbnails_dir: bootstrap.thumbnails_dir,
                 config_file: bootstrap.config_file,
                 configured_library_roots: bootstrap.configured_library_roots,
+                default_shorts_output_dir: bootstrap.default_shorts_output_dir.clone(),
             },
             startup_log_path: startup_log::active_log_path(),
             thumbnail_status: String::new(),
@@ -973,6 +1056,7 @@ impl Default for Librapix {
             details_tags: Vec::new(),
             details_editing_tag: None,
             details_loaded_media_ids: HashSet::new(),
+            make_short_dialog: MakeShortDialogState::default(),
             ignore_rule_input: String::new(),
             ignore_rules: Vec::new(),
             ignore_rule_editing_id: None,
@@ -993,6 +1077,11 @@ impl Default for Librapix {
             available_filter_tags: Vec::new(),
             min_file_size_bytes: 0,
             min_file_size_input: String::new(),
+            shorts_output_dir_input: bootstrap
+                .default_shorts_output_dir
+                .as_ref()
+                .map(|p| p.display().to_string())
+                .unwrap_or_default(),
             media_cache: HashMap::new(),
             background: BackgroundCoordinator::default(),
             diagnostics_lines: Vec::new(),
@@ -1244,6 +1333,37 @@ fn message_event_label(msg: &Message) -> String {
         Message::OpenSelectedFolder => "OpenSelectedFolder".into(),
         Message::CopySelectedFile => "CopySelectedFile".into(),
         Message::CopySelectedPath => "CopySelectedPath".into(),
+        Message::OpenMakeShortDialog => "OpenMakeShortDialog".into(),
+        Message::CloseMakeShortDialog => "CloseMakeShortDialog".into(),
+        Message::MakeShortOutputPathChanged(v) => {
+            format!("MakeShortOutputPathChanged({})", v.len())
+        }
+        Message::MakeShortBrowseOutputPath => "MakeShortBrowseOutputPath".into(),
+        Message::MakeShortToggleEffect(effect) => {
+            format!("MakeShortToggleEffect({})", effect.as_str())
+        }
+        Message::MakeShortSetCropPosition(_) => "MakeShortSetCropPosition".into(),
+        Message::MakeShortSetAddFade(value) => format!("MakeShortSetAddFade({value})"),
+        Message::MakeShortSpeedChanged(v) => format!("MakeShortSpeedChanged({})", v.len()),
+        Message::MakeShortCrfChanged(v) => format!("MakeShortCrfChanged({})", v.len()),
+        Message::MakeShortSetPreset(_) => "MakeShortSetPreset".into(),
+        Message::RunMakeShort => "RunMakeShort".into(),
+        Message::MakeShortPrepared(result) => {
+            if result.is_ok() {
+                "MakeShortPrepared(ok)".into()
+            } else {
+                "MakeShortPrepared(err)".into()
+            }
+        }
+        Message::MakeShortGenerated(result) => {
+            if result.is_ok() {
+                "MakeShortGenerated(ok)".into()
+            } else {
+                "MakeShortGenerated(err)".into()
+            }
+        }
+        Message::OpenGeneratedShortFile => "OpenGeneratedShortFile".into(),
+        Message::OpenGeneratedShortFolder => "OpenGeneratedShortFolder".into(),
         Message::IgnoreRuleInputChanged(v) => format!("IgnoreRuleInputChanged({})", v.len()),
         Message::IgnoreRuleAdd => "IgnoreRuleAdd".into(),
         Message::IgnoreRuleToggleEnabled(id) => format!("IgnoreRuleToggleEnabled({id})"),
@@ -1322,6 +1442,11 @@ fn message_event_label(msg: &Message) -> String {
         Message::SaveLibraryDialog => "SaveLibraryDialog".into(),
         Message::SaveLibraryAndAddAnother => "SaveLibraryAndAddAnother".into(),
         Message::SetFilterLibrary(_) => "SetFilterLibrary".into(),
+        Message::ShortsOutputDirInputChanged(v) => {
+            format!("ShortsOutputDirInputChanged({})", v.len())
+        }
+        Message::ShortsOutputDirBrowse => "ShortsOutputDirBrowse".into(),
+        Message::SaveShortsOutputDirSetting => "SaveShortsOutputDirSetting".into(),
     }
 }
 
@@ -1418,12 +1543,22 @@ fn selected_media_context(app: &Librapix, media_id: i64) -> String {
     )
 }
 
+fn selected_media_is_video(app: &Librapix) -> bool {
+    let Some(media_id) = app.state.selected_media_id else {
+        return false;
+    };
+    app.media_cache
+        .get(&media_id)
+        .is_some_and(|details| details.media_kind.eq_ignore_ascii_case("video"))
+}
+
 fn close_all_dialogs(app: &mut Librapix) {
     app.filter_dialog_open = false;
     app.settings_open = false;
     app.about_open = false;
     app.library_dialog_open = false;
     app.library_stats_dialog_open = false;
+    app.make_short_dialog.open = false;
     app.new_media_announcement = None;
     app.new_media_preview_loading_phase = 0;
 }
@@ -1718,6 +1853,116 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
         Message::CopySelectedPath => {
             copy_selected_path(app);
         }
+        Message::OpenMakeShortDialog => {
+            open_make_short_dialog(app);
+        }
+        Message::CloseMakeShortDialog => {
+            app.make_short_dialog.open = false;
+            app.make_short_dialog.run_state = MakeShortRunState::Idle;
+            app.make_short_dialog.validation_error = None;
+        }
+        Message::MakeShortOutputPathChanged(value) => {
+            app.make_short_dialog.output_file_input = value;
+            app.make_short_dialog.validation_error = None;
+        }
+        Message::MakeShortBrowseOutputPath => {
+            if let Some(path) = rfd::FileDialog::new()
+                .set_title(app.i18n.text(TextKey::MakeShortOutputPathLabel))
+                .save_file()
+            {
+                app.make_short_dialog.output_file_input = path.display().to_string();
+                app.make_short_dialog.validation_error = None;
+            }
+        }
+        Message::MakeShortToggleEffect(effect) => {
+            toggle_make_short_effect(app, effect);
+        }
+        Message::MakeShortSetCropPosition(position) => {
+            app.make_short_dialog.crop_position = position;
+        }
+        Message::MakeShortSetAddFade(value) => {
+            app.make_short_dialog.add_fade = value;
+        }
+        Message::MakeShortSpeedChanged(value) => {
+            app.make_short_dialog.speed_input = value;
+            app.make_short_dialog.validation_error = None;
+        }
+        Message::MakeShortCrfChanged(value) => {
+            app.make_short_dialog.crf_input = value;
+            app.make_short_dialog.validation_error = None;
+        }
+        Message::MakeShortSetPreset(preset) => {
+            app.make_short_dialog.preset = preset;
+        }
+        Message::RunMakeShort => {
+            let Some(request) = build_short_request_from_dialog(app) else {
+                return Task::none();
+            };
+            app.make_short_dialog.run_state = MakeShortRunState::Running {
+                stage: GenerationStage::Preparing,
+                status: app.i18n.text(TextKey::MakeShortStagePreparing).to_owned(),
+            };
+            return Task::perform(
+                async move { do_prepare_short(request) },
+                Message::MakeShortPrepared,
+            );
+        }
+        Message::MakeShortPrepared(result) => match result {
+            Ok(job) => {
+                app.make_short_dialog.run_state = MakeShortRunState::Running {
+                    stage: GenerationStage::BuildingFilters,
+                    status: app
+                        .i18n
+                        .text(TextKey::MakeShortStageBuildingFilters)
+                        .to_owned(),
+                };
+                app.make_short_dialog.run_state = MakeShortRunState::Running {
+                    stage: GenerationStage::Generating,
+                    status: app.i18n.text(TextKey::MakeShortStageGenerating).to_owned(),
+                };
+                return Task::perform(
+                    async move { do_generate_short(job) },
+                    Message::MakeShortGenerated,
+                );
+            }
+            Err(error) => {
+                app.make_short_dialog.run_state = MakeShortRunState::Failed {
+                    summary: app.i18n.text(TextKey::MakeShortFailureLabel).to_owned(),
+                    details: error,
+                };
+            }
+        },
+        Message::MakeShortGenerated(result) => match result {
+            Ok(output) => {
+                app.make_short_dialog.run_state = MakeShortRunState::Running {
+                    stage: GenerationStage::Finalizing,
+                    status: app.i18n.text(TextKey::MakeShortStageFinalizing).to_owned(),
+                };
+                app.make_short_dialog.run_state = MakeShortRunState::Success {
+                    output_file: output.output_file,
+                };
+            }
+            Err(error) => {
+                app.make_short_dialog.run_state = MakeShortRunState::Failed {
+                    summary: app.i18n.text(TextKey::MakeShortFailureLabel).to_owned(),
+                    details: error,
+                };
+            }
+        },
+        Message::OpenGeneratedShortFile => {
+            if let MakeShortRunState::Success { output_file } = &app.make_short_dialog.run_state {
+                let _ = open_with_system_default(output_file);
+            }
+        }
+        Message::OpenGeneratedShortFolder => {
+            if let MakeShortRunState::Success { output_file } = &app.make_short_dialog.run_state {
+                let target = output_file
+                    .parent()
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| output_file.clone());
+                let _ = open_with_system_default(&target);
+            }
+        }
         Message::IgnoreRuleInputChanged(value) => {
             app.ignore_rule_input = value;
         }
@@ -1884,6 +2129,17 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
             }
             return request_reconcile(app, BackgroundWorkReason::UserOrSystem);
         }
+        Message::ShortsOutputDirInputChanged(value) => {
+            app.shorts_output_dir_input = value;
+        }
+        Message::ShortsOutputDirBrowse => {
+            if let Some(path) = rfd::FileDialog::new().pick_folder() {
+                app.shorts_output_dir_input = path.display().to_string();
+            }
+        }
+        Message::SaveShortsOutputDirSetting => {
+            save_shorts_output_dir_setting(app);
+        }
         Message::TimelineScrubChanged(value) => {
             return apply_timeline_scrub(app, value, true);
         }
@@ -1986,6 +2242,12 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
         }
         Message::OpenSettings => {
             app.settings_open = true;
+            app.shorts_output_dir_input = app
+                .runtime
+                .default_shorts_output_dir
+                .as_ref()
+                .map(|p| p.display().to_string())
+                .unwrap_or_default();
         }
         Message::CloseSettings => {
             app.settings_open = false;
@@ -2894,6 +3156,12 @@ fn view(app: &Librapix) -> Element<'_, Message> {
     }
     if app.library_stats_dialog_open {
         overlay = stack([overlay, render_library_statistics_dialog(app)])
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into();
+    }
+    if app.make_short_dialog.open {
+        overlay = stack([overlay, render_make_short_dialog(app)])
             .width(Length::Fill)
             .height(Length::Fill)
             .into();
@@ -4551,6 +4819,51 @@ fn render_settings_dialog(app: &Librapix) -> Element<'_, Message> {
         ]
         .spacing(SPACE_XS)
         .align_y(iced::Alignment::Center),
+        h_divider(),
+        row![
+            text(app.i18n.text(TextKey::DefaultShortsOutputDirLabel))
+                .size(FONT_CAPTION)
+                .color(TEXT_SECONDARY),
+            text_input(
+                app.i18n.text(TextKey::DefaultShortsOutputDirPlaceholder),
+                &app.shorts_output_dir_input
+            )
+            .on_input(Message::ShortsOutputDirInputChanged)
+            .style(field_input_style)
+            .width(Length::Fill),
+            button(
+                row![
+                    image(assets::icon_browse())
+                        .width(Length::Fixed(14.0))
+                        .height(Length::Fixed(14.0))
+                        .content_fit(ContentFit::Contain)
+                        .filter_method(FilterMethod::Linear),
+                    text(app.i18n.text(TextKey::BrowseFolderButton)).size(FONT_CAPTION),
+                ]
+                .spacing(SPACE_XS)
+                .align_y(iced::Alignment::Center),
+            )
+            .on_press(Message::ShortsOutputDirBrowse)
+            .style(subtle_button_style)
+            .padding([SPACE_2XS as u16, SPACE_SM as u16]),
+            button(
+                row![
+                    image(assets::icon_save())
+                        .width(Length::Fixed(14.0))
+                        .height(Length::Fixed(14.0))
+                        .content_fit(ContentFit::Contain)
+                        .filter_method(FilterMethod::Linear),
+                    text(app.i18n.text(TextKey::LibrarySaveButton)).size(FONT_CAPTION),
+                ]
+                .spacing(SPACE_XS)
+                .align_y(iced::Alignment::Center),
+            )
+            .on_press(Message::SaveShortsOutputDirSetting)
+            .style(subtle_button_style)
+            .padding([SPACE_2XS as u16, SPACE_SM as u16]),
+        ]
+        .spacing(SPACE_XS)
+        .align_y(iced::Alignment::Center),
     ]
     .spacing(SPACE_SM);
 
@@ -4812,11 +5125,22 @@ fn render_library_dialog(app: &Librapix) -> Element<'_, Message> {
     };
 
     let add_another_button: Element<'_, Message> = if is_add_mode {
-        button(text(app.i18n.text(TextKey::LibrarySaveAndAddAnotherButton)).size(FONT_BODY))
-            .on_press(Message::SaveLibraryAndAddAnother)
-            .style(action_button_style)
-            .padding([SPACE_SM as u16, SPACE_MD as u16])
-            .into()
+        button(
+            row![
+                image(assets::icon_save())
+                    .width(Length::Fixed(16.0))
+                    .height(Length::Fixed(16.0))
+                    .content_fit(ContentFit::Contain)
+                    .filter_method(FilterMethod::Linear),
+                text(app.i18n.text(TextKey::LibrarySaveAndAddAnotherButton)).size(FONT_BODY),
+            ]
+            .spacing(SPACE_SM)
+            .align_y(iced::Alignment::Center),
+        )
+        .on_press(Message::SaveLibraryAndAddAnother)
+        .style(action_button_style)
+        .padding([SPACE_SM as u16, SPACE_MD as u16])
+        .into()
     } else {
         column![].into()
     };
@@ -4835,10 +5159,21 @@ fn render_library_dialog(app: &Librapix) -> Element<'_, Message> {
         column![
             section_heading(app.i18n.text(TextKey::LibraryPathLabel)),
             row![
-                button(text(app.i18n.text(TextKey::BrowseFolderButton)).size(FONT_BODY))
-                    .on_press(Message::LibraryDialogBrowseFolder)
-                    .style(primary_button_style)
-                    .padding([SPACE_XS as u16, SPACE_MD as u16]),
+                button(
+                    row![
+                        image(assets::icon_browse())
+                            .width(Length::Fixed(16.0))
+                            .height(Length::Fixed(16.0))
+                            .content_fit(ContentFit::Contain)
+                            .filter_method(FilterMethod::Linear),
+                        text(app.i18n.text(TextKey::BrowseFolderButton)).size(FONT_BODY),
+                    ]
+                    .spacing(SPACE_SM)
+                    .align_y(iced::Alignment::Center),
+                )
+                .on_press(Message::LibraryDialogBrowseFolder)
+                .style(primary_button_style)
+                .padding([SPACE_XS as u16, SPACE_MD as u16]),
                 button(text(path_toggle_label).size(FONT_CAPTION))
                     .on_press(Message::ToggleLibraryDialogManualPath)
                     .style(subtle_button_style)
@@ -4883,10 +5218,21 @@ fn render_library_dialog(app: &Librapix) -> Element<'_, Message> {
         lifecycle_actions,
         h_divider(),
         row![
-            button(text(app.i18n.text(TextKey::LibrarySaveButton)).size(FONT_BODY))
-                .on_press(Message::SaveLibraryDialog)
-                .style(primary_button_style)
-                .padding([SPACE_SM as u16, SPACE_MD as u16]),
+            button(
+                row![
+                    image(assets::icon_save())
+                        .width(Length::Fixed(16.0))
+                        .height(Length::Fixed(16.0))
+                        .content_fit(ContentFit::Contain)
+                        .filter_method(FilterMethod::Linear),
+                    text(app.i18n.text(TextKey::LibrarySaveButton)).size(FONT_BODY),
+                ]
+                .spacing(SPACE_SM)
+                .align_y(iced::Alignment::Center),
+            )
+            .on_press(Message::SaveLibraryDialog)
+            .style(primary_button_style)
+            .padding([SPACE_SM as u16, SPACE_MD as u16]),
             add_another_button,
         ]
         .spacing(SPACE_XS),
@@ -6084,6 +6430,7 @@ fn render_details_panel(app: &Librapix) -> Element<'_, Message> {
 }
 
 fn render_details_actions(app: &Librapix) -> Element<'_, Message> {
+    let show_make_short = selected_media_is_video(app);
     responsive(move |size: Size| {
         let open = button(
             row![
@@ -6149,25 +6496,464 @@ fn render_details_actions(app: &Librapix) -> Element<'_, Message> {
         .width(Length::Fill)
         .style(action_button_style)
         .padding([SPACE_XS as u16, SPACE_MD as u16]);
+        let make_short = button(
+            row![
+                image(assets::icon_youtube())
+                    .width(Length::Fixed(16.0))
+                    .height(Length::Fixed(16.0))
+                    .content_fit(ContentFit::Contain)
+                    .filter_method(FilterMethod::Linear),
+                text(app.i18n.text(TextKey::DetailsMakeShortButton)).size(FONT_BODY),
+            ]
+            .spacing(SPACE_SM)
+            .align_y(iced::Alignment::Center),
+        )
+        .on_press(Message::OpenMakeShortDialog)
+        .width(Length::Fill)
+        .style(primary_button_style)
+        .padding([SPACE_XS as u16, SPACE_MD as u16]);
 
         if size.width < 220.0 {
-            column![open, open_folder, copy_file, copy_path]
-                .spacing(SPACE_XS)
-                .into()
+            let mut col = column![open, open_folder, copy_file, copy_path].spacing(SPACE_XS);
+            if show_make_short {
+                col = col.push(make_short);
+            }
+            col.into()
         } else if size.width < 420.0 {
-            column![
+            let mut col = column![
                 row![open, open_folder].spacing(SPACE_XS),
                 row![copy_file, copy_path].spacing(SPACE_XS),
             ]
-            .spacing(SPACE_XS)
-            .into()
+            .spacing(SPACE_XS);
+            if show_make_short {
+                col = col.push(make_short);
+            }
+            col.into()
         } else {
-            row![open, open_folder, copy_file, copy_path]
-                .spacing(SPACE_XS)
-                .into()
+            if show_make_short {
+                row![open, open_folder, copy_file, copy_path, make_short]
+                    .spacing(SPACE_XS)
+                    .into()
+            } else {
+                row![open, open_folder, copy_file, copy_path]
+                    .spacing(SPACE_XS)
+                    .into()
+            }
         }
     })
     .into()
+}
+
+fn render_make_short_dialog(app: &Librapix) -> Element<'_, Message> {
+    let is_running = matches!(
+        app.make_short_dialog.run_state,
+        MakeShortRunState::Running { .. }
+    );
+    let has_smooth = make_short_has_smooth_warning(&app.make_short_dialog);
+
+    let effect_chip = |effect: ShortEffect, help_key: TextKey| {
+        let active = app.make_short_dialog.effects.contains(&effect);
+        let mut btn = button(text(effect.as_str()).size(FONT_CAPTION))
+            .style(filter_chip_style(active))
+            .padding([SPACE_2XS as u16, SPACE_SM as u16]);
+        if !is_running {
+            btn = btn.on_press(Message::MakeShortToggleEffect(effect));
+        }
+        row![btn, render_help_badge(app.i18n.text(help_key)),].spacing(SPACE_XS)
+    };
+
+    let crop_chip = |position: CropPosition, label: &'static str| {
+        let active = app.make_short_dialog.crop_position == position;
+        let mut btn = button(text(label).size(FONT_CAPTION))
+            .style(filter_chip_style(active))
+            .padding([SPACE_2XS as u16, SPACE_SM as u16]);
+        if !is_running {
+            btn = btn.on_press(Message::MakeShortSetCropPosition(position));
+        }
+        btn
+    };
+
+    let preset_chip = |preset: Preset, label: &'static str| {
+        let active = app.make_short_dialog.preset == preset;
+        let mut btn = button(text(label).size(FONT_CAPTION))
+            .style(filter_chip_style(active))
+            .padding([SPACE_2XS as u16, SPACE_SM as u16]);
+        if !is_running {
+            btn = btn.on_press(Message::MakeShortSetPreset(preset));
+        }
+        btn
+    };
+
+    let running_status: Element<'_, Message> = match &app.make_short_dialog.run_state {
+        MakeShortRunState::Running { stage, status } => column![
+            text(app.i18n.text(TextKey::MakeShortRunningLabel))
+                .size(FONT_BODY)
+                .color(TEXT_PRIMARY),
+            text(match stage {
+                GenerationStage::Preparing => app.i18n.text(TextKey::MakeShortStagePreparing),
+                GenerationStage::Probing => app.i18n.text(TextKey::MakeShortStageProbing),
+                GenerationStage::BuildingFilters => {
+                    app.i18n.text(TextKey::MakeShortStageBuildingFilters)
+                }
+                GenerationStage::Generating => app.i18n.text(TextKey::MakeShortStageGenerating),
+                GenerationStage::Finalizing => app.i18n.text(TextKey::MakeShortStageFinalizing),
+                GenerationStage::Completed => app.i18n.text(TextKey::StageReadyLabel),
+                GenerationStage::Failed => app.i18n.text(TextKey::MakeShortFailureLabel),
+            })
+            .size(FONT_CAPTION)
+            .color(TEXT_SECONDARY),
+            text(status).size(FONT_CAPTION).color(TEXT_TERTIARY),
+            progress_bar(0.0..=1.0, 0.5),
+        ]
+        .spacing(SPACE_XS)
+        .into(),
+        MakeShortRunState::Success { .. } => text(app.i18n.text(TextKey::MakeShortSuccessLabel))
+            .size(FONT_CAPTION)
+            .color(SUCCESS_COLOR)
+            .into(),
+        MakeShortRunState::Failed { summary, details } => column![
+            text(summary).size(FONT_CAPTION).color(WARNING_COLOR),
+            text(details).size(FONT_CAPTION).color(TEXT_TERTIARY),
+        ]
+        .spacing(SPACE_2XS)
+        .into(),
+        MakeShortRunState::Idle => Space::new().into(),
+    };
+
+    let warning: Element<'_, Message> = if has_smooth {
+        text(app.i18n.text(TextKey::MakeShortSmoothWarning))
+            .size(FONT_CAPTION)
+            .color(WARNING_COLOR)
+            .into()
+    } else {
+        Space::new().into()
+    };
+
+    let validation_error: Element<'_, Message> =
+        if let Some(error) = app.make_short_dialog.validation_error.as_ref() {
+            text(error).size(FONT_CAPTION).color(WARNING_COLOR).into()
+        } else {
+            Space::new().into()
+        };
+
+    let mut generate_button = button(
+        row![
+            image(assets::icon_generate())
+                .width(Length::Fixed(16.0))
+                .height(Length::Fixed(16.0))
+                .content_fit(ContentFit::Contain)
+                .filter_method(FilterMethod::Linear),
+            text(app.i18n.text(TextKey::MakeShortRunButton)).size(FONT_BODY),
+        ]
+        .spacing(SPACE_SM)
+        .align_y(iced::Alignment::Center),
+    )
+    .style(primary_button_style)
+    .padding([SPACE_XS as u16, SPACE_MD as u16]);
+    if !is_running {
+        generate_button = generate_button.on_press(Message::RunMakeShort);
+    }
+
+    let mut actions = row![
+        button(text(app.i18n.text(TextKey::MakeShortCloseButton)).size(FONT_BODY))
+            .on_press(Message::CloseMakeShortDialog)
+            .style(subtle_button_style)
+            .padding([SPACE_XS as u16, SPACE_MD as u16]),
+        generate_button
+    ]
+    .spacing(SPACE_SM)
+    .align_y(iced::Alignment::Center);
+
+    if matches!(
+        app.make_short_dialog.run_state,
+        MakeShortRunState::Success { .. }
+    ) {
+        actions = actions.push(
+            button(text(app.i18n.text(TextKey::MakeShortOpenFileButton)).size(FONT_BODY))
+                .on_press(Message::OpenGeneratedShortFile)
+                .style(action_button_style)
+                .padding([SPACE_XS as u16, SPACE_MD as u16]),
+        );
+        actions = actions.push(
+            button(text(app.i18n.text(TextKey::MakeShortOpenFolderButton)).size(FONT_BODY))
+                .on_press(Message::OpenGeneratedShortFolder)
+                .style(action_button_style)
+                .padding([SPACE_XS as u16, SPACE_MD as u16]),
+        );
+    }
+
+    let fade_active = app.make_short_dialog.add_fade;
+    let mut fade_toggle = button(text(if fade_active { "On" } else { "Off" }).size(FONT_CAPTION))
+        .style(filter_chip_style(fade_active))
+        .padding([SPACE_2XS as u16, SPACE_SM as u16]);
+    if !is_running {
+        fade_toggle = fade_toggle.on_press(Message::MakeShortSetAddFade(!fade_active));
+    }
+
+    let output_row = row![
+        text_input(
+            app.i18n.text(TextKey::MakeShortOutputPathLabel),
+            &app.make_short_dialog.output_file_input
+        )
+        .on_input(Message::MakeShortOutputPathChanged)
+        .width(Length::Fill)
+        .style(field_input_style),
+        button(
+            row![
+                image(assets::icon_browse())
+                    .width(Length::Fixed(14.0))
+                    .height(Length::Fixed(14.0))
+                    .content_fit(ContentFit::Contain)
+                    .filter_method(FilterMethod::Linear),
+                text(app.i18n.text(TextKey::MakeShortChooseOutputButton)).size(FONT_CAPTION),
+            ]
+            .spacing(SPACE_XS)
+            .align_y(iced::Alignment::Center),
+        )
+        .on_press(Message::MakeShortBrowseOutputPath)
+        .style(subtle_button_style)
+        .padding([SPACE_2XS as u16, SPACE_SM as u16]),
+    ]
+    .spacing(SPACE_SM)
+    .align_y(iced::Alignment::Center);
+
+    let dialog_content = column![
+        row![
+            text(app.i18n.text(TextKey::MakeShortDialogTitle))
+                .size(FONT_TITLE)
+                .color(TEXT_PRIMARY),
+            Space::new().width(Length::Fill),
+            button(text(app.i18n.text(TextKey::DismissButton)).size(FONT_BODY))
+                .on_press(Message::CloseMakeShortDialog)
+                .style(subtle_button_style)
+                .padding([SPACE_XS as u16, SPACE_MD as u16]),
+        ]
+        .align_y(iced::Alignment::Center),
+        h_divider(),
+        section_heading(app.i18n.text(TextKey::MakeShortOutputPathLabel)),
+        output_row,
+        render_help_badge(app.i18n.text(TextKey::MakeShortHelpOutput)),
+        section_heading(app.i18n.text(TextKey::MakeShortEffectsLabel)),
+        row![
+            effect_chip(ShortEffect::Clean, TextKey::MakeShortHelpEffectsClean),
+            effect_chip(ShortEffect::Enhanced, TextKey::MakeShortHelpEffectsEnhanced),
+            effect_chip(
+                ShortEffect::Cinematic,
+                TextKey::MakeShortHelpEffectsCinematic
+            ),
+        ]
+        .spacing(SPACE_SM),
+        row![
+            effect_chip(ShortEffect::Night, TextKey::MakeShortHelpEffectsNight),
+            effect_chip(ShortEffect::Scenic, TextKey::MakeShortHelpEffectsScenic),
+            effect_chip(ShortEffect::Smooth, TextKey::MakeShortHelpEffectsSmooth),
+        ]
+        .spacing(SPACE_SM),
+        warning,
+        h_divider(),
+        section_heading(app.i18n.text(TextKey::MakeShortCropLabel)),
+        row![
+            crop_chip(CropPosition::Center, "center"),
+            crop_chip(CropPosition::Left, "left"),
+            crop_chip(CropPosition::Right, "right"),
+            render_help_badge(app.i18n.text(TextKey::MakeShortHelpCrop)),
+        ]
+        .spacing(SPACE_SM)
+        .align_y(iced::Alignment::Center),
+        row![
+            text(app.i18n.text(TextKey::MakeShortFadeLabel))
+                .size(FONT_CAPTION)
+                .color(TEXT_SECONDARY),
+            fade_toggle,
+            render_help_badge(app.i18n.text(TextKey::MakeShortHelpFade)),
+        ]
+        .spacing(SPACE_SM)
+        .align_y(iced::Alignment::Center),
+        h_divider(),
+        row![
+            text(app.i18n.text(TextKey::MakeShortSpeedLabel))
+                .size(FONT_CAPTION)
+                .color(TEXT_SECONDARY),
+            text_input("1.0", &app.make_short_dialog.speed_input)
+                .on_input(Message::MakeShortSpeedChanged)
+                .style(field_input_style)
+                .width(Length::Fixed(80.0)),
+            render_help_badge(app.i18n.text(TextKey::MakeShortHelpSpeed)),
+        ]
+        .spacing(SPACE_SM)
+        .align_y(iced::Alignment::Center),
+        row![
+            text(app.i18n.text(TextKey::MakeShortCrfLabel))
+                .size(FONT_CAPTION)
+                .color(TEXT_SECONDARY),
+            text_input("18", &app.make_short_dialog.crf_input)
+                .on_input(Message::MakeShortCrfChanged)
+                .style(field_input_style)
+                .width(Length::Fixed(80.0)),
+            render_help_badge(app.i18n.text(TextKey::MakeShortHelpCrf)),
+        ]
+        .spacing(SPACE_SM)
+        .align_y(iced::Alignment::Center),
+        section_heading(app.i18n.text(TextKey::MakeShortPresetLabel)),
+        row![
+            preset_chip(Preset::Fast, "fast"),
+            preset_chip(Preset::Medium, "medium"),
+            preset_chip(Preset::Slow, "slow"),
+            render_help_badge(app.i18n.text(TextKey::MakeShortHelpPreset)),
+        ]
+        .spacing(SPACE_SM)
+        .align_y(iced::Alignment::Center),
+        validation_error,
+        running_status,
+        h_divider(),
+        actions,
+    ]
+    .spacing(SPACE_SM);
+
+    let dialog = container(dialog_content)
+        .width(Length::Fill)
+        .max_width(620.0)
+        .padding(SPACE_LG as u16)
+        .style(modal_dialog_style);
+
+    render_modal_overlay(dialog.into())
+}
+
+fn make_short_has_smooth_warning(state: &MakeShortDialogState) -> bool {
+    state.effects.contains(&ShortEffect::Smooth)
+}
+
+fn render_help_badge<'a>(tooltip_text: &'a str) -> Element<'a, Message> {
+    tooltip(
+        container(text("(?)").size(FONT_CAPTION).color(TEXT_TERTIARY))
+            .padding([0, SPACE_XS as u16]),
+        container(text(tooltip_text).size(FONT_CAPTION).color(TEXT_PRIMARY))
+            .padding([SPACE_XS as u16, SPACE_SM as u16])
+            .style(card_style),
+        tooltip::Position::Top,
+    )
+    .into()
+}
+
+fn do_prepare_short(request: ShortGenerationRequest) -> Result<PreparedShortJob, String> {
+    prepare_generation(&request)
+        .map(|prepared| PreparedShortJob { prepared })
+        .map_err(|error| error.to_string())
+}
+
+fn do_generate_short(job: PreparedShortJob) -> Result<ShortGenerationResult, String> {
+    run_generation(&job.prepared).map_err(|error| error.to_string())
+}
+
+fn toggle_make_short_effect(app: &mut Librapix, effect: ShortEffect) {
+    let effects = &mut app.make_short_dialog.effects;
+    if effects.contains(&effect) {
+        effects.retain(|existing| *existing != effect);
+        if effects.is_empty() {
+            effects.push(ShortEffect::Enhanced);
+        }
+    } else if effect == ShortEffect::Clean {
+        effects.clear();
+        effects.push(ShortEffect::Clean);
+    } else {
+        effects.retain(|existing| *existing != ShortEffect::Clean);
+        effects.push(effect);
+    }
+}
+
+fn open_make_short_dialog(app: &mut Librapix) {
+    let Some(media_id) = app.state.selected_media_id else {
+        return;
+    };
+    let Some(path) = resolve_media_path_for_action(app, media_id) else {
+        return;
+    };
+    let is_video = app
+        .media_cache
+        .get(&media_id)
+        .is_some_and(|details| details.media_kind.eq_ignore_ascii_case("video"));
+    if !is_video {
+        return;
+    }
+    let default_output =
+        default_output_file_path(&path, app.runtime.default_shorts_output_dir.as_deref());
+
+    app.make_short_dialog.open = true;
+    app.make_short_dialog.input_file = Some(path);
+    app.make_short_dialog.output_file_input = default_output.display().to_string();
+    app.make_short_dialog.validation_error = None;
+    app.make_short_dialog.run_state = MakeShortRunState::Idle;
+}
+
+fn build_short_request_from_dialog(app: &mut Librapix) -> Option<ShortGenerationRequest> {
+    let Some(input_file) = app.make_short_dialog.input_file.clone() else {
+        app.make_short_dialog.validation_error =
+            Some(app.i18n.text(TextKey::DetailsNoSelectionLabel).to_owned());
+        return None;
+    };
+    let speed = match app.make_short_dialog.speed_input.trim().parse::<f64>() {
+        Ok(value) => value,
+        Err(_) => {
+            app.make_short_dialog.validation_error =
+                Some(app.i18n.text(TextKey::MakeShortHelpSpeed).to_owned());
+            return None;
+        }
+    };
+    let crf = match app.make_short_dialog.crf_input.trim().parse::<i32>() {
+        Ok(value) => value,
+        Err(_) => {
+            app.make_short_dialog.validation_error =
+                Some(app.i18n.text(TextKey::MakeShortHelpCrf).to_owned());
+            return None;
+        }
+    };
+
+    let output = if app.make_short_dialog.output_file_input.trim().is_empty() {
+        default_output_file_path(
+            &input_file,
+            app.runtime.default_shorts_output_dir.as_deref(),
+        )
+    } else {
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        lexical_normalize_path(
+            Path::new(app.make_short_dialog.output_file_input.trim()),
+            &cwd,
+        )
+    };
+
+    let request = ShortGenerationRequest {
+        input_file,
+        output_file: output,
+        options: ShortGenerationOptions {
+            effects: app.make_short_dialog.effects.clone(),
+            crop_position: app.make_short_dialog.crop_position,
+            add_fade: app.make_short_dialog.add_fade,
+            speed,
+            crf,
+            preset: app.make_short_dialog.preset,
+        },
+    };
+
+    app.make_short_dialog.validation_error = None;
+    Some(request)
+}
+
+fn save_shorts_output_dir_setting(app: &mut Librapix) {
+    let trimmed = app.shorts_output_dir_input.trim();
+    let new_value = if trimmed.is_empty() {
+        None
+    } else {
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        Some(lexical_normalize_path(Path::new(trimmed), &cwd))
+    };
+
+    let Ok(mut config) = load_from_path(&app.runtime.config_file) else {
+        return;
+    };
+    config.video_tools.default_shorts_output_dir = new_value.clone();
+    if save_to_path(&app.runtime.config_file, &config).is_ok() {
+        app.runtime.default_shorts_output_dir = new_value;
+    }
 }
 
 struct BootstrapRuntime {
@@ -6177,6 +6963,7 @@ struct BootstrapRuntime {
     thumbnails_dir: PathBuf,
     config_file: PathBuf,
     configured_library_roots: Vec<PathBuf>,
+    default_shorts_output_dir: Option<PathBuf>,
 }
 
 fn bootstrap_runtime() -> BootstrapRuntime {
@@ -6188,6 +6975,7 @@ fn bootstrap_runtime() -> BootstrapRuntime {
         thumbnails_dir: PathBuf::from("thumbnails"),
         config_file: PathBuf::new(),
         configured_library_roots: Vec::new(),
+        default_shorts_output_dir: None,
     };
 
     startup_log::log_info("bootstrap.config_load.start", "");
@@ -6230,6 +7018,7 @@ fn bootstrap_runtime() -> BootstrapRuntime {
         .into_iter()
         .map(|source| source.path)
         .collect();
+    runtime.default_shorts_output_dir = loaded.config.video_tools.default_shorts_output_dir;
     startup_log::log_duration(
         "bootstrap.complete",
         bootstrap_started_at.elapsed(),
@@ -11163,6 +11952,7 @@ mod tests {
                 thumbnails_dir: PathBuf::from("/tmp/librapix-thumbnails"),
                 config_file: PathBuf::from("/tmp/librapix-config.toml"),
                 configured_library_roots: Vec::new(),
+                default_shorts_output_dir: None,
             },
             startup_log_path: None,
             thumbnail_status: String::new(),
@@ -11174,6 +11964,7 @@ mod tests {
             details_tags: Vec::new(),
             details_editing_tag: None,
             details_loaded_media_ids: HashSet::new(),
+            make_short_dialog: MakeShortDialogState::default(),
             ignore_rule_input: String::new(),
             ignore_rules: Vec::new(),
             ignore_rule_editing_id: None,
@@ -11194,6 +11985,7 @@ mod tests {
             available_filter_tags: Vec::new(),
             min_file_size_bytes: 0,
             min_file_size_input: String::new(),
+            shorts_output_dir_input: String::new(),
             media_cache: HashMap::new(),
             background: BackgroundCoordinator::default(),
             diagnostics_lines: Vec::new(),
@@ -12953,5 +13745,37 @@ mod tests {
         assert!(app.timeline_anchors.is_empty());
         assert_eq!(app.available_filter_tags, vec!["boss".to_owned()]);
         assert!(app.startup_metrics.first_usable_gallery_recorded);
+    }
+
+    #[test]
+    fn make_short_button_visibility_helper_is_video_only() {
+        let mut app = test_app();
+        app.state.set_selected_media(Some(7));
+        app.media_cache.insert(
+            7,
+            CachedDetails {
+                absolute_path: PathBuf::from("/tmp/clip.mp4"),
+                media_kind: "video".to_owned(),
+                file_size_bytes: 1,
+                modified_unix_seconds: None,
+                width_px: None,
+                height_px: None,
+                detail_thumbnail_path: None,
+            },
+        );
+        assert!(selected_media_is_video(&app));
+        app.media_cache
+            .get_mut(&7)
+            .expect("cached media")
+            .media_kind = "image".to_owned();
+        assert!(!selected_media_is_video(&app));
+    }
+
+    #[test]
+    fn smooth_effect_triggers_warning_helper() {
+        let mut state = MakeShortDialogState::default();
+        assert!(!make_short_has_smooth_warning(&state));
+        state.effects.push(ShortEffect::Smooth);
+        assert!(make_short_has_smooth_warning(&state));
     }
 }

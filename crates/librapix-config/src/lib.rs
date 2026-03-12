@@ -6,7 +6,9 @@ use std::fmt::{Display, Formatter};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub use model::{AppConfig, LibrarySourceRoot, LocalePreference, ThemePreference};
+pub use model::{
+    AppConfig, LibrarySourceRoot, LocalePreference, ThemePreference, VideoToolsConfig,
+};
 pub use pathing::{ConfigPaths, default_paths, lexical_normalize_path};
 
 const CURRENT_SCHEMA_VERSION: u32 = 1;
@@ -148,6 +150,9 @@ impl AppConfig {
             *path = lexical_normalize_path(path, &cwd);
         }
         if let Some(path) = &mut overrides.database_file {
+            *path = lexical_normalize_path(path, &cwd);
+        }
+        if let Some(path) = &mut self.video_tools.default_shorts_output_dir {
             *path = lexical_normalize_path(path, &cwd);
         }
 

@@ -9,6 +9,7 @@ members = [
     "crates/librapix-search",
     "crates/librapix-storage",
     "crates/librapix-thumbnails",
+    "crates/librapix-video-tools",
 ]
 resolver = "3"
 

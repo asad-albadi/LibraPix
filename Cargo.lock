@@ -2289,6 +2289,7 @@ dependencies = [
  "librapix-search",
  "librapix-storage",
  "librapix-thumbnails",
+ "librapix-video-tools",
  "notify",
  "opener",
  "rfd",
@@ -2355,6 +2356,13 @@ version = "0.4.0"
 dependencies = [
  "image",
  "sha2",
+]
+
+[[package]]
+name = "librapix-video-tools"
+version = "0.4.0"
+dependencies = [
+ "directories",
 ]
 
 [[package]]

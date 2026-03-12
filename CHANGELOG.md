@@ -12,6 +12,7 @@ All notable changes to this project are documented in this file.
 - Added `docs/AGENT_KNOWLEDGE_BASE.md` as a single comprehensive, code-verified project knowledge base for future engineering agents, and linked it from `docs/README.md`.
 - Added the catalog-first architecture plan and ADR for the long-lived branch foundation.
 - Updated media-UI documentation to clarify that runtime activity status is shown in the sidebar footer rather than duplicated in the header.
+- Added ADR `0022` for the `librapix-video-tools` subsystem and documented Make Short architecture boundaries/config/dependency updates.
 
 ### Added
 - Migration `0009_catalog_first_foundation.sql` with:
@@ -39,6 +40,22 @@ All notable changes to this project are documented in this file.
 - Explicit `Edit` action per library row in the sidebar.
 - Dedicated Library Statistics dialog per root/library with persisted summary/indexing metrics.
 - Sidebar `Stats` action per library row to open the Library Statistics dialog quickly.
+- New crate `librapix-video-tools` with script-parity video-short generation logic:
+  - validation (ffmpeg/ffprobe/input/speed/clean exclusivity/output writability)
+  - ffprobe duration probing
+  - crop/effect/fade/speed audio/video filter construction
+  - ffmpeg argument construction and process execution
+- Video-only `Make Short` details action with a dedicated dialog for script options:
+  - output path
+  - effects (`clean`, `enhanced`, `cinematic`, `night`, `scenic`, `smooth`)
+  - crop position (`center`, `left`, `right`)
+  - fade toggle
+  - speed, CRF, preset (`fast`, `medium`, `slow`)
+- Dialog hover-help/tooltips per selectable option and a red smooth-effect warning indicator.
+- Background staged generation flow for Make Short (`Preparing`, `Probing`, `Building filters`, `Generating`, `Finalizing`) with non-blocking UI.
+- Dialog result states for Make Short success/failure, including open-file/open-folder follow-up actions.
+- Config setting `video_tools.default_shorts_output_dir` and Settings UI controls for default shorts output directory.
+- Targeted tests for video-tools validation/path/filter/audio/args logic and app-side helpers for video-only button visibility and smooth warning state.
 
 ### Removed
 - Removed `packaging/windows/` scripts and packaging README from the repository.
@@ -86,6 +103,9 @@ All notable changes to this project are documented in this file.
 - New-file detected dialog now uses the same content-sized modal behavior as other dialogs, removing extra bottom gap below actions.
 
 ### Fixed
+- Make Short ffmpeg generation now drains `stderr` while the process is active, preventing long-running encodes from hanging when progress logs fill the pipe.
+- Canceling Make Short generation now removes only newly-created partial outputs and preserves pre-existing files at the selected target path.
+- `librapix-video-tools` now compiles cleanly under strict clippy settings on non-Windows targets by making Windows-only background command configuration explicitly conditional.
 - Newly discovered media opened from the filesystem-watch announcement dialog now shows an intentional animated loading placeholder while its preview is still being prepared, instead of appearing blank or broken.
 - Timeline no longer hangs or heavily stalls when scrolling through very large date buckets; an intersecting group no longer forces the UI thread to build every row in that group.
 - Timeline large-surface logs now report the real total row count instead of echoing the visible-row count, fixing misleading render-window evidence during Timeline investigations.

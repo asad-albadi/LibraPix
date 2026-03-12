@@ -71,6 +71,22 @@ pub fn icon_index() -> image::Handle {
     ICON_INDEX.clone()
 }
 
+pub fn icon_browse() -> image::Handle {
+    ICON_BROWSE.clone()
+}
+
+pub fn icon_save() -> image::Handle {
+    ICON_SAVE.clone()
+}
+
+pub fn icon_youtube() -> image::Handle {
+    ICON_YOUTUBE.clone()
+}
+
+pub fn icon_generate() -> image::Handle {
+    ICON_GENERATE.clone()
+}
+
 pub fn icon_type_image() -> image::Handle {
     ICON_TYPE_IMAGE.clone()
 }
@@ -124,6 +140,14 @@ static ICON_FILTER_REMOVE: LazyLock<image::Handle> = LazyLock::new(|| {
 });
 static ICON_INDEX: LazyLock<image::Handle> =
     LazyLock::new(|| make_image_handle(include_bytes!("../../../assets/icons/white/index.png")));
+static ICON_BROWSE: LazyLock<image::Handle> =
+    LazyLock::new(|| make_image_handle(include_bytes!("../../../assets/icons/white/browse.png")));
+static ICON_SAVE: LazyLock<image::Handle> =
+    LazyLock::new(|| make_image_handle(include_bytes!("../../../assets/icons/white/save.png")));
+static ICON_YOUTUBE: LazyLock<image::Handle> =
+    LazyLock::new(|| make_image_handle(include_bytes!("../../../assets/icons/white/youtube.png")));
+static ICON_GENERATE: LazyLock<image::Handle> =
+    LazyLock::new(|| make_image_handle(include_bytes!("../../../assets/icons/white/generate.png")));
 static ICON_TYPE_IMAGE: LazyLock<image::Handle> = LazyLock::new(|| {
     make_image_handle(include_bytes!("../../../assets/icons/white/type-image.png"))
 });

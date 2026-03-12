@@ -8,6 +8,7 @@ Librapix exposes simple file-oriented actions without mutating source media.
 - Open selected media containing folder.
 - Copy selected media file to clipboard (file object copy, not just path text).
 - Copy selected media path to clipboard via platform command.
+- Generate a video short (`Make Short`) from the selected video through ffprobe/ffmpeg background tasks.
 - Header update-status chip action:
   - click opens latest release page when a newer release is available
   - otherwise click triggers a manual release re-check (5-minute cooldown)
@@ -40,6 +41,7 @@ Librapix exposes simple file-oriented actions without mutating source media.
 - Storage provides selected media lookup by media id.
 - Media id comes from explicit selection state populated by search/gallery/timeline route panels.
 - UI remains a thin input/button surface.
+- Video command building and process invocation are delegated to `librapix-video-tools`; UI only owns dialog state and message dispatch.
 - Actions are presented in a dedicated details-pane section rather than mixed with browsing content.
 - Shortcut events are consumed through Iced `keyboard::listen` (ignored events only), so focused text inputs keep normal copy behavior.
 

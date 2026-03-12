@@ -285,7 +285,7 @@ This file tracks major direct dependencies that shape architecture and maintenan
 
 ## `ffmpeg` (system dependency, optional)
 
-- Purpose: Extract representative video frames for thumbnail generation.
+- Purpose: Extract representative video frames for thumbnail generation and generate video shorts (`Make Short`).
 - Why chosen: Universal video processing tool available on all desktop platforms; avoids heavy Rust video decoding dependencies.
 - Alternatives considered:
   - `ffmpeg-next` Rust crate: full FFmpeg bindings, but heavy C dependency and complex build requirements.
@@ -293,12 +293,14 @@ This file tracks major direct dependencies that shape architecture and maintenan
   - No video thumbnails: poor UX for a media manager.
 - Official docs consulted:
   - [https://ffmpeg.org/ffmpeg.html](https://ffmpeg.org/ffmpeg.html)
+  - [https://ffmpeg.org/ffprobe.html](https://ffmpeg.org/ffprobe.html)
 - Notes:
   - Invoked via `std::process::Command`; no Rust crate dependency.
   - Extracts a single frame at 1 second with `scale` filter for size control.
+  - Make Short reads source duration via `ffprobe` and builds script-equivalent filter/encoding arguments for x264+aac output.
   - Failure is graceful: videos without thumbnails show a placeholder.
 - Risks/tradeoffs:
-  - Requires `ffmpeg` installed on the user's system and accessible in PATH.
+  - Requires `ffmpeg` and `ffprobe` installed on the user's system and accessible in PATH.
   - Process invocation has startup overhead per video, acceptable for batch indexing.
 
 ## `windows-sys` (0.61.2, Windows target only)

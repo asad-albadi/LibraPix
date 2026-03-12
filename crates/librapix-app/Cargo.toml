@@ -23,6 +23,7 @@ librapix-projections = { path = "../librapix-projections" }
 librapix-search = { path = "../librapix-search" }
 librapix-storage = { path = "../librapix-storage" }
 librapix-thumbnails = { path = "../librapix-thumbnails" }
+librapix-video-tools = { path = "../librapix-video-tools" }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "0.61.2", features = [

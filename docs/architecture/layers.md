@@ -39,6 +39,11 @@
 - Thumbnails (`librapix-thumbnails`)
   - Deterministic cache-key/path generation
   - Read-only image thumbnail rendering pipeline
+- Video tools (`librapix-video-tools`)
+  - Make Short request model and validation
+  - ffprobe duration probing
+  - Script-parity filter and ffmpeg argument construction
+  - Background process execution wrapper for short generation
 - Infrastructure (`librapix-storage` + future crates/modules)
   - SQLite persistence and migrations
   - Source root and ignore-rule persistence baseline
@@ -47,7 +52,7 @@
 
 ## Dependency direction
 
-- `librapix-app` -> `librapix-core`, `librapix-i18n`, `librapix-config`, `librapix-storage`, `librapix-indexer` (orchestration-only usage)
+- `librapix-app` -> `librapix-core`, `librapix-i18n`, `librapix-config`, `librapix-storage`, `librapix-indexer`, `librapix-video-tools` (orchestration-only usage)
 - `librapix-core` -> no UI/framework dependencies
 - `librapix-i18n` -> no UI/framework dependencies
 - `librapix-config` -> no UI/framework dependencies

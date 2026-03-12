@@ -83,3 +83,4 @@ This repository is documentation-driven. Architecture and operational decisions 
 - `docs/adrs/0019-windows-signing-and-publisher-baseline.md`
 - `docs/adrs/0020-chip-based-tag-ignore-interactions.md`
 - `docs/adrs/0021-catalog-first-architecture-foundation.md`
+- `docs/adrs/0022-video-short-generation-subsystem.md`

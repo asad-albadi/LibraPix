@@ -3115,6 +3115,7 @@ fn view(app: &Librapix) -> Element<'_, Message> {
             .spacing(SPACE_LG)
             .padding(SPACE_LG as u16),
     )
+    .style(scrollbar_style)
     .height(Length::Fill);
     let sidebar_status = container(
         column![
@@ -3138,6 +3139,7 @@ fn view(app: &Librapix) -> Element<'_, Message> {
     let (media_header, media_scrollable_content) = render_media_panel(app);
     let base_media_scrollable = scrollable(media_scrollable_content)
         .id(Id::new(MEDIA_SCROLLABLE_ID))
+        .style(scrollbar_style)
         .direction(scrollable::Direction::Vertical(
             scrollable::Scrollbar::default().spacing(MEDIA_SCROLLBAR_SPACING),
         ))
@@ -3178,6 +3180,7 @@ fn view(app: &Librapix) -> Element<'_, Message> {
         ui::v_divider(),
         container(
             scrollable(details_content)
+                .style(scrollbar_style)
                 .direction(scrollable::Direction::Vertical(
                     scrollable::Scrollbar::default().spacing(PANEL_SCROLLBAR_SPACING),
                 ))
@@ -3820,15 +3823,40 @@ fn render_media_card(
         .content_fit(ContentFit::Contain)
         .filter_method(FilterMethod::Linear);
 
+    let selection_badge: Element<'_, Message> = if selected {
+        container(
+            text("\u{2713}")
+                .size(FONT_CAPTION)
+                .color(iced::Color::WHITE),
+        )
+        .padding([SPACE_2XS as u16, SPACE_XS as u16])
+        .style(ui::check_badge_style)
+        .into()
+    } else {
+        Space::new().width(Length::Shrink).into()
+    };
+
     let thumb_overlay: Element<'_, Message> = container(
-        row![Space::new().width(Length::Fill), kind_badge].align_y(iced::Alignment::Start),
+        row![
+            selection_badge,
+            Space::new().width(Length::Fill),
+            kind_badge
+        ]
+        .align_y(iced::Alignment::Start),
     )
     .width(Length::Fill)
     .height(Length::Fixed(height))
     .padding([SPACE_XS as u16, SPACE_XS as u16])
     .into();
 
-    let thumb_with_badge: Element<'_, Message> = stack([thumb, thumb_overlay])
+    // Top scrim keeps the badges legible over bright images.
+    let scrim: Element<'_, Message> = container(Space::new())
+        .width(Length::Fill)
+        .height(Length::Fixed(height))
+        .style(ui::thumb_scrim_style)
+        .into();
+
+    let thumb_with_badge: Element<'_, Message> = stack([thumb, scrim, thumb_overlay])
         .width(Length::Fill)
         .height(Length::Fixed(height))
         .clip(true)
@@ -4617,6 +4645,7 @@ fn render_dialog_frame(
     // and tall ones cap + scroll.
     let dialog = container(
         scrollable(content)
+            .style(scrollbar_style)
             .direction(scrollable::Direction::Vertical(
                 scrollable::Scrollbar::default().spacing(PANEL_SCROLLBAR_SPACING),
             ))
@@ -5085,7 +5114,9 @@ fn render_settings_dialog(app: &Librapix) -> Element<'_, Message> {
             text("Events (newest first)")
                 .size(FONT_CAPTION)
                 .style(text_secondary),
-            scrollable(event_lines).height(Length::Fixed(120.0)),
+            scrollable(event_lines)
+                .style(scrollbar_style)
+                .height(Length::Fixed(120.0)),
             text("State").size(FONT_CAPTION).style(text_secondary),
             state_lines,
         ]

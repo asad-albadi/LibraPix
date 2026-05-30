@@ -1,4 +1,4 @@
-use iced::widget::{Container, Text, button, container, text, text_input};
+use iced::widget::{Container, Text, button, container, scrollable, text, text_input};
 use iced::{Background, Border, Color, Length, Radians, Shadow, Theme, Vector, gradient};
 
 // ── Semantic palette ──
@@ -574,6 +574,61 @@ pub fn modal_dialog_style(theme: &Theme) -> container::Style {
 pub fn divider_line_style(theme: &Theme) -> container::Style {
     container::Style {
         background: Some(Background::Color(palette(theme).divider)),
+        ..container::Style::default()
+    }
+}
+
+/// Thin, rounded, translucent scrollbars: invisible rail, a pill scroller that
+/// darkens on hover/drag. Reads as a modern overlay scrollbar in both themes.
+pub fn scrollbar_style(theme: &Theme, status: scrollable::Status) -> scrollable::Style {
+    let p = palette(theme);
+    let mut style = scrollable::default(theme, status);
+    let scroller_color = match status {
+        scrollable::Status::Dragged { .. } => p.text_secondary,
+        scrollable::Status::Hovered {
+            is_vertical_scrollbar_hovered: true,
+            ..
+        }
+        | scrollable::Status::Hovered {
+            is_horizontal_scrollbar_hovered: true,
+            ..
+        } => p.text_secondary,
+        _ => p.text_tertiary.scale_alpha(0.7),
+    };
+    let rail = scrollable::Rail {
+        background: Some(Background::Color(Color::TRANSPARENT)),
+        border: Border {
+            color: Color::TRANSPARENT,
+            width: 0.0,
+            radius: RADIUS_PILL.into(),
+        },
+        scroller: scrollable::Scroller {
+            background: Background::Color(scroller_color),
+            border: iced::border::rounded(RADIUS_PILL),
+        },
+    };
+    style.vertical_rail = rail;
+    style.horizontal_rail = rail;
+    style
+}
+
+/// Top-down dark scrim over a thumbnail so overlaid badges (kind, selection)
+/// stay legible on bright images, fading to transparent by mid-height.
+pub fn thumb_scrim_style(_theme: &Theme) -> container::Style {
+    let fill = gradient::Linear::new(Radians(std::f32::consts::PI))
+        .add_stop(0.0, rgba(0.0, 0.0, 0.0, 0.45))
+        .add_stop(0.4, rgba(0.0, 0.0, 0.0, 0.0));
+    container::Style {
+        background: Some(Background::Gradient(fill.into())),
+        ..container::Style::default()
+    }
+}
+
+/// Accent pill behind the selection checkmark on a selected tile.
+pub fn check_badge_style(theme: &Theme) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(palette(theme).accent)),
+        border: iced::border::rounded(RADIUS_PILL),
         ..container::Style::default()
     }
 }

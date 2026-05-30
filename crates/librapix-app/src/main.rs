@@ -26,7 +26,6 @@ use librapix_core::domain::non_destructive;
 use librapix_i18n::{Locale, TextKey, Translator};
 use librapix_indexer::{IgnoreEngine, ScanOptions, ScanRoot, scan_roots};
 use librapix_projections::ProjectionMedia;
-use librapix_projections::gallery::{GalleryQuery, GallerySort, project_gallery};
 use librapix_projections::timeline::{
     TimelineAnchor, TimelineGranularity, build_timeline_anchors, project_timeline,
 };
@@ -49,7 +48,7 @@ use librapix_video_tools::{
 use notify::{EventKind, RecursiveMode, Watcher};
 use semver::Version;
 use serde::{Deserialize, Serialize};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -831,6 +830,10 @@ struct Librapix {
     state: AppState,
     i18n: Translator,
     theme_preference: ThemePreference,
+    /// Cached OS appearance for `ThemePreference::System`, refreshed (throttled)
+    /// from `theme()` so we never hit the platform detector on the render path.
+    system_dark: Cell<bool>,
+    system_dark_checked_at: Cell<Option<Instant>>,
     runtime: RuntimeContext,
     startup_log_path: Option<PathBuf>,
     thumbnail_status: String,
@@ -1052,6 +1055,8 @@ impl Default for Librapix {
             state: AppState::default(),
             i18n: Translator::new(bootstrap.locale),
             theme_preference: bootstrap.theme_preference,
+            system_dark: Cell::new(system_is_dark()),
+            system_dark_checked_at: Cell::new(None),
             runtime: RuntimeContext {
                 database_file: bootstrap.database_file,
                 thumbnails_dir: bootstrap.thumbnails_dir,
@@ -1147,11 +1152,46 @@ fn title(app: &Librapix) -> String {
     app.i18n.text(TextKey::AppTitle).to_owned()
 }
 
+/// Detect the OS appearance. Defaults to dark on `Unspecified` or any platform
+/// error, matching LibraPix's historical dark-first default.
+fn system_is_dark() -> bool {
+    !matches!(dark_light::detect(), Ok(dark_light::Mode::Light))
+}
+
+/// Throttle for the platform appearance detector. `theme()` runs on the render
+/// path; we re-detect at most once per interval so OS theme switches are picked
+/// up quickly without a per-frame system call.
+const SYSTEM_THEME_POLL_INTERVAL: Duration = Duration::from_millis(1000);
+
 fn theme(app: &Librapix) -> Theme {
-    match app.theme_preference {
-        ThemePreference::System => Theme::TokyoNight,
-        ThemePreference::Dark => Theme::Dark,
-        ThemePreference::Light => Theme::Light,
+    let dark = match app.theme_preference {
+        ThemePreference::System => {
+            let now = Instant::now();
+            let stale = app
+                .system_dark_checked_at
+                .get()
+                .is_none_or(|checked| now.duration_since(checked) >= SYSTEM_THEME_POLL_INTERVAL);
+            if stale {
+                app.system_dark.set(system_is_dark());
+                app.system_dark_checked_at.set(Some(now));
+            }
+            app.system_dark.get()
+        }
+        ThemePreference::Dark => true,
+        ThemePreference::Light => false,
+    };
+    if dark { Theme::Dark } else { Theme::Light }
+}
+
+impl Librapix {
+    /// Resolve whether the active theme is dark (for icon/chip variant choice),
+    /// consistent with `theme()`. Reads the cached OS appearance for `System`.
+    fn is_dark_theme(&self) -> bool {
+        match self.theme_preference {
+            ThemePreference::System => self.system_dark.get(),
+            ThemePreference::Dark => true,
+            ThemePreference::Light => false,
+        }
     }
 }
 
@@ -2896,13 +2936,13 @@ fn view(app: &Librapix) -> Element<'_, Message> {
 
     // ── Header ──
     let brand = row![
-        svg(assets::logo_svg())
-            .width(Length::Fixed(40.0))
-            .height(Length::Fixed(40.0))
+        svg(assets::logo_svg(app.is_dark_theme()))
+            .width(Length::Fixed(ICON_XL))
+            .height(Length::Fixed(ICON_XL))
             .content_fit(ContentFit::Contain),
         row![
-            text("Libra").size(FONT_DISPLAY).color(TEXT_PRIMARY),
-            text("Pix").size(FONT_DISPLAY).color(ACCENT),
+            text("Libra").size(FONT_DISPLAY).style(text_primary),
+            text("Pix").size(FONT_DISPLAY).style(text_accent),
         ]
         .spacing(0)
         .align_y(iced::Alignment::Center),
@@ -2920,9 +2960,9 @@ fn view(app: &Librapix) -> Element<'_, Message> {
         .padding([SPACE_XS as u16, SPACE_MD as u16]);
 
     let github_btn = button(
-        image(assets::icon_github())
-            .width(Length::Fixed(20.0))
-            .height(Length::Fixed(20.0))
+        image(assets::icon_github(app.is_dark_theme()))
+            .width(Length::Fixed(ICON_LG))
+            .height(Length::Fixed(ICON_LG))
             .content_fit(ContentFit::Contain)
             .filter_method(FilterMethod::Linear),
     )
@@ -2935,9 +2975,9 @@ fn view(app: &Librapix) -> Element<'_, Message> {
             brand,
             Space::new().width(Length::Fill),
             row![
-                image(assets::icon_search())
-                    .width(Length::Fixed(18.0))
-                    .height(Length::Fixed(18.0))
+                image(assets::icon_search(app.is_dark_theme()))
+                    .width(Length::Fixed(ICON_MD))
+                    .height(Length::Fixed(ICON_MD))
                     .content_fit(ContentFit::Contain)
                     .filter_method(FilterMethod::Linear),
                 text_input(
@@ -2965,39 +3005,25 @@ fn view(app: &Librapix) -> Element<'_, Message> {
     .style(header_style);
 
     // ── Sidebar: Browse navigation ──
+    // Gallery + Timeline are one "Library" surface; the Grid/Timeline split is a
+    // toggle in the content header, so the sidebar carries a single entry.
     let nav_section = column![
         section_heading(app.i18n.text(TextKey::BrowseSectionLabel)),
         button(
             row![
-                image(assets::icon_gallery())
-                    .width(Length::Fixed(18.0))
-                    .height(Length::Fixed(18.0))
+                image(assets::icon_gallery(app.is_dark_theme()))
+                    .width(Length::Fixed(ICON_MD))
+                    .height(Length::Fixed(ICON_MD))
                     .content_fit(ContentFit::Contain)
                     .filter_method(FilterMethod::Linear),
-                text(app.i18n.text(TextKey::GalleryTab)).size(FONT_BODY),
+                text(app.i18n.text(TextKey::LibraryTab)).size(FONT_BODY),
             ]
             .spacing(SPACE_SM)
             .align_y(iced::Alignment::Center),
         )
         .width(Length::Fill)
         .on_press(Message::OpenGallery)
-        .style(nav_button_style(is_gallery))
-        .padding([SPACE_SM as u16, SPACE_MD as u16]),
-        button(
-            row![
-                image(assets::icon_timeline())
-                    .width(Length::Fixed(18.0))
-                    .height(Length::Fixed(18.0))
-                    .content_fit(ContentFit::Contain)
-                    .filter_method(FilterMethod::Linear),
-                text(app.i18n.text(TextKey::TimelineTab)).size(FONT_BODY),
-            ]
-            .spacing(SPACE_SM)
-            .align_y(iced::Alignment::Center),
-        )
-        .width(Length::Fill)
-        .on_press(Message::OpenTimeline)
-        .style(nav_button_style(is_timeline))
+        .style(nav_button_style(is_gallery || is_timeline))
         .padding([SPACE_SM as u16, SPACE_MD as u16]),
     ]
     .spacing(SPACE_XS);
@@ -3006,7 +3032,7 @@ fn view(app: &Librapix) -> Element<'_, Message> {
     let roots_list: Element<'_, Message> = if app.state.library_roots.is_empty() {
         text(app.i18n.text(TextKey::EmptyRootsLabel))
             .size(FONT_BODY)
-            .color(TEXT_TERTIARY)
+            .style(text_tertiary)
             .into()
     } else {
         app.state
@@ -3015,10 +3041,11 @@ fn view(app: &Librapix) -> Element<'_, Message> {
             .fold(column![].spacing(SPACE_2XS), |col, root| {
                 let is_selected = app.state.selected_root_id == Some(root.id);
                 let label = display_name_for_root(root);
+                let p = ui::palette(&theme(app));
                 let status_color = match root.lifecycle {
-                    RootLifecycle::Active => SUCCESS_COLOR,
-                    RootLifecycle::Unavailable => WARNING_COLOR,
-                    RootLifecycle::Deactivated => TEXT_DISABLED,
+                    RootLifecycle::Active => p.success,
+                    RootLifecycle::Unavailable => p.warning,
+                    RootLifecycle::Deactivated => p.text_disabled,
                 };
                 col.push(
                     row![
@@ -3026,9 +3053,9 @@ fn view(app: &Librapix) -> Element<'_, Message> {
                             row![
                                 text("\u{25CF}").size(FONT_CAPTION).color(status_color),
                                 text(label).size(FONT_BODY).color(if is_selected {
-                                    TEXT_PRIMARY
+                                    p.text_primary
                                 } else {
-                                    TEXT_SECONDARY
+                                    p.text_secondary
                                 }),
                             ]
                             .spacing(SPACE_SM)
@@ -3069,7 +3096,7 @@ fn view(app: &Librapix) -> Element<'_, Message> {
         .spacing(SPACE_XS),
         text(app.root_status.clone())
             .size(FONT_CAPTION)
-            .color(TEXT_TERTIARY),
+            .style(text_tertiary),
     ]
     .spacing(SPACE_SM);
 
@@ -3203,14 +3230,13 @@ fn view(app: &Librapix) -> Element<'_, Message> {
 }
 
 fn render_media_panel(app: &Librapix) -> (Element<'_, Message>, Element<'_, Message>) {
-    let route_title = match app.state.active_route {
-        Route::Gallery => app.i18n.text(TextKey::GalleryTab),
-        Route::Timeline => app.i18n.text(TextKey::TimelineTab),
-    };
+    let is_grid = matches!(app.state.active_route, Route::Gallery);
     let run_msg = match app.state.active_route {
         Route::Gallery => Message::RunGalleryProjection,
         Route::Timeline => Message::RunTimelineProjection,
     };
+    // One canonical projection pass feeds both: the flat grid renders the
+    // header-stripped `gallery_items`, the timeline renders the grouped feed.
     let browse_items = match app.state.active_route {
         Route::Gallery => &app.gallery_items,
         Route::Timeline => &app.timeline_items,
@@ -3222,13 +3248,55 @@ fn render_media_panel(app: &Librapix) -> (Element<'_, Message>, Element<'_, Mess
     };
     let stats = compute_browse_stats(stats_source);
 
+    // Segmented Grid | Timeline toggle (Google/Windows Photos style).
+    let dark = app.is_dark_theme();
+    let segment_label = |handle, label: &str, active: bool, msg: Message| {
+        button(
+            row![
+                image(handle)
+                    .width(Length::Fixed(ICON_SM))
+                    .height(Length::Fixed(ICON_SM))
+                    .content_fit(ContentFit::Contain)
+                    .filter_method(FilterMethod::Linear),
+                text(label.to_owned()).size(FONT_BODY),
+            ]
+            .spacing(SPACE_XS)
+            .align_y(iced::Alignment::Center),
+        )
+        .on_press(msg)
+        .style(segment_button_style(active))
+        .padding([SPACE_XS as u16, SPACE_MD as u16])
+    };
+    let view_toggle = container(
+        row![
+            segment_label(
+                assets::icon_gallery(dark),
+                app.i18n.text(TextKey::GalleryTab),
+                is_grid,
+                Message::OpenGallery,
+            ),
+            segment_label(
+                assets::icon_timeline(dark),
+                app.i18n.text(TextKey::TimelineTab),
+                !is_grid,
+                Message::OpenTimeline,
+            ),
+        ]
+        .spacing(SPACE_2XS),
+    )
+    .padding(SPACE_2XS as u16)
+    .style(card_style);
+
     let content_header = row![
-        text(route_title).size(FONT_TITLE).color(TEXT_PRIMARY),
+        text(app.i18n.text(TextKey::LibraryTab))
+            .size(FONT_TITLE)
+            .style(text_primary),
+        view_toggle,
         Space::new().width(Length::Fill),
         button(
-            image(assets::icon_refresh())
-                .width(Length::Fixed(18.0))
-                .height(Length::Fixed(18.0))
+            image(assets::icon_refresh(app.is_dark_theme()))
+                .width(Length::Fixed(ICON_MD))
+                .height(Length::Fixed(ICON_MD))
                 .content_fit(ContentFit::Contain)
                 .filter_method(FilterMethod::Linear),
         )
@@ -3236,9 +3304,9 @@ fn render_media_panel(app: &Librapix) -> (Element<'_, Message>, Element<'_, Mess
         .style(subtle_button_style)
         .padding([SPACE_XS as u16, SPACE_XS as u16]),
         button(
-            image(assets::icon_filter())
-                .width(Length::Fixed(18.0))
-                .height(Length::Fixed(18.0))
+            image(assets::icon_filter(app.is_dark_theme()))
+                .width(Length::Fixed(ICON_MD))
+                .height(Length::Fixed(ICON_MD))
                 .content_fit(ContentFit::Contain)
                 .filter_method(FilterMethod::Linear),
         )
@@ -3255,7 +3323,7 @@ fn render_media_panel(app: &Librapix) -> (Element<'_, Message>, Element<'_, Mess
             stats.video_count
         ))
         .size(FONT_BODY)
-        .color(TEXT_SECONDARY),
+        .style(text_secondary),
     ]
     .spacing(SPACE_SM)
     .align_y(iced::Alignment::Center);
@@ -3267,7 +3335,7 @@ fn render_media_panel(app: &Librapix) -> (Element<'_, Message>, Element<'_, Mess
             container(
                 text(app.i18n.text(TextKey::EmptySearchResultsLabel))
                     .size(FONT_BODY)
-                    .color(TEXT_SECONDARY),
+                    .style(text_secondary),
             )
             .padding(SPACE_XL as u16)
             .width(Length::Fill)
@@ -3277,10 +3345,10 @@ fn render_media_panel(app: &Librapix) -> (Element<'_, Message>, Element<'_, Mess
             let search_header = row![
                 text(app.i18n.text(TextKey::SearchResultLabel))
                     .size(FONT_SUBTITLE)
-                    .color(TEXT_PRIMARY),
+                    .style(text_primary),
                 text(format!("({})", app.search_items.len()))
                     .size(FONT_BODY)
-                    .color(TEXT_SECONDARY),
+                    .style(text_secondary),
             ]
             .spacing(SPACE_SM);
 
@@ -3307,7 +3375,7 @@ fn render_media_panel(app: &Librapix) -> (Element<'_, Message>, Element<'_, Mess
     };
 
     let browse_content: Element<'_, Message> = if browse_items.is_empty() {
-        container(text(empty_label).size(FONT_SUBTITLE).color(TEXT_SECONDARY))
+        container(text(empty_label).size(FONT_SUBTITLE).style(text_secondary))
             .padding(SPACE_2XL as u16)
             .width(Length::Fill)
             .style(empty_state_style)
@@ -3670,8 +3738,12 @@ fn render_justified_gallery<'a>(
             let mut row_widget = row![].spacing(GALLERY_GAP);
             for item in &items[row_layout.start..row_layout.end] {
                 let portion = (item.aspect_ratio * 1000.0).max(1.0) as u16;
-                let card =
-                    render_media_card(item, selected_id == Some(item.media_id), row_layout.height);
+                let card = render_media_card(
+                    item,
+                    selected_id == Some(item.media_id),
+                    row_layout.height,
+                    app.is_dark_theme(),
+                );
                 row_widget = row_widget.push(container(card).width(Length::FillPortion(portion)));
             }
             visible_rows = visible_rows.saturating_add(1);
@@ -3703,7 +3775,12 @@ fn render_justified_gallery<'a>(
     .into()
 }
 
-fn render_media_card(item: &BrowseItem, selected: bool, height: f32) -> Element<'_, Message> {
+fn render_media_card(
+    item: &BrowseItem,
+    selected: bool,
+    height: f32,
+    dark: bool,
+) -> Element<'_, Message> {
     let thumb: Element<'_, Message> = if let Some(path) = &item.thumbnail_path {
         image(image::Handle::from_path(path))
             .width(Length::Fill)
@@ -3716,7 +3793,7 @@ fn render_media_card(item: &BrowseItem, selected: bool, height: f32) -> Element<
                 Space::new().height(Length::Fill),
                 text(item.title.clone())
                     .size(FONT_CAPTION)
-                    .color(TEXT_TERTIARY),
+                    .style(text_tertiary),
             ]
             .padding(SPACE_XS as u16),
         )
@@ -3727,13 +3804,13 @@ fn render_media_card(item: &BrowseItem, selected: bool, height: f32) -> Element<
     };
 
     let kind_icon_handle = if item.media_kind.eq_ignore_ascii_case("video") {
-        assets::icon_type_video()
+        assets::icon_type_video(dark)
     } else {
-        assets::icon_type_image()
+        assets::icon_type_image(dark)
     };
     let kind_badge = image(kind_icon_handle)
-        .width(Length::Fixed(16.0))
-        .height(Length::Fixed(16.0))
+        .width(Length::Fixed(ICON_SM))
+        .height(Length::Fixed(ICON_SM))
         .content_fit(ContentFit::Contain)
         .filter_method(FilterMethod::Linear);
 
@@ -3756,7 +3833,7 @@ fn render_media_card(item: &BrowseItem, selected: bool, height: f32) -> Element<
         container(
             text(item.metadata_line.clone())
                 .size(FONT_CAPTION)
-                .color(TEXT_TERTIARY)
+                .style(text_tertiary)
         )
         .padding([SPACE_XS as u16, SPACE_SM as u16]),
     ];
@@ -4086,22 +4163,22 @@ fn render_timeline_view<'a>(
                 (header_item.group_image_count, header_item.group_video_count)
             {
                 row![
-                    image(assets::icon_type_image())
-                        .width(Length::Fixed(14.0))
-                        .height(Length::Fixed(14.0))
+                    image(assets::icon_type_image(app.is_dark_theme()))
+                        .width(Length::Fixed(ICON_XS))
+                        .height(Length::Fixed(ICON_XS))
                         .content_fit(ContentFit::Contain)
                         .filter_method(FilterMethod::Linear),
                     text(format!("{img}"))
                         .size(FONT_CAPTION)
-                        .color(TEXT_SECONDARY),
-                    image(assets::icon_type_video())
-                        .width(Length::Fixed(14.0))
-                        .height(Length::Fixed(14.0))
+                        .style(text_secondary),
+                    image(assets::icon_type_video(app.is_dark_theme()))
+                        .width(Length::Fixed(ICON_XS))
+                        .height(Length::Fixed(ICON_XS))
                         .content_fit(ContentFit::Contain)
                         .filter_method(FilterMethod::Linear),
                     text(format!("{vid}"))
                         .size(FONT_CAPTION)
-                        .color(TEXT_SECONDARY),
+                        .style(text_secondary),
                 ]
                 .spacing(SPACE_SM)
                 .align_y(iced::Alignment::Center)
@@ -4113,7 +4190,7 @@ fn render_timeline_view<'a>(
                 row![
                     text(header_item.title.clone())
                         .size(FONT_SUBTITLE)
-                        .color(TEXT_PRIMARY),
+                        .style(text_primary),
                     Space::new().width(Length::Fill),
                     count_chips,
                 ]
@@ -4169,8 +4246,12 @@ fn render_timeline_view<'a>(
                     ..section_layout.media_start + layout.end]
                 {
                     let portion = (item.aspect_ratio * 1000.0).max(1.0) as u16;
-                    let card =
-                        render_media_card(item, selected_id == Some(item.media_id), layout.height);
+                    let card = render_media_card(
+                        item,
+                        selected_id == Some(item.media_id),
+                        layout.height,
+                        app.is_dark_theme(),
+                    );
                     row_widget =
                         row_widget.push(container(card).width(Length::FillPortion(portion)));
                 }
@@ -4261,7 +4342,7 @@ fn render_timeline_scrubber(app: &Librapix) -> Element<'_, Message> {
         let bottom = 1000u16.saturating_sub(top);
         column![
             Space::new().height(Length::FillPortion(top.max(1))),
-            container(text(chip_label).size(FONT_CAPTION).color(TEXT_PRIMARY))
+            container(text(chip_label).size(FONT_CAPTION).style(text_primary))
                 .padding([SPACE_2XS as u16, SPACE_SM as u16])
                 .style(scrubber_chip_style),
             Space::new().height(Length::FillPortion(bottom.max(1))),
@@ -4446,7 +4527,7 @@ fn render_filter_dialog(app: &Librapix) -> Element<'_, Message> {
     let tag_section: Element<'_, Message> = if app.available_filter_tags.is_empty() {
         text(app.i18n.text(TextKey::FilterNoTagsLabel))
             .size(FONT_BODY)
-            .color(TEXT_TERTIARY)
+            .style(text_tertiary)
             .into()
     } else {
         render_wrapped_filter_chips(tag_chip_specs)
@@ -4466,7 +4547,7 @@ fn render_filter_dialog(app: &Librapix) -> Element<'_, Message> {
     let dialog_content = column![
         text(app.i18n.text(TextKey::FiltersButtonLabel))
             .size(FONT_TITLE)
-            .color(TEXT_PRIMARY),
+            .style(text_primary),
         h_divider(),
         column![
             section_heading(app.i18n.text(TextKey::FilterTypeLabel)),
@@ -4524,9 +4605,10 @@ fn render_management_chip(
     toggle: Option<(String, Message)>,
     edit: Option<(String, Message)>,
     remove: Option<Message>,
+    dark: bool,
 ) -> Element<'static, Message> {
     let label = label.into();
-    let tone = chip_tone_for_key(tone_key);
+    let tone = chip_tone_for_key(tone_key, dark);
     let mut controls = row![].spacing(SPACE_2XS).align_y(iced::Alignment::Center);
     if let Some((toggle_label, msg)) = toggle {
         controls = controls.push(
@@ -4609,10 +4691,10 @@ fn render_activity_status(app: &Librapix) -> Element<'_, Message> {
     if matches!(indicator_mode, ActivityIndicatorMode::Idle) {
         return container(
             row![
-                text("\u{25CF}").size(FONT_CAPTION).color(SUCCESS_COLOR),
+                text("\u{25CF}").size(FONT_CAPTION).style(text_success),
                 text(app.activity_status.clone())
                     .size(FONT_CAPTION)
-                    .color(TEXT_SECONDARY),
+                    .style(text_secondary),
             ]
             .spacing(SPACE_XS)
             .align_y(iced::Alignment::Center),
@@ -4630,10 +4712,10 @@ fn render_activity_status(app: &Librapix) -> Element<'_, Message> {
                 .into()
         }
         ActivityIndicatorMode::Indeterminate => row![
-            text("\u{25CF}").size(FONT_CAPTION).color(ACCENT),
+            text("\u{25CF}").size(FONT_CAPTION).style(text_accent),
             text(app.i18n.text(TextKey::ActivityWorkingLabel))
                 .size(FONT_CAPTION)
-                .color(TEXT_SECONDARY),
+                .style(text_secondary),
         ]
         .spacing(SPACE_XS)
         .align_y(iced::Alignment::Center)
@@ -4650,16 +4732,16 @@ fn render_activity_status(app: &Librapix) -> Element<'_, Message> {
     let mut lines = column![
         text(progress.stage_text.clone())
             .size(FONT_BODY)
-            .color(TEXT_PRIMARY),
+            .style(text_primary),
         indicator,
-        text(metrics_line).size(FONT_CAPTION).color(TEXT_TERTIARY),
+        text(metrics_line).size(FONT_CAPTION).style(text_tertiary),
     ]
     .spacing(SPACE_2XS);
     if !progress.detail_text.trim().is_empty() {
         lines = lines.push(
             text(progress.detail_text.clone())
                 .size(FONT_CAPTION)
-                .color(TEXT_TERTIARY),
+                .style(text_tertiary),
         );
     }
     if let Some(error) = progress.last_error.as_ref() {
@@ -4667,12 +4749,12 @@ fn render_activity_status(app: &Librapix) -> Element<'_, Message> {
         let (error_compact, error_truncated) = truncate_for_sidebar(&error_line, 120);
         let error_text = text(error_compact)
             .size(FONT_CAPTION)
-            .color(WARNING_COLOR)
+            .style(text_warning)
             .width(Length::Fill);
         let error_widget: Element<'_, Message> = if error_truncated {
             tooltip(
                 error_text,
-                container(text(error_line).size(FONT_CAPTION).color(TEXT_PRIMARY))
+                container(text(error_line).size(FONT_CAPTION).style(text_primary))
                     .padding([SPACE_XS as u16, SPACE_SM as u16])
                     .style(card_style),
                 tooltip::Position::Top,
@@ -4733,9 +4815,9 @@ fn render_settings_dialog(app: &Librapix) -> Element<'_, Message> {
         section_heading(app.i18n.text(TextKey::IndexingSectionLabel)),
         button(
             row![
-                image(assets::icon_index())
-                    .width(Length::Fixed(18.0))
-                    .height(Length::Fixed(18.0))
+                image(assets::icon_index(app.is_dark_theme()))
+                    .width(Length::Fixed(ICON_MD))
+                    .height(Length::Fixed(ICON_MD))
                     .content_fit(ContentFit::Contain)
                     .filter_method(FilterMethod::Linear),
                 text(app.i18n.text(TextKey::IndexRunButton)).size(FONT_BODY),
@@ -4749,10 +4831,10 @@ fn render_settings_dialog(app: &Librapix) -> Element<'_, Message> {
         .padding([SPACE_SM as u16, SPACE_MD as u16]),
         text(app.indexing_status.clone())
             .size(FONT_CAPTION)
-            .color(TEXT_TERTIARY),
+            .style(text_tertiary),
         text(app.thumbnail_status.clone())
             .size(FONT_CAPTION)
-            .color(TEXT_TERTIARY),
+            .style(text_tertiary),
     ]
     .spacing(SPACE_SM);
 
@@ -4783,7 +4865,7 @@ fn render_settings_dialog(app: &Librapix) -> Element<'_, Message> {
     let ignore_chip_list: Element<'_, Message> = if app.ignore_rules.is_empty() {
         text(app.i18n.text(TextKey::FilterNoTagsLabel))
             .size(FONT_CAPTION)
-            .color(TEXT_TERTIARY)
+            .style(text_tertiary)
             .into()
     } else {
         app.ignore_rules
@@ -4812,6 +4894,7 @@ fn render_settings_dialog(app: &Librapix) -> Element<'_, Message> {
                         Message::IgnoreRuleStartEdit(rule.id),
                     )),
                     Some(Message::IgnoreRuleRemove(rule.id)),
+                    app.is_dark_theme(),
                 ))
             })
             .into()
@@ -4833,7 +4916,7 @@ fn render_settings_dialog(app: &Librapix) -> Element<'_, Message> {
         row![
             text(app.i18n.text(TextKey::MinFileSizeLabel))
                 .size(FONT_CAPTION)
-                .color(TEXT_SECONDARY),
+                .style(text_secondary),
             text_input(
                 app.i18n.text(TextKey::MinFileSizeKbSuffix),
                 &app.min_file_size_input
@@ -4844,7 +4927,7 @@ fn render_settings_dialog(app: &Librapix) -> Element<'_, Message> {
             .style(field_input_style),
             text(app.i18n.text(TextKey::MinFileSizeKbSuffix))
                 .size(FONT_CAPTION)
-                .color(TEXT_TERTIARY),
+                .style(text_tertiary),
             button(text(app.i18n.text(TextKey::ApplyLabel)).size(FONT_CAPTION))
                 .on_press(Message::ApplyMinFileSize)
                 .style(subtle_button_style)
@@ -4856,7 +4939,7 @@ fn render_settings_dialog(app: &Librapix) -> Element<'_, Message> {
         row![
             text(app.i18n.text(TextKey::DefaultShortsOutputDirLabel))
                 .size(FONT_CAPTION)
-                .color(TEXT_SECONDARY),
+                .style(text_secondary),
             text_input(
                 app.i18n.text(TextKey::DefaultShortsOutputDirPlaceholder),
                 &app.shorts_output_dir_input
@@ -4866,9 +4949,9 @@ fn render_settings_dialog(app: &Librapix) -> Element<'_, Message> {
             .width(Length::Fill),
             button(
                 row![
-                    image(assets::icon_browse())
-                        .width(Length::Fixed(14.0))
-                        .height(Length::Fixed(14.0))
+                    image(assets::icon_browse(app.is_dark_theme()))
+                        .width(Length::Fixed(ICON_XS))
+                        .height(Length::Fixed(ICON_XS))
                         .content_fit(ContentFit::Contain)
                         .filter_method(FilterMethod::Linear),
                     text(app.i18n.text(TextKey::BrowseFolderButton)).size(FONT_CAPTION),
@@ -4881,9 +4964,9 @@ fn render_settings_dialog(app: &Librapix) -> Element<'_, Message> {
             .padding([SPACE_2XS as u16, SPACE_SM as u16]),
             button(
                 row![
-                    image(assets::icon_save())
-                        .width(Length::Fixed(14.0))
-                        .height(Length::Fixed(14.0))
+                    image(assets::icon_save(app.is_dark_theme()))
+                        .width(Length::Fixed(ICON_XS))
+                        .height(Length::Fixed(ICON_XS))
                         .content_fit(ContentFit::Contain)
                         .filter_method(FilterMethod::Linear),
                     text(app.i18n.text(TextKey::LibrarySaveButton)).size(FONT_CAPTION),
@@ -4905,7 +4988,7 @@ fn render_settings_dialog(app: &Librapix) -> Element<'_, Message> {
             column![
                 text("Click Refresh to load state.")
                     .size(FONT_CAPTION)
-                    .color(TEXT_TERTIARY)
+                    .style(text_tertiary)
             ]
         } else {
             app.diagnostics_lines
@@ -4914,7 +4997,7 @@ fn render_settings_dialog(app: &Librapix) -> Element<'_, Message> {
                     col.push(
                         text(line.as_str())
                             .size(FONT_CAPTION)
-                            .color(TEXT_TERTIARY)
+                            .style(text_tertiary)
                             .font(iced::Font::MONOSPACE),
                     )
                 })
@@ -4923,7 +5006,7 @@ fn render_settings_dialog(app: &Librapix) -> Element<'_, Message> {
             column![
                 text("(no events yet)")
                     .size(FONT_CAPTION)
-                    .color(TEXT_TERTIARY)
+                    .style(text_tertiary)
             ]
         } else {
             app.diagnostics_events
@@ -4933,7 +5016,7 @@ fn render_settings_dialog(app: &Librapix) -> Element<'_, Message> {
                     col.push(
                         text(line.as_str())
                             .size(FONT_CAPTION)
-                            .color(TEXT_TERTIARY)
+                            .style(text_tertiary)
                             .font(iced::Font::MONOSPACE),
                     )
                 })
@@ -4950,9 +5033,9 @@ fn render_settings_dialog(app: &Librapix) -> Element<'_, Message> {
             .align_y(iced::Alignment::Center),
             text("Events (newest first)")
                 .size(FONT_CAPTION)
-                .color(TEXT_SECONDARY),
+                .style(text_secondary),
             scrollable(event_lines).height(Length::Fixed(120.0)),
-            text("State").size(FONT_CAPTION).color(TEXT_SECONDARY),
+            text("State").size(FONT_CAPTION).style(text_secondary),
             state_lines,
         ]
         .spacing(SPACE_SM)
@@ -4962,7 +5045,7 @@ fn render_settings_dialog(app: &Librapix) -> Element<'_, Message> {
         row![
             text(app.i18n.text(TextKey::SettingsDialogTitle))
                 .size(FONT_TITLE)
-                .color(TEXT_PRIMARY),
+                .style(text_primary),
             Space::new().width(Length::Fill),
             button(text(app.i18n.text(TextKey::DismissButton)).size(FONT_BODY))
                 .on_press(Message::CloseSettings)
@@ -5002,7 +5085,7 @@ fn render_about_dialog(app: &Librapix) -> Element<'_, Message> {
         row![
             text(app.i18n.text(TextKey::AboutDialogTitle))
                 .size(FONT_TITLE)
-                .color(TEXT_PRIMARY),
+                .style(text_primary),
             Space::new().width(Length::Fill),
             button(text(app.i18n.text(TextKey::DismissButton)).size(FONT_BODY))
                 .on_press(Message::CloseAbout)
@@ -5012,13 +5095,13 @@ fn render_about_dialog(app: &Librapix) -> Element<'_, Message> {
         .align_y(iced::Alignment::Center),
         h_divider(),
         row![
-            svg(assets::logo_svg())
+            svg(assets::logo_svg(app.is_dark_theme()))
                 .width(Length::Fixed(44.0))
                 .height(Length::Fixed(44.0))
                 .content_fit(ContentFit::Contain),
             row![
-                text("Libra").size(FONT_SUBTITLE).color(TEXT_PRIMARY),
-                text("Pix").size(FONT_SUBTITLE).color(ACCENT),
+                text("Libra").size(FONT_SUBTITLE).style(text_primary),
+                text("Pix").size(FONT_SUBTITLE).style(text_accent),
             ]
             .spacing(0)
             .align_y(iced::Alignment::Center),
@@ -5031,16 +5114,16 @@ fn render_about_dialog(app: &Librapix) -> Element<'_, Message> {
             APP_VERSION
         ))
         .size(FONT_BODY)
-        .color(TEXT_SECONDARY),
+        .style(text_secondary),
         text(app.i18n.text(TextKey::AboutCreatorLabel))
             .size(FONT_BODY)
-            .color(TEXT_SECONDARY),
+            .style(text_secondary),
         text(app.i18n.text(TextKey::AboutWeekendProjectNote))
             .size(FONT_BODY)
-            .color(TEXT_SECONDARY),
+            .style(text_secondary),
         text(app.i18n.text(TextKey::AboutSecondNote))
             .size(FONT_BODY)
-            .color(TEXT_SECONDARY),
+            .style(text_secondary),
     ]
     .spacing(SPACE_LG);
 
@@ -5084,7 +5167,7 @@ fn render_library_dialog(app: &Librapix) -> Element<'_, Message> {
     let tags_list: Element<'_, Message> = if app.library_dialog_tags.is_empty() {
         text(app.i18n.text(TextKey::FilterNoTagsLabel))
             .size(FONT_CAPTION)
-            .color(TEXT_TERTIARY)
+            .style(text_tertiary)
             .into()
     } else {
         app.library_dialog_tags
@@ -5100,6 +5183,7 @@ fn render_library_dialog(app: &Librapix) -> Element<'_, Message> {
                         Message::LibraryDialogStartEditTag(name.clone()),
                     )),
                     Some(Message::LibraryDialogRemoveTag(name.clone())),
+                    app.is_dark_theme(),
                 ))
             })
             .into()
@@ -5160,9 +5244,9 @@ fn render_library_dialog(app: &Librapix) -> Element<'_, Message> {
     let add_another_button: Element<'_, Message> = if is_add_mode {
         button(
             row![
-                image(assets::icon_save())
-                    .width(Length::Fixed(16.0))
-                    .height(Length::Fixed(16.0))
+                image(assets::icon_save(app.is_dark_theme()))
+                    .width(Length::Fixed(ICON_SM))
+                    .height(Length::Fixed(ICON_SM))
                     .content_fit(ContentFit::Contain)
                     .filter_method(FilterMethod::Linear),
                 text(app.i18n.text(TextKey::LibrarySaveAndAddAnotherButton)).size(FONT_BODY),
@@ -5180,7 +5264,7 @@ fn render_library_dialog(app: &Librapix) -> Element<'_, Message> {
 
     let dialog_content = column![
         row![
-            text(title).size(FONT_TITLE).color(TEXT_PRIMARY),
+            text(title).size(FONT_TITLE).style(text_primary),
             Space::new().width(Length::Fill),
             button(text(app.i18n.text(TextKey::DismissButton)).size(FONT_BODY))
                 .on_press(Message::CloseLibraryDialog)
@@ -5194,9 +5278,9 @@ fn render_library_dialog(app: &Librapix) -> Element<'_, Message> {
             row![
                 button(
                     row![
-                        image(assets::icon_browse())
-                            .width(Length::Fixed(16.0))
-                            .height(Length::Fixed(16.0))
+                        image(assets::icon_browse(app.is_dark_theme()))
+                            .width(Length::Fixed(ICON_SM))
+                            .height(Length::Fixed(ICON_SM))
                             .content_fit(ContentFit::Contain)
                             .filter_method(FilterMethod::Linear),
                         text(app.i18n.text(TextKey::BrowseFolderButton)).size(FONT_BODY),
@@ -5216,7 +5300,7 @@ fn render_library_dialog(app: &Librapix) -> Element<'_, Message> {
             path_field,
             text(app.library_dialog_path_input.as_str())
                 .size(FONT_CAPTION)
-                .color(TEXT_TERTIARY),
+                .style(text_tertiary),
         ]
         .spacing(SPACE_SM),
         h_divider(),
@@ -5253,9 +5337,9 @@ fn render_library_dialog(app: &Librapix) -> Element<'_, Message> {
         row![
             button(
                 row![
-                    image(assets::icon_save())
-                        .width(Length::Fixed(16.0))
-                        .height(Length::Fixed(16.0))
+                    image(assets::icon_save(app.is_dark_theme()))
+                        .width(Length::Fixed(ICON_SM))
+                        .height(Length::Fixed(ICON_SM))
                         .content_fit(ContentFit::Contain)
                         .filter_method(FilterMethod::Linear),
                     text(app.i18n.text(TextKey::LibrarySaveButton)).size(FONT_BODY),
@@ -5308,7 +5392,7 @@ fn render_library_statistics_dialog(app: &Librapix) -> Element<'_, Message> {
     let path_line: Element<'_, Message> = if let Some(root) = root {
         text(root.normalized_path.display().to_string())
             .size(FONT_CAPTION)
-            .color(TEXT_TERTIARY)
+            .style(text_tertiary)
             .into()
     } else {
         column![].into()
@@ -5365,13 +5449,13 @@ fn render_library_statistics_dialog(app: &Librapix) -> Element<'_, Message> {
     } else {
         text(app.i18n.text(TextKey::LibraryStatsNotAvailableLabel))
             .size(FONT_BODY)
-            .color(TEXT_SECONDARY)
+            .style(text_secondary)
             .into()
     };
 
     let dialog_content = column![
         row![
-            text(dialog_title).size(FONT_TITLE).color(TEXT_PRIMARY),
+            text(dialog_title).size(FONT_TITLE).style(text_primary),
             Space::new().width(Length::Fill),
             button(text(app.i18n.text(TextKey::DismissButton)).size(FONT_BODY))
                 .on_press(Message::CloseLibraryStatisticsDialog)
@@ -5396,9 +5480,9 @@ fn render_library_statistics_dialog(app: &Librapix) -> Element<'_, Message> {
 
 fn render_stats_row<'a>(label: &'a str, value: String) -> Element<'a, Message> {
     row![
-        text(label).size(FONT_BODY).color(TEXT_SECONDARY),
+        text(label).size(FONT_BODY).style(text_secondary),
         Space::new().width(Length::Fill),
-        text(value).size(FONT_BODY).color(TEXT_PRIMARY),
+        text(value).size(FONT_BODY).style(text_primary),
     ]
     .align_y(iced::Alignment::Center)
     .into()
@@ -5417,7 +5501,7 @@ fn render_new_media_dialog(app: &Librapix) -> Element<'_, Message> {
             app.i18n.text(TextKey::NewFileAnnouncementMoreLabel)
         ))
         .size(FONT_CAPTION)
-        .color(TEXT_TERTIARY)
+        .style(text_tertiary)
         .into()
     } else {
         column![].into()
@@ -5443,35 +5527,35 @@ fn render_new_media_dialog(app: &Librapix) -> Element<'_, Message> {
             localized_media_kind_label(app.i18n, &announcement.media_kind),
         ))
         .size(FONT_CAPTION)
-        .color(TEXT_SECONDARY),
+        .style(text_secondary),
         text(format!(
             "{}: {}",
             app.i18n.text(TextKey::DetailsSizeLabel),
             format::format_file_size(announcement.file_size_bytes)
         ))
         .size(FONT_CAPTION)
-        .color(TEXT_SECONDARY),
+        .style(text_secondary),
         text(format!(
             "{}: {}",
             app.i18n.text(TextKey::DetailsModifiedLabel),
             format::format_timestamp(announcement.modified_unix_seconds)
         ))
         .size(FONT_CAPTION)
-        .color(TEXT_SECONDARY),
+        .style(text_secondary),
         text(format!(
             "{}: {}",
             app.i18n.text(TextKey::DetailsDimensionsLabel),
             format::format_dimensions(announcement.width_px, announcement.height_px),
         ))
         .size(FONT_CAPTION)
-        .color(TEXT_SECONDARY),
+        .style(text_secondary),
         text(format!(
             "{}: {}",
             app.i18n.text(TextKey::DetailsPathLabel),
             announcement.absolute_path.display()
         ))
         .size(FONT_CAPTION)
-        .color(TEXT_TERTIARY),
+        .style(text_tertiary),
     ]
     .spacing(SPACE_2XS);
 
@@ -5480,9 +5564,9 @@ fn render_new_media_dialog(app: &Librapix) -> Element<'_, Message> {
     let actions = row![
         button(
             row![
-                image(assets::icon_gallery())
-                    .width(Length::Fixed(16.0))
-                    .height(Length::Fixed(16.0))
+                image(assets::icon_gallery(app.is_dark_theme()))
+                    .width(Length::Fixed(ICON_SM))
+                    .height(Length::Fixed(ICON_SM))
                     .content_fit(ContentFit::Contain)
                     .filter_method(FilterMethod::Linear),
                 text(app.i18n.text(TextKey::MediaSelectButton)).size(FONT_BODY),
@@ -5496,9 +5580,9 @@ fn render_new_media_dialog(app: &Librapix) -> Element<'_, Message> {
         .padding(subtle_padding),
         button(
             row![
-                image(assets::icon_open())
-                    .width(Length::Fixed(16.0))
-                    .height(Length::Fixed(16.0))
+                image(assets::icon_open(app.is_dark_theme()))
+                    .width(Length::Fixed(ICON_SM))
+                    .height(Length::Fixed(ICON_SM))
                     .content_fit(ContentFit::Contain)
                     .filter_method(FilterMethod::Linear),
                 text(app.i18n.text(TextKey::DetailsOpenFileButton)).size(FONT_BODY),
@@ -5512,9 +5596,9 @@ fn render_new_media_dialog(app: &Librapix) -> Element<'_, Message> {
         .padding(primary_padding),
         button(
             row![
-                image(assets::icon_copy_file())
-                    .width(Length::Fixed(16.0))
-                    .height(Length::Fixed(16.0))
+                image(assets::icon_copy_file(app.is_dark_theme()))
+                    .width(Length::Fixed(ICON_SM))
+                    .height(Length::Fixed(ICON_SM))
                     .content_fit(ContentFit::Contain)
                     .filter_method(FilterMethod::Linear),
                 text(app.i18n.text(TextKey::DetailsCopyFileButton)).size(FONT_BODY),
@@ -5537,13 +5621,13 @@ fn render_new_media_dialog(app: &Librapix) -> Element<'_, Message> {
     let dialog_content = column![
         text(app.i18n.text(TextKey::NewFileAnnouncementTitle))
             .size(FONT_CAPTION)
-            .color(ACCENT),
+            .style(text_accent),
         text(announcement.title.as_str())
             .size(FONT_SUBTITLE)
-            .color(TEXT_PRIMARY),
+            .style(text_primary),
         text(announcement.metadata_line.as_str())
             .size(FONT_CAPTION)
-            .color(TEXT_SECONDARY),
+            .style(text_secondary),
         more_line,
         h_divider(),
         preview,
@@ -5597,12 +5681,12 @@ fn render_new_media_preview_loading_state(app: &Librapix, height: f32) -> Elemen
                         .text(TextKey::NewFileAnnouncementPreparingPreviewLabel)
                 )
                 .size(FONT_CAPTION)
-                .color(TEXT_SECONDARY),
+                .style(text_secondary),
                 text(new_media_preview_loading_indicator(
                     app.new_media_preview_loading_phase,
                 ))
                 .size(FONT_CAPTION)
-                .color(ACCENT),
+                .style(text_accent),
             ]
             .spacing(SPACE_XS)
             .align_y(iced::Alignment::Center),
@@ -5610,7 +5694,7 @@ fn render_new_media_preview_loading_state(app: &Librapix, height: f32) -> Elemen
                 app.new_media_preview_loading_phase,
             ))
             .size(FONT_CAPTION)
-            .color(TEXT_TERTIARY),
+            .style(text_tertiary),
         ]
         .spacing(SPACE_XS)
         .align_x(iced::Alignment::Center),
@@ -6282,10 +6366,10 @@ fn render_details_panel(app: &Librapix) -> Element<'_, Message> {
             column![
                 text(app.i18n.text(TextKey::SelectPhotoTitle))
                     .size(FONT_SUBTITLE)
-                    .color(TEXT_SECONDARY),
+                    .style(text_secondary),
                 text(app.i18n.text(TextKey::SelectPhotoSubtitle))
                     .size(FONT_BODY)
-                    .color(TEXT_TERTIARY),
+                    .style(text_tertiary),
             ]
             .spacing(SPACE_SM)
             .padding(SPACE_2XL as u16),
@@ -6316,13 +6400,13 @@ fn render_details_panel(app: &Librapix) -> Element<'_, Message> {
         column![
             text(app.i18n.text(TextKey::DetailsNoSelectionLabel))
                 .size(FONT_BODY)
-                .color(TEXT_TERTIARY)
+                .style(text_tertiary)
         ]
     } else {
         app.details_lines
             .iter()
             .fold(column![].spacing(SPACE_XS), |col, line| {
-                col.push(text(line.clone()).size(FONT_BODY).color(TEXT_SECONDARY))
+                col.push(text(line.clone()).size(FONT_BODY).style(text_secondary))
             })
     };
 
@@ -6367,7 +6451,7 @@ fn render_details_panel(app: &Librapix) -> Element<'_, Message> {
     let details_tag_list: Element<'_, Message> = if app.details_tags.is_empty() {
         text(app.i18n.text(TextKey::FilterNoTagsLabel))
             .size(FONT_CAPTION)
-            .color(TEXT_TERTIARY)
+            .style(text_tertiary)
             .into()
     } else {
         let inherited_section: Element<'_, Message> = if inherited_tag_chips.is_empty() {
@@ -6383,6 +6467,7 @@ fn render_details_panel(app: &Librapix) -> Element<'_, Message> {
                         None,
                         None,
                         Some(Message::DetachTagByName(tag.name.clone())),
+                        app.is_dark_theme(),
                     ))
                 });
             column![
@@ -6406,6 +6491,7 @@ fn render_details_panel(app: &Librapix) -> Element<'_, Message> {
                             Message::DetailsStartEditTag(tag.name.clone()),
                         )),
                         Some(Message::DetachTagByName(tag.name.clone())),
+                        app.is_dark_theme(),
                     ))
                 });
         column![inherited_section, manual_section]
@@ -6417,7 +6503,7 @@ fn render_details_panel(app: &Librapix) -> Element<'_, Message> {
         preview,
         text(app.details_title.clone())
             .size(FONT_SUBTITLE)
-            .color(TEXT_PRIMARY),
+            .style(text_primary),
         h_divider(),
         column![
             section_heading(app.i18n.text(TextKey::FileInfoLabel)),
@@ -6448,15 +6534,15 @@ fn render_details_panel(app: &Librapix) -> Element<'_, Message> {
             render_details_actions(app),
             text(app.i18n.text(TextKey::DetailsCopyShortcutHint))
                 .size(FONT_CAPTION)
-                .color(TEXT_TERTIARY),
+                .style(text_tertiary),
         ]
         .spacing(SPACE_SM),
         text(app.details_action_status.clone())
             .size(FONT_CAPTION)
-            .color(TEXT_TERTIARY),
+            .style(text_tertiary),
         text(app.i18n.text(TextKey::NonDestructiveNotice))
             .size(FONT_CAPTION)
-            .color(TEXT_TERTIARY),
+            .style(text_tertiary),
     ]
     .spacing(SPACE_LG)
     .into()
@@ -6467,9 +6553,9 @@ fn render_details_actions(app: &Librapix) -> Element<'_, Message> {
     responsive(move |size: Size| {
         let open = button(
             row![
-                image(assets::icon_open())
-                    .width(Length::Fixed(16.0))
-                    .height(Length::Fixed(16.0))
+                image(assets::icon_open(app.is_dark_theme()))
+                    .width(Length::Fixed(ICON_SM))
+                    .height(Length::Fixed(ICON_SM))
                     .content_fit(ContentFit::Contain)
                     .filter_method(FilterMethod::Linear),
                 text(app.i18n.text(TextKey::DetailsOpenFileButton)).size(FONT_BODY),
@@ -6483,9 +6569,9 @@ fn render_details_actions(app: &Librapix) -> Element<'_, Message> {
         .padding([SPACE_XS as u16, SPACE_MD as u16]);
         let open_folder = button(
             row![
-                image(assets::icon_show_in_folder())
-                    .width(Length::Fixed(16.0))
-                    .height(Length::Fixed(16.0))
+                image(assets::icon_show_in_folder(app.is_dark_theme()))
+                    .width(Length::Fixed(ICON_SM))
+                    .height(Length::Fixed(ICON_SM))
                     .content_fit(ContentFit::Contain)
                     .filter_method(FilterMethod::Linear),
                 text(app.i18n.text(TextKey::DetailsOpenFolderButton)).size(FONT_BODY),
@@ -6499,9 +6585,9 @@ fn render_details_actions(app: &Librapix) -> Element<'_, Message> {
         .padding([SPACE_XS as u16, SPACE_MD as u16]);
         let copy_file = button(
             row![
-                image(assets::icon_copy_file())
-                    .width(Length::Fixed(16.0))
-                    .height(Length::Fixed(16.0))
+                image(assets::icon_copy_file(app.is_dark_theme()))
+                    .width(Length::Fixed(ICON_SM))
+                    .height(Length::Fixed(ICON_SM))
                     .content_fit(ContentFit::Contain)
                     .filter_method(FilterMethod::Linear),
                 text(app.i18n.text(TextKey::DetailsCopyFileButton)).size(FONT_BODY),
@@ -6515,9 +6601,9 @@ fn render_details_actions(app: &Librapix) -> Element<'_, Message> {
         .padding([SPACE_XS as u16, SPACE_MD as u16]);
         let copy_path = button(
             row![
-                image(assets::icon_copy_path())
-                    .width(Length::Fixed(16.0))
-                    .height(Length::Fixed(16.0))
+                image(assets::icon_copy_path(app.is_dark_theme()))
+                    .width(Length::Fixed(ICON_SM))
+                    .height(Length::Fixed(ICON_SM))
                     .content_fit(ContentFit::Contain)
                     .filter_method(FilterMethod::Linear),
                 text(app.i18n.text(TextKey::DetailsCopyPathButton)).size(FONT_BODY),
@@ -6531,9 +6617,9 @@ fn render_details_actions(app: &Librapix) -> Element<'_, Message> {
         .padding([SPACE_XS as u16, SPACE_MD as u16]);
         let make_short = button(
             row![
-                image(assets::icon_youtube())
-                    .width(Length::Fixed(16.0))
-                    .height(Length::Fixed(16.0))
+                image(assets::icon_youtube(app.is_dark_theme()))
+                    .width(Length::Fixed(ICON_SM))
+                    .height(Length::Fixed(ICON_SM))
                     .content_fit(ContentFit::Contain)
                     .filter_method(FilterMethod::Linear),
                 text(app.i18n.text(TextKey::DetailsMakeShortButton)).size(FONT_BODY),
@@ -6619,18 +6705,19 @@ fn render_make_short_dialog(app: &Librapix) -> Element<'_, Message> {
 
     let running_status: Element<'_, Message> = match &app.make_short_dialog.run_state {
         MakeShortRunState::Running { stage, status } => {
+            let p = ui::palette(&theme(app));
             let indicator_color = if matches!(stage, GenerationStage::Finalizing) {
-                SUCCESS_COLOR
+                p.success
             } else {
-                ACCENT
+                p.accent
             };
             column![
-                text(status).size(FONT_BODY).color(TEXT_PRIMARY),
+                text(status).size(FONT_BODY).style(text_primary),
                 row![
                     text("\u{25CF}").size(FONT_CAPTION).color(indicator_color),
                     text(app.i18n.text(TextKey::ActivityWorkingLabel))
                         .size(FONT_CAPTION)
-                        .color(TEXT_SECONDARY),
+                        .style(text_secondary),
                 ]
                 .spacing(SPACE_XS)
                 .align_y(iced::Alignment::Center),
@@ -6640,15 +6727,15 @@ fn render_make_short_dialog(app: &Librapix) -> Element<'_, Message> {
         }
         MakeShortRunState::Success { .. } => text(app.i18n.text(TextKey::MakeShortSuccessLabel))
             .size(FONT_CAPTION)
-            .color(SUCCESS_COLOR)
+            .style(text_success)
             .into(),
         MakeShortRunState::Canceled { summary } => text(summary)
             .size(FONT_CAPTION)
-            .color(TEXT_SECONDARY)
+            .style(text_secondary)
             .into(),
         MakeShortRunState::Failed { summary, details } => column![
-            text(summary).size(FONT_CAPTION).color(WARNING_COLOR),
-            text(details).size(FONT_CAPTION).color(TEXT_TERTIARY),
+            text(summary).size(FONT_CAPTION).style(text_warning),
+            text(details).size(FONT_CAPTION).style(text_tertiary),
         ]
         .spacing(SPACE_2XS)
         .into(),
@@ -6658,7 +6745,7 @@ fn render_make_short_dialog(app: &Librapix) -> Element<'_, Message> {
     let warning: Element<'_, Message> = if has_smooth {
         text(app.i18n.text(TextKey::MakeShortSmoothWarning))
             .size(FONT_CAPTION)
-            .color(WARNING_COLOR)
+            .style(text_warning)
             .into()
     } else {
         Space::new().into()
@@ -6666,16 +6753,16 @@ fn render_make_short_dialog(app: &Librapix) -> Element<'_, Message> {
 
     let validation_error: Element<'_, Message> =
         if let Some(error) = app.make_short_dialog.validation_error.as_ref() {
-            text(error).size(FONT_CAPTION).color(WARNING_COLOR).into()
+            text(error).size(FONT_CAPTION).style(text_warning).into()
         } else {
             Space::new().into()
         };
 
     let mut generate_button = button(
         row![
-            image(assets::icon_generate())
-                .width(Length::Fixed(16.0))
-                .height(Length::Fixed(16.0))
+            image(assets::icon_generate(app.is_dark_theme()))
+                .width(Length::Fixed(ICON_SM))
+                .height(Length::Fixed(ICON_SM))
                 .content_fit(ContentFit::Contain)
                 .filter_method(FilterMethod::Linear),
             text(app.i18n.text(TextKey::MakeShortRunButton)).size(FONT_BODY),
@@ -6748,9 +6835,9 @@ fn render_make_short_dialog(app: &Librapix) -> Element<'_, Message> {
         .style(field_input_style),
         button(
             row![
-                image(assets::icon_browse())
-                    .width(Length::Fixed(14.0))
-                    .height(Length::Fixed(14.0))
+                image(assets::icon_browse(app.is_dark_theme()))
+                    .width(Length::Fixed(ICON_XS))
+                    .height(Length::Fixed(ICON_XS))
                     .content_fit(ContentFit::Contain)
                     .filter_method(FilterMethod::Linear),
                 text(app.i18n.text(TextKey::MakeShortChooseOutputButton)).size(FONT_CAPTION),
@@ -6769,7 +6856,7 @@ fn render_make_short_dialog(app: &Librapix) -> Element<'_, Message> {
         row![
             text(app.i18n.text(TextKey::MakeShortDialogTitle))
                 .size(FONT_TITLE)
-                .color(TEXT_PRIMARY),
+                .style(text_primary),
             Space::new().width(Length::Fill),
             {
                 let mut dismiss =
@@ -6817,7 +6904,7 @@ fn render_make_short_dialog(app: &Librapix) -> Element<'_, Message> {
         row![
             text(app.i18n.text(TextKey::MakeShortFadeLabel))
                 .size(FONT_CAPTION)
-                .color(TEXT_SECONDARY),
+                .style(text_secondary),
             fade_toggle,
             render_help_badge(app.i18n.text(TextKey::MakeShortHelpFade)),
         ]
@@ -6827,7 +6914,7 @@ fn render_make_short_dialog(app: &Librapix) -> Element<'_, Message> {
         row![
             text(app.i18n.text(TextKey::MakeShortSpeedLabel))
                 .size(FONT_CAPTION)
-                .color(TEXT_SECONDARY),
+                .style(text_secondary),
             text_input("1.0", &app.make_short_dialog.speed_input)
                 .on_input(Message::MakeShortSpeedChanged)
                 .style(field_input_style)
@@ -6839,7 +6926,7 @@ fn render_make_short_dialog(app: &Librapix) -> Element<'_, Message> {
         row![
             text(app.i18n.text(TextKey::MakeShortCrfLabel))
                 .size(FONT_CAPTION)
-                .color(TEXT_SECONDARY),
+                .style(text_secondary),
             text_input("18", &app.make_short_dialog.crf_input)
                 .on_input(Message::MakeShortCrfChanged)
                 .style(field_input_style)
@@ -6879,9 +6966,9 @@ fn make_short_has_smooth_warning(state: &MakeShortDialogState) -> bool {
 
 fn render_help_badge<'a>(tooltip_text: &'a str) -> Element<'a, Message> {
     tooltip(
-        container(text("(?)").size(FONT_CAPTION).color(TEXT_TERTIARY))
+        container(text("(?)").size(FONT_CAPTION).style(text_tertiary))
             .padding([0, SPACE_XS as u16]),
-        container(text(tooltip_text).size(FONT_CAPTION).color(TEXT_PRIMARY))
+        container(text(tooltip_text).size(FONT_CAPTION).style(text_primary))
             .padding([SPACE_XS as u16, SPACE_SM as u16])
             .style(card_style),
         tooltip::Position::Top,
@@ -10088,62 +10175,13 @@ fn do_projection_job(input: ProjectionJobInput) -> ProjectionJobResult {
         ),
     );
 
-    if refresh_gallery {
-        let gallery_started_at = Instant::now();
-        let gallery_query = GalleryQuery {
-            media_kind: input.filter_media_kind.clone(),
-            extension: input.filter_extension.clone(),
-            tag: active_tag_filter.cloned(),
-            sort: GallerySort::ModifiedDesc,
-            limit: all_rows.len(),
-            offset: 0,
-        };
-        out.gallery_items = project_gallery(&media, &gallery_query)
-            .into_iter()
-            .map(|item| {
-                row_lookup.get(&item.media_id).copied().map_or_else(
-                    || {
-                        let original = PathBuf::from(item.absolute_path);
-                        BrowseItem {
-                            media_id: item.media_id,
-                            title: original
-                                .file_name()
-                                .map(|name| name.to_string_lossy().to_string())
-                                .unwrap_or_else(|| original.display().to_string()),
-                            thumbnail_path: None,
-                            media_kind: item.media_kind.clone(),
-                            metadata_line: build_card_metadata_line(
-                                input.i18n,
-                                &item.media_kind,
-                                None,
-                                None,
-                                None,
-                            ),
-                            is_group_header: false,
-                            line: format!("{} [{}]", original.display(), item.media_kind),
-                            aspect_ratio: 1.5,
-                            group_image_count: None,
-                            group_video_count: None,
-                        }
-                    },
-                    |row| browse_item_from_catalog_row(input.i18n, row, None),
-                )
-            })
-            .collect();
-        out.gallery_preview_lines = collect_preview_lines(&out.gallery_items);
-        startup_log::log_duration(
-            "startup.projection.project_gallery",
-            gallery_started_at.elapsed(),
-            &format!(
-                "generation={} items={}",
-                input.generation,
-                out.gallery_items.len(),
-            ),
-        );
-    }
-
-    if refresh_timeline {
-        let timeline_started_at = Instant::now();
+    // Single canonical projection: `project_timeline` produces the date buckets
+    // that feed both surfaces. The grouped timeline keeps the per-day headers;
+    // the flat grid (`gallery_items`) is the same items with headers stripped, in
+    // the same chronological order. This replaces the old duplicate gallery filter
+    // pass while preserving both feeds and the snapshot fast-path.
+    if refresh_gallery || refresh_timeline {
+        let projection_started_at = Instant::now();
         let filtered_media = media
             .iter()
             .filter(|item| {
@@ -10167,75 +10205,97 @@ fn do_projection_job(input: ProjectionJobInput) -> ProjectionJobResult {
             .collect::<Vec<_>>();
 
         let buckets = project_timeline(&filtered_media, TimelineGranularity::Day);
-        out.timeline_anchors = build_timeline_anchors(&buckets);
+        if refresh_timeline {
+            out.timeline_anchors = build_timeline_anchors(&buckets);
+        }
+
+        let mut gallery_items = Vec::new();
         let mut timeline_items = Vec::new();
         let mut timeline_preview_lines = Vec::new();
-        for bucket in buckets {
-            let image_count = bucket
-                .items
-                .iter()
-                .filter(|item| item.media_kind.eq_ignore_ascii_case("image"))
-                .count();
-            let video_count = bucket
-                .items
-                .iter()
-                .filter(|item| item.media_kind.eq_ignore_ascii_case("video"))
-                .count();
-            timeline_preview_lines.push(format!("{} ({})", bucket.label, bucket.item_count));
-            timeline_items.push(BrowseItem {
-                media_id: 0,
-                title: bucket.label.clone(),
-                thumbnail_path: None,
-                media_kind: String::new(),
-                metadata_line: String::new(),
-                is_group_header: true,
-                line: bucket.label.clone(),
-                aspect_ratio: 1.5,
-                group_image_count: Some(image_count),
-                group_video_count: Some(video_count),
-            });
+        for bucket in &buckets {
+            if refresh_timeline {
+                let image_count = bucket
+                    .items
+                    .iter()
+                    .filter(|item| item.media_kind.eq_ignore_ascii_case("image"))
+                    .count();
+                let video_count = bucket
+                    .items
+                    .iter()
+                    .filter(|item| item.media_kind.eq_ignore_ascii_case("video"))
+                    .count();
+                timeline_preview_lines.push(format!("{} ({})", bucket.label, bucket.item_count));
+                timeline_items.push(BrowseItem {
+                    media_id: 0,
+                    title: bucket.label.clone(),
+                    thumbnail_path: None,
+                    media_kind: String::new(),
+                    metadata_line: String::new(),
+                    is_group_header: true,
+                    line: bucket.label.clone(),
+                    aspect_ratio: 1.5,
+                    group_image_count: Some(image_count),
+                    group_video_count: Some(video_count),
+                });
+            }
 
-            for item in bucket.items {
-                timeline_items.push(row_lookup.get(&item.media_id).copied().map_or_else(
-                    || {
-                        BrowseItem {
-                            media_id: item.media_id,
-                            title: PathBuf::from(&item.absolute_path)
-                                .file_name()
-                                .map(|name| name.to_string_lossy().to_string())
-                                .unwrap_or(item.absolute_path.clone()),
-                            thumbnail_path: None,
-                            media_kind: item.media_kind.clone(),
-                            metadata_line: build_card_metadata_line(
-                                input.i18n,
-                                &item.media_kind,
-                                None,
-                                None,
-                                None,
-                            ),
-                            is_group_header: false,
-                            line: format!("{} [{}]", item.absolute_path, item.media_kind),
-                            aspect_ratio: 1.5,
-                            group_image_count: None,
-                            group_video_count: None,
-                        }
+            for item in &bucket.items {
+                let browse_item = row_lookup.get(&item.media_id).copied().map_or_else(
+                    || BrowseItem {
+                        media_id: item.media_id,
+                        title: PathBuf::from(&item.absolute_path)
+                            .file_name()
+                            .map(|name| name.to_string_lossy().to_string())
+                            .unwrap_or(item.absolute_path.clone()),
+                        thumbnail_path: None,
+                        media_kind: item.media_kind.clone(),
+                        metadata_line: build_card_metadata_line(
+                            input.i18n,
+                            &item.media_kind,
+                            None,
+                            None,
+                            None,
+                        ),
+                        is_group_header: false,
+                        line: format!("{} [{}]", item.absolute_path, item.media_kind),
+                        aspect_ratio: 1.5,
+                        group_image_count: None,
+                        group_video_count: None,
                     },
                     |row| {
                         let mut browse_item = browse_item_from_catalog_row(input.i18n, row, None);
                         browse_item.line = format!("{} [{}]", item.absolute_path, item.media_kind);
                         browse_item
                     },
-                ));
+                );
+
+                match (refresh_gallery, refresh_timeline) {
+                    (true, true) => {
+                        gallery_items.push(browse_item.clone());
+                        timeline_items.push(browse_item);
+                    }
+                    (true, false) => gallery_items.push(browse_item),
+                    (false, true) => timeline_items.push(browse_item),
+                    (false, false) => {}
+                }
             }
         }
-        out.timeline_items = timeline_items;
-        out.timeline_preview_lines = timeline_preview_lines;
+
+        if refresh_gallery {
+            out.gallery_preview_lines = collect_preview_lines(&gallery_items);
+            out.gallery_items = gallery_items;
+        }
+        if refresh_timeline {
+            out.timeline_items = timeline_items;
+            out.timeline_preview_lines = timeline_preview_lines;
+        }
         startup_log::log_duration(
             "startup.projection.project_timeline",
-            timeline_started_at.elapsed(),
+            projection_started_at.elapsed(),
             &format!(
-                "generation={} items={} anchors={}",
+                "generation={} gallery_items={} timeline_items={} anchors={}",
                 input.generation,
+                out.gallery_items.len(),
                 out.timeline_items.len(),
                 out.timeline_anchors.len(),
             ),
@@ -12009,6 +12069,8 @@ mod tests {
             state: AppState::default(),
             i18n: Translator::new(Locale::EnUs),
             theme_preference: ThemePreference::System,
+            system_dark: Cell::new(true),
+            system_dark_checked_at: Cell::new(None),
             runtime: RuntimeContext {
                 database_file: PathBuf::from("/tmp/librapix-test.db"),
                 thumbnails_dir: PathBuf::from("/tmp/librapix-thumbnails"),

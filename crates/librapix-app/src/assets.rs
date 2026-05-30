@@ -17,13 +17,10 @@ pub fn logo_icon_64() -> image::Handle {
     LOGO_ICON_64.clone()
 }
 
-/// Logo as SVG for scalable display (e.g. header): white on dark, black on light.
-pub fn logo_svg(dark: bool) -> svg::Handle {
-    if dark {
-        LOGO_SVG_WHITE.clone()
-    } else {
-        LOGO_SVG_BLACK.clone()
-    }
+/// Canonical brand logo (blue) as SVG for scalable display (header, about).
+/// Reads on both dark and light surfaces, so it stays consistent across themes.
+pub fn logo_svg() -> svg::Handle {
+    LOGO_SVG_BLUE.clone()
 }
 
 // ── UI icons (white for dark surfaces, black for light surfaces) ──
@@ -123,10 +120,8 @@ fn make_svg_handle(bytes: &'static [u8]) -> svg::Handle {
 
 static LOGO_ICON_64: LazyLock<image::Handle> =
     LazyLock::new(|| make_image_handle(include_bytes!("../../../assets/logo/blue/icon-64.png")));
-static LOGO_SVG_WHITE: LazyLock<svg::Handle> =
-    LazyLock::new(|| make_svg_handle(include_bytes!("../../../assets/logo/white/logo-white.svg")));
-static LOGO_SVG_BLACK: LazyLock<svg::Handle> =
-    LazyLock::new(|| make_svg_handle(include_bytes!("../../../assets/logo/black/logo-black.svg")));
+static LOGO_SVG_BLUE: LazyLock<svg::Handle> =
+    LazyLock::new(|| make_svg_handle(include_bytes!("../../../assets/logo/blue/logo-blue.svg")));
 
 macro_rules! icon_pair {
     ($white:ident, $black:ident, $file:literal) => {

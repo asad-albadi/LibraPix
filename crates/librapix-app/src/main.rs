@@ -2941,7 +2941,7 @@ fn view(app: &Librapix) -> Element<'_, Message> {
 
     // ── Header ──
     let brand = row![
-        svg(assets::logo_svg(app.is_dark_theme()))
+        svg(assets::logo_svg())
             .width(Length::Fixed(ICON_XL))
             .height(Length::Fixed(ICON_XL))
             .content_fit(ContentFit::Contain),
@@ -5151,7 +5151,7 @@ fn render_about_dialog(app: &Librapix) -> Element<'_, Message> {
         .align_y(iced::Alignment::Center),
         h_divider(),
         row![
-            svg(assets::logo_svg(app.is_dark_theme()))
+            svg(assets::logo_svg())
                 .width(Length::Fixed(44.0))
                 .height(Length::Fixed(44.0))
                 .content_fit(ContentFit::Contain),

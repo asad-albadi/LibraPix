@@ -50,8 +50,10 @@ use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet, VecDeque};
+#[cfg(not(target_os = "windows"))]
 use std::io::Write;
 use std::path::{Path, PathBuf};
+#[cfg(not(target_os = "windows"))]
 use std::process::{Command, Stdio};
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -7985,12 +7987,9 @@ fn copy_text_to_clipboard(value: &str) -> Result<(), std::io::Error> {
     }
     #[cfg(target_os = "windows")]
     {
-        let mut child = Command::new("clip").stdin(Stdio::piped()).spawn()?;
-        if let Some(stdin) = &mut child.stdin {
-            stdin.write_all(value.as_bytes())?;
-        }
-        child.wait()?;
-        Ok(())
+        // Native CF_UNICODETEXT clipboard write. Avoids spawning `clip.exe` (and
+        // its blocking `wait()` / console flash), which froze the UI thread.
+        copy_text_to_clipboard_windows(value)
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
@@ -8064,6 +8063,8 @@ fn copy_file_to_clipboard(path: &Path) -> Result<(), std::io::Error> {
 
 #[cfg(target_os = "windows")]
 const WINDOWS_CF_HDROP_FORMAT: u32 = 15;
+#[cfg(target_os = "windows")]
+const WINDOWS_CF_UNICODETEXT_FORMAT: u32 = 13;
 #[cfg(target_os = "windows")]
 const WINDOWS_CLIPBOARD_OPEN_RETRIES: usize = 8;
 #[cfg(target_os = "windows")]
@@ -8189,6 +8190,62 @@ fn copy_file_to_clipboard_windows(path: &Path) -> Result<(), std::io::Error> {
         let set_result = SetClipboardData(WINDOWS_CF_HDROP_FORMAT, memory.0);
         if set_result.is_null() {
             return Err(windows_clipboard_error("SetClipboardData(CF_HDROP) failed"));
+        }
+
+        // Ownership is transferred to the clipboard after successful SetClipboardData.
+        memory.release_to_clipboard();
+    }
+
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn copy_text_to_clipboard_windows(value: &str) -> Result<(), std::io::Error> {
+    use windows_sys::Win32::System::DataExchange::{EmptyClipboard, SetClipboardData};
+    use windows_sys::Win32::System::Memory::{
+        GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock,
+    };
+
+    // CF_UNICODETEXT expects a null-terminated UTF-16 buffer.
+    let mut utf16: Vec<u16> = value.encode_utf16().collect();
+    utf16.push(0);
+    let byte_len = utf16.len() * std::mem::size_of::<u16>();
+
+    // SAFETY: same documented ownership flow as the HDROP path —
+    // GlobalAlloc -> GlobalLock/write -> GlobalUnlock -> SetClipboardData.
+    unsafe {
+        let handle = GlobalAlloc(GMEM_MOVEABLE, byte_len);
+        if handle.is_null() {
+            return Err(windows_clipboard_error("GlobalAlloc failed"));
+        }
+        let mut memory = WindowsGlobalMemory(handle);
+
+        let locked = GlobalLock(memory.0);
+        if locked.is_null() {
+            return Err(windows_clipboard_error("GlobalLock failed"));
+        }
+
+        std::ptr::copy_nonoverlapping(utf16.as_ptr().cast::<u8>(), locked.cast::<u8>(), byte_len);
+
+        if GlobalUnlock(memory.0) == 0 {
+            let unlock_error = windows_sys::Win32::Foundation::GetLastError();
+            if unlock_error != 0 {
+                return Err(windows_clipboard_error("GlobalUnlock failed"));
+            }
+        }
+
+        open_windows_clipboard_with_retry()?;
+        let _clipboard_guard = WindowsClipboardGuard;
+
+        if EmptyClipboard() == 0 {
+            return Err(windows_clipboard_error("EmptyClipboard failed"));
+        }
+
+        let set_result = SetClipboardData(WINDOWS_CF_UNICODETEXT_FORMAT, memory.0);
+        if set_result.is_null() {
+            return Err(windows_clipboard_error(
+                "SetClipboardData(CF_UNICODETEXT) failed",
+            ));
         }
 
         // Ownership is transferred to the clipboard after successful SetClipboardData.

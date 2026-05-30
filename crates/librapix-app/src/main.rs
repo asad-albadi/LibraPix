@@ -76,6 +76,7 @@ fn init() -> (Librapix, Task<Message>) {
 enum Message {
     OpenGallery,
     OpenTimeline,
+    SetThemePreference(ThemePreference),
     SelectRoot(i64),
     DeactivateRoot,
     ReactivateRoot,
@@ -1364,6 +1365,7 @@ fn message_event_label(msg: &Message) -> String {
     match msg {
         Message::OpenGallery => "OpenGallery".into(),
         Message::OpenTimeline => "OpenTimeline".into(),
+        Message::SetThemePreference(_) => "SetThemePreference".into(),
         Message::SelectRoot(id) => format!("SelectRoot({id})"),
         Message::DeactivateRoot => "DeactivateRoot".into(),
         Message::ReactivateRoot => "ReactivateRoot".into(),
@@ -1717,6 +1719,9 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
                     filter_state_summary(app),
                 ),
             );
+        }
+        Message::SetThemePreference(preference) => {
+            set_theme_preference(app, preference);
         }
         Message::SelectRoot(id) => {
             app.state.apply(AppMessage::SetSelectedRoot);
@@ -3161,9 +3166,11 @@ fn view(app: &Librapix) -> Element<'_, Message> {
     // ── Body ──
     let body = row![
         sidebar,
+        ui::v_divider(),
         container(column![media_header, media_body,].spacing(SPACE_SM),)
-            .padding(SPACE_LG as u16)
+            .padding([SPACE_LG as u16, SPACE_XL as u16])
             .width(Length::Fill),
+        ui::v_divider(),
         container(
             scrollable(details_content)
                 .direction(scrollable::Direction::Vertical(
@@ -3332,15 +3339,10 @@ fn render_media_panel(app: &Librapix) -> (Element<'_, Message>, Element<'_, Mess
 
     let search_section: Element<'_, Message> = if !app.state.search_query.trim().is_empty() {
         if app.search_items.is_empty() {
-            container(
-                text(app.i18n.text(TextKey::EmptySearchResultsLabel))
-                    .size(FONT_BODY)
-                    .style(text_secondary),
+            render_empty_state(
+                assets::icon_search(app.is_dark_theme()),
+                app.i18n.text(TextKey::EmptySearchResultsLabel).to_owned(),
             )
-            .padding(SPACE_XL as u16)
-            .width(Length::Fill)
-            .style(empty_state_style)
-            .into()
         } else {
             let search_header = row![
                 text(app.i18n.text(TextKey::SearchResultLabel))
@@ -3375,11 +3377,10 @@ fn render_media_panel(app: &Librapix) -> (Element<'_, Message>, Element<'_, Mess
     };
 
     let browse_content: Element<'_, Message> = if browse_items.is_empty() {
-        container(text(empty_label).size(FONT_SUBTITLE).style(text_secondary))
-            .padding(SPACE_2XL as u16)
-            .width(Length::Fill)
-            .style(empty_state_style)
-            .into()
+        render_empty_state(
+            assets::icon_gallery(app.is_dark_theme()),
+            empty_label.to_owned(),
+        )
     } else {
         match app.state.active_route {
             Route::Gallery => render_justified_gallery(
@@ -3833,7 +3834,7 @@ fn render_media_card(
         container(
             text(item.metadata_line.clone())
                 .size(FONT_CAPTION)
-                .style(text_tertiary)
+                .style(text_secondary)
         )
         .padding([SPACE_XS as u16, SPACE_SM as u16]),
     ];
@@ -3844,6 +3845,28 @@ fn render_media_card(
         .style(card_button_style(selected))
         .padding(0)
         .into()
+}
+
+/// Centered empty/placeholder state: a muted icon over a short message, on the
+/// soft `empty_state_style` surface. Used for empty gallery/timeline + search.
+fn render_empty_state(icon: image::Handle, message: String) -> Element<'static, Message> {
+    container(
+        column![
+            image(icon)
+                .width(Length::Fixed(ICON_XL))
+                .height(Length::Fixed(ICON_XL))
+                .content_fit(ContentFit::Contain)
+                .filter_method(FilterMethod::Linear),
+            text(message).size(FONT_SUBTITLE).style(text_secondary),
+        ]
+        .spacing(SPACE_MD)
+        .align_x(iced::Alignment::Center),
+    )
+    .padding(SPACE_2XL as u16)
+    .width(Length::Fill)
+    .center_x(Length::Fill)
+    .style(empty_state_style)
+    .into()
 }
 
 fn compute_browse_stats(items: &[BrowseItem]) -> BrowseStats {
@@ -4572,11 +4595,34 @@ fn render_filter_dialog(app: &Librapix) -> Element<'_, Message> {
     ]
     .spacing(SPACE_LG);
 
-    let dialog = container(dialog_content)
-        .width(Length::Fill)
-        .max_width(FILTER_DIALOG_MAX_WIDTH)
-        .padding(SPACE_LG as u16)
-        .style(modal_dialog_style);
+    render_dialog_frame(dialog_content.into(), FILTER_DIALOG_MAX_WIDTH, 620.0)
+}
+
+/// Shared dialog frame so every modal looks and feels the same: the glass
+/// surface, consistent padding, a vertical scrollable, and width/height that
+/// scale with the window up to the given caps. Callers just build their content
+/// column (title row + body) and pass sane caps.
+fn render_dialog_frame(
+    content: Element<'_, Message>,
+    max_width: f32,
+    max_height: f32,
+) -> Element<'_, Message> {
+    // Hug the content (Shrink) up to the caps; the scrollable only kicks in when
+    // a dialog's content is taller than `max_height`, so short dialogs stay short
+    // and tall ones cap + scroll.
+    let dialog = container(
+        scrollable(content)
+            .direction(scrollable::Direction::Vertical(
+                scrollable::Scrollbar::default().spacing(PANEL_SCROLLBAR_SPACING),
+            ))
+            .height(Length::Shrink)
+            .width(Length::Fill),
+    )
+    .width(Length::Fill)
+    .max_width(max_width)
+    .max_height(max_height)
+    .padding(SPACE_LG as u16)
+    .style(modal_dialog_style);
 
     render_modal_overlay(dialog.into())
 }
@@ -5041,6 +5087,28 @@ fn render_settings_dialog(app: &Librapix) -> Element<'_, Message> {
         .spacing(SPACE_SM)
     };
 
+    let theme_segment = |label: &str, pref: ThemePreference| {
+        let active = app.theme_preference == pref;
+        button(text(label.to_owned()).size(FONT_BODY))
+            .on_press(Message::SetThemePreference(pref))
+            .style(segment_button_style(active))
+            .padding([SPACE_XS as u16, SPACE_MD as u16])
+    };
+    let appearance_section = column![
+        section_heading(app.i18n.text(TextKey::AppearanceSectionLabel)),
+        container(
+            row![
+                theme_segment(app.i18n.text(TextKey::ThemeSystem), ThemePreference::System),
+                theme_segment(app.i18n.text(TextKey::ThemeLight), ThemePreference::Light),
+                theme_segment(app.i18n.text(TextKey::ThemeDark), ThemePreference::Dark),
+            ]
+            .spacing(SPACE_2XS),
+        )
+        .padding(SPACE_2XS as u16)
+        .style(card_style),
+    ]
+    .spacing(SPACE_SM);
+
     let dialog_content = column![
         row![
             text(app.i18n.text(TextKey::SettingsDialogTitle))
@@ -5054,6 +5122,8 @@ fn render_settings_dialog(app: &Librapix) -> Element<'_, Message> {
         ]
         .align_y(iced::Alignment::Center),
         h_divider(),
+        appearance_section,
+        h_divider(),
         indexing_section,
         h_divider(),
         ignore_section,
@@ -5063,21 +5133,7 @@ fn render_settings_dialog(app: &Librapix) -> Element<'_, Message> {
     ]
     .spacing(SPACE_LG);
 
-    let dialog = container(
-        scrollable(dialog_content)
-            .direction(scrollable::Direction::Vertical(
-                scrollable::Scrollbar::default().spacing(PANEL_SCROLLBAR_SPACING),
-            ))
-            .height(Length::Fill)
-            .width(Length::Fill),
-    )
-    .width(Length::Fill)
-    .max_width(480.0)
-    .max_height(560.0)
-    .padding(SPACE_LG as u16)
-    .style(modal_dialog_style);
-
-    render_modal_overlay(dialog.into())
+    render_dialog_frame(dialog_content.into(), 680.0, 820.0)
 }
 
 fn render_about_dialog(app: &Librapix) -> Element<'_, Message> {
@@ -5127,13 +5183,7 @@ fn render_about_dialog(app: &Librapix) -> Element<'_, Message> {
     ]
     .spacing(SPACE_LG);
 
-    let dialog = container(dialog_content)
-        .width(Length::Fill)
-        .max_width(460.0)
-        .padding(SPACE_LG as u16)
-        .style(modal_dialog_style);
-
-    render_modal_overlay(dialog.into())
+    render_dialog_frame(dialog_content.into(), 460.0, 440.0)
 }
 
 fn render_library_dialog(app: &Librapix) -> Element<'_, Message> {
@@ -5356,21 +5406,7 @@ fn render_library_dialog(app: &Librapix) -> Element<'_, Message> {
     ]
     .spacing(SPACE_LG);
 
-    let dialog = container(
-        scrollable(dialog_content)
-            .direction(scrollable::Direction::Vertical(
-                scrollable::Scrollbar::default().spacing(PANEL_SCROLLBAR_SPACING),
-            ))
-            .height(Length::Shrink)
-            .width(Length::Fill),
-    )
-    .width(Length::Fill)
-    .max_width(560.0)
-    .max_height(640.0)
-    .padding(SPACE_LG as u16)
-    .style(modal_dialog_style);
-
-    render_modal_overlay(dialog.into())
+    render_dialog_frame(dialog_content.into(), 560.0, 680.0)
 }
 
 fn render_library_statistics_dialog(app: &Librapix) -> Element<'_, Message> {
@@ -5469,13 +5505,7 @@ fn render_library_statistics_dialog(app: &Librapix) -> Element<'_, Message> {
     ]
     .spacing(SPACE_LG);
 
-    let dialog = container(dialog_content)
-        .width(Length::Fill)
-        .max_width(560.0)
-        .padding(SPACE_LG as u16)
-        .style(modal_dialog_style);
-
-    render_modal_overlay(dialog.into())
+    render_dialog_frame(dialog_content.into(), 560.0, 640.0)
 }
 
 fn render_stats_row<'a>(label: &'a str, value: String) -> Element<'a, Message> {
@@ -5636,13 +5666,7 @@ fn render_new_media_dialog(app: &Librapix) -> Element<'_, Message> {
     ]
     .spacing(SPACE_SM);
 
-    let dialog = container(dialog_content)
-        .width(Length::Fill)
-        .max_width(640.0)
-        .padding(SPACE_LG as u16)
-        .style(modal_dialog_style);
-
-    render_modal_overlay(dialog.into())
+    render_dialog_frame(dialog_content.into(), 640.0, 680.0)
 }
 
 fn render_new_media_preview_loading_state(app: &Librapix, height: f32) -> Element<'_, Message> {
@@ -6951,13 +6975,7 @@ fn render_make_short_dialog(app: &Librapix) -> Element<'_, Message> {
     ]
     .spacing(SPACE_SM);
 
-    let dialog = container(dialog_content)
-        .width(Length::Fill)
-        .max_width(620.0)
-        .padding(SPACE_LG as u16)
-        .style(modal_dialog_style);
-
-    render_modal_overlay(dialog.into())
+    render_dialog_frame(dialog_content.into(), 620.0, 780.0)
 }
 
 fn make_short_has_smooth_warning(state: &MakeShortDialogState) -> bool {
@@ -7085,6 +7103,19 @@ fn build_short_request_from_dialog(app: &mut Librapix) -> Option<ShortGeneration
 
     app.make_short_dialog.validation_error = None;
     Some(request)
+}
+
+fn set_theme_preference(app: &mut Librapix, preference: ThemePreference) {
+    if app.theme_preference == preference {
+        return;
+    }
+    app.theme_preference = preference.clone();
+    // Force a fresh OS-appearance read on the next `theme()` call for System.
+    app.system_dark_checked_at.set(None);
+    if let Ok(mut config) = load_from_path(&app.runtime.config_file) {
+        config.theme = preference;
+        let _ = save_to_path(&app.runtime.config_file, &config);
+    }
 }
 
 fn save_shorts_output_dir_setting(app: &mut Librapix) {

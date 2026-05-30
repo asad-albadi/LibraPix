@@ -1,5 +1,5 @@
 use iced::widget::{Container, Text, button, container, text, text_input};
-use iced::{Background, Border, Color, Length, Theme};
+use iced::{Background, Border, Color, Length, Radians, Shadow, Theme, Vector, gradient};
 
 // ── Semantic palette ──
 //
@@ -88,6 +88,58 @@ pub fn palette(theme: &Theme) -> &'static Palette {
         &DARK
     } else {
         &LIGHT
+    }
+}
+
+// ── Elevation (soft shadows) ──
+//
+// Dark surfaces use a near-black shadow; light surfaces a softer cool-gray at
+// reduced alpha. Helpers feed the `shadow` field of container/button styles to
+// lift cards, controls, and dialogs off the base without changing layout.
+
+fn shadow_color(theme: &Theme, alpha: f32) -> Color {
+    if theme.extended_palette().is_dark {
+        Color {
+            r: 0.0,
+            g: 0.0,
+            b: 0.0,
+            a: alpha,
+        }
+    } else {
+        // Cool-gray, noticeably lighter so white surfaces don't get a harsh halo.
+        Color {
+            r: 0.20,
+            g: 0.22,
+            b: 0.28,
+            a: alpha * 0.55,
+        }
+    }
+}
+
+/// Resting card lift.
+pub fn elevation_low(theme: &Theme) -> Shadow {
+    Shadow {
+        color: shadow_color(theme, 0.30),
+        offset: Vector::new(0.0, 1.0),
+        blur_radius: 4.0,
+    }
+}
+
+/// Hovered card / raised control.
+pub fn elevation_med(theme: &Theme) -> Shadow {
+    Shadow {
+        color: shadow_color(theme, 0.40),
+        offset: Vector::new(0.0, 3.0),
+        blur_radius: 12.0,
+    }
+}
+
+/// Modal dialogs.
+pub fn elevation_high(theme: &Theme) -> Shadow {
+    Shadow {
+        color: shadow_color(theme, 0.48),
+        offset: Vector::new(0.0, 10.0),
+        blur_radius: 30.0,
     }
 }
 
@@ -423,6 +475,7 @@ pub fn card_style(theme: &Theme) -> container::Style {
     container::Style {
         background: Some(Background::Color(palette(theme).bg_surface)),
         border: iced::border::rounded(RADIUS_LG),
+        shadow: elevation_low(theme),
         ..container::Style::default()
     }
 }
@@ -460,6 +513,7 @@ pub fn scrubber_panel_style(theme: &Theme) -> container::Style {
             width: 1.0,
             radius: RADIUS_MD.into(),
         },
+        shadow: elevation_low(theme),
         ..container::Style::default()
     }
 }
@@ -484,15 +538,35 @@ pub fn modal_backdrop_style(_theme: &Theme) -> container::Style {
     }
 }
 
+/// Translucent "glass" dialog surface: a soft vertical gradient at < 1.0 alpha so
+/// the dimmed backdrop reads through as frosted tint, a faint light edge
+/// highlight, and a pronounced drop shadow. (No true backdrop blur — iced has no
+/// backdrop-filter primitive — but over the modal scrim this reads as glass.)
 pub fn modal_dialog_style(theme: &Theme) -> container::Style {
-    let p = palette(theme);
+    let (top, bottom, edge) = if theme.extended_palette().is_dark {
+        (
+            rgba(0.22, 0.23, 0.27, 0.86),
+            rgba(0.11, 0.12, 0.14, 0.92),
+            rgba(1.0, 1.0, 1.0, 0.10),
+        )
+    } else {
+        (
+            rgba(1.0, 1.0, 1.0, 0.86),
+            rgba(0.95, 0.96, 0.98, 0.92),
+            rgba(1.0, 1.0, 1.0, 0.70),
+        )
+    };
+    let fill = gradient::Linear::new(Radians(std::f32::consts::PI))
+        .add_stop(0.0, top)
+        .add_stop(1.0, bottom);
     container::Style {
-        background: Some(Background::Color(p.bg_layer)),
+        background: Some(Background::Gradient(fill.into())),
         border: Border {
-            color: p.divider,
+            color: edge,
             width: 1.0,
             radius: RADIUS_LG.into(),
         },
+        shadow: elevation_high(theme),
         ..container::Style::default()
     }
 }
@@ -663,12 +737,13 @@ pub fn managed_chip_action_style(
 pub fn card_button_style(selected: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
     move |theme, status| {
         let p = palette(theme);
-        let (bg, border_color, border_width) = if selected {
-            (p.bg_selected, p.accent, 2.0)
+        // (background, border color, border width, shadow)
+        let (bg, border_color, border_width, shadow) = if selected {
+            (p.bg_selected, p.accent, 2.0, elevation_med(theme))
         } else {
             match status {
-                button::Status::Hovered => (p.bg_hover, Color::TRANSPARENT, 0.0),
-                _ => (p.bg_surface, Color::TRANSPARENT, 0.0),
+                button::Status::Hovered => (p.bg_hover, p.focus_ring, 1.0, elevation_med(theme)),
+                _ => (p.bg_surface, Color::TRANSPARENT, 0.0, elevation_low(theme)),
             }
         };
         button::Style {
@@ -679,6 +754,7 @@ pub fn card_button_style(selected: bool) -> impl Fn(&Theme, button::Status) -> b
                 width: border_width,
                 radius: RADIUS_LG.into(),
             },
+            shadow,
             ..button::Style::default()
         }
     }
@@ -740,5 +816,13 @@ pub fn h_divider<'a, Message: 'a>() -> Container<'a, Message> {
     container(text(""))
         .width(Length::Fill)
         .height(Length::Fixed(1.0))
+        .style(divider_line_style)
+}
+
+/// 1px vertical hairline, used to separate the sidebar / content / details panes.
+pub fn v_divider<'a, Message: 'a>() -> Container<'a, Message> {
+    container(text(""))
+        .width(Length::Fixed(1.0))
+        .height(Length::Fill)
         .style(divider_line_style)
 }

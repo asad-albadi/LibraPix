@@ -265,7 +265,7 @@ impl Translator {
 
 fn en_us(key: TextKey) -> &'static str {
     match key {
-        TextKey::AppTitle => "Librapix",
+        TextKey::AppTitle => "LibraPix",
         TextKey::AppSubtitle => "Non-destructive local media manager",
         TextKey::GalleryTab => "Gallery",
         TextKey::TimelineTab => "Timeline",

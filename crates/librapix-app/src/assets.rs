@@ -23,6 +23,16 @@ pub fn logo_svg() -> svg::Handle {
     LOGO_SVG_BLUE.clone()
 }
 
+/// OS window / taskbar icon (brand blue). `None` if the embedded PNG fails to
+/// decode, in which case iced falls back to the platform default.
+pub fn window_icon() -> Option<iced::window::Icon> {
+    iced::window::icon::from_file_data(
+        include_bytes!("../../../assets/logo/blue/icon-256.png"),
+        None,
+    )
+    .ok()
+}
+
 // ── UI icons (white for dark surfaces, black for light surfaces) ──
 
 fn pick(

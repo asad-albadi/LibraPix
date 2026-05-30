@@ -61,10 +61,15 @@ use ui::*;
 fn main() -> iced::Result {
     let _ = startup_log::init_process_logging();
     startup_log::log_info("app.launch.start", "startup requested");
+    let window = iced::window::Settings {
+        icon: assets::window_icon(),
+        ..iced::window::Settings::default()
+    };
     iced::application(init, update, view)
         .title(title)
         .theme(theme)
         .subscription(subscription)
+        .window(window)
         .run()
 }
 

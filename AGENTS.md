@@ -579,7 +579,35 @@ Unless explicitly instructed otherwise, early work should prioritize:
 
 ---
 
-## 28. Final Rule
+## 28. Versioning, Tags, and Releases
+
+Version bumps, tags, and releases are **owner-initiated**. Agents must not bump the version, create a tag, or publish a release on their own initiative — wait for an explicit instruction from the maintainer. When instructed, follow the conventions below directly; do not re-derive them by inspecting prior tags/releases each time.
+
+### Version bumps
+- Single source of truth: `[workspace.package] version` in the root `Cargo.toml`. All crates inherit it via `version.workspace = true`.
+- The owner decides the target version and the increment. If they don't specify, propose one (feature milestone → minor, fixes-only → patch, following SemVer) and confirm before applying.
+- After editing the version, run a workspace build (`cargo build --workspace`) so `Cargo.lock` re-syncs the `librapix-*` crate versions, then commit `Cargo.toml` + `Cargo.lock` together.
+- Commit message style: `chore: bump workspace version to X.Y.Z`.
+
+### Tags
+- Tag name is the bare SemVer: `X.Y.Z` — **no `v` prefix** (`v0.1.0` is legacy; do not imitate it).
+- Tags are created on `master`, together with the GitHub release (below), not as a separate manual step.
+
+### Releases
+- Create with the GitHub CLI: `gh release create X.Y.Z --target master --title "Librapix X.Y.Z" --notes "<body>"`.
+- Publish as the latest, normal release (not draft/prerelease) unless told otherwise.
+- Notes body format (match existing releases):
+  - `## Highlights` — concise bullets; **bold** the key term in each; link issues/PRs as `[#NN](url)`.
+  - `## Included commits` — comma-separated short SHAs since the previous tag (`git log <previous-tag>..HEAD --no-merges --reverse --pretty=format:%h`).
+- `.github/workflows/release.yml` builds and attaches the Windows `.exe` and Linux AppImage automatically when the release is published. Do not hand-upload artifacts unless CI is unavailable; if so, document why.
+
+### Docs to keep in sync with a release
+- `CHANGELOG.md` must already reflect everything in the release (each change should have updated `[Unreleased]` in its own workstream per section 8).
+- Update the `README.md` "Project status" version and any other version-referencing docs to the new version in the same change as the bump.
+
+---
+
+## 29. Final Rule
 
 Build Librapix like a serious long-term product.
 

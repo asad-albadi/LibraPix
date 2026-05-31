@@ -10,7 +10,7 @@ Many screenshot and clip workflows are folder-based and grow over time across mu
 
 ## Project status
 
-LibraPix is currently in an MVP-complete baseline (`0.4.0`) focused on a usable, non-destructive desktop workflow. The codebase is actively evolving, but the main end-to-end flow is implemented.
+LibraPix is at an MVP-complete baseline (`0.6.0`) focused on a usable, non-destructive desktop workflow with a coherent, themeable UI. The codebase is actively evolving, but the main end-to-end flow is implemented. Recent work added a real Light/Dark/System theme system and merged Gallery and Timeline into a single **Library** surface.
 
 ## Current feature set
 
@@ -20,7 +20,8 @@ Implemented in the current codebase:
 - Optional display names per library
 - Root-level app/game tags that are automatically applied during indexing
 - Read-only media scanning with centralized ignore rules
-- Gallery and timeline browsing surfaces
+- Unified **Library** surface with a segmented **Grid | Timeline** toggle (timeline adds date grouping and a fast scrubber)
+- Light / Dark / System (OS-following) themes, switchable in Settings and persisted
 - Search over indexed media using fuzzy matching
 - Metadata/details panel (type, size, modified date, dimensions, path)
 - App/game tag attach/detach/edit flows in the UI
@@ -48,7 +49,7 @@ Implemented in the current codebase:
 | Indexing & filesystem | `walkdir`, `globset`, `notify`, `imagesize` |
 | Search | `strsim` (normalized Levenshtein strategy) |
 | Imaging/thumbnails | `image`, `sha2`, system `ffmpeg` for video thumbnails |
-| Platform integrations | `rfd` (native folder picker), `opener` |
+| Platform integrations | `rfd` (native folder picker), `opener`, `dark-light` (OS theme detection), `windows-sys` (native clipboard on Windows) |
 | Networking | `ureq` + `serde_json` (release update check) |
 | CI/release | GitHub Actions workflow for Linux AppImage and Windows `.exe` release artifacts |
 
@@ -89,7 +90,8 @@ LibraPix is a Rust workspace with focused crates and explicit boundaries:
 │   ├── librapix-projections/
 │   ├── librapix-search/
 │   ├── librapix-storage/
-│   └── librapix-thumbnails/
+│   ├── librapix-thumbnails/
+│   └── librapix-video-tools/
 ├── docs/
 ├── assets/
 └── .github/workflows/

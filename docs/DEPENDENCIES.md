@@ -26,6 +26,23 @@ This file tracks major direct dependencies that shape architecture and maintenan
   - API evolution can require incremental refactors.
   - Advanced Rust knowledge is required for smooth development.
 
+## `dark-light` (2.0.0)
+
+- Purpose: Detect the OS color-scheme preference so `ThemePreference::System` can follow the desktop (Light/Dark) instead of mapping to a fixed theme.
+- Why chosen: Small, cross-platform (Windows/macOS/Linux/BSD), single-purpose crate; avoids hand-rolling per-platform appearance queries (DWM registry, `NSApplication`, the freedesktop portal).
+- Alternatives considered:
+  - Per-platform native calls: more code and maintenance across three OS families for one boolean.
+  - No System mode (Dark/Light only): rejected because following the OS is a stated goal.
+- Official docs consulted:
+  - [https://docs.rs/dark-light/latest/dark_light/](https://docs.rs/dark-light/latest/dark_light/)
+  - [https://github.com/rust-dark-light/dark-light](https://github.com/rust-dark-light/dark-light)
+- Notes:
+  - API: `dark_light::detect() -> Result<dark_light::Mode, Error>` with `Mode::{Dark, Light, Unspecified}`.
+  - `Unspecified`/error resolves to Dark (Librapix's historical default).
+  - `detect()` is **not** called on the render path. `theme()` reads it at most once per second (throttled via a cached `Cell<bool>` + last-checked `Instant`) so OS theme switches are picked up quickly without a per-frame system call.
+- Risks/tradeoffs:
+  - On Linux the detector talks to the freedesktop portal; in headless/sandboxed environments it may return `Unspecified` (handled by the dark fallback).
+
 ## Rust workspace tooling (Cargo)
 
 - Purpose: Multi-crate repository structure with shared lockfile, shared target dir, and explicit dependency direction.

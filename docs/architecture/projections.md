@@ -1,13 +1,22 @@
 # Timeline and Gallery Projections
 
-Timeline and gallery views are read projections built from normalized catalog rows.
+Timeline and gallery views are read projections built from normalized catalog rows. Gallery and Timeline are presented as one **Library** surface (ADR 0024); they are fed by a single canonical projection pass.
 
 ## Baseline projection source
 
 - Source rows now come from `librapix-storage` catalog queries (`media_catalog`).
-- Projection builders live in `librapix-projections`.
+- Projection builders live in `librapix-projections` (`project_timeline`, `build_timeline_anchors`). `project_gallery` remains in the crate (with its tests) but is no longer used by `librapix-app`.
 - UI consumes projection outputs for gallery/timeline card rendering and selection.
 - App orchestration derives `available_filter_tags` from catalog rows (excluding internal `kind:*` tags) for the tag filter axis.
+
+## Single canonical projection (Library surface)
+
+- `librapix-app` runs one filter + `project_timeline` pass and builds both feeds from the resulting date buckets:
+  - `timeline_items`: grouped feed with per-day header rows (Timeline mode).
+  - `gallery_items`: the same items with header rows stripped, in the same chronological order (flat Grid mode).
+- This replaces the former duplicate `project_gallery` filter/sort pass in the app. The flat Grid renderer already skips group-header rows, so the flat grid is a byte-identical justified layout over the non-header items.
+- Consequence: the flat Grid now orders by the timeline date key (capture/date), consistent with the grouped Timeline and with Photos-style apps, rather than the previous file-modified ordering.
+- The startup snapshot fast-path still persists/restores a bounded flat `gallery_items` slice for a fast first frame; layout caches, virtualization, and the drag width-freeze are unchanged.
 
 ## Timeline baseline
 

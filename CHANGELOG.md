@@ -5,6 +5,10 @@ All notable changes to this project are documented in this file.
 ## [Unreleased]
 
 ### Docs
+- Added ADR `0023` (themeable design system: semantic palette + Light/Dark/System) and ADR `0024` (unified Library surface) documenting the visual-overhaul branch decisions.
+- Updated `docs/architecture/ui.md` for the semantic `Palette`/`palette(theme)` token layer, Light/Dark/System theming, soft elevation, glass dialogs, the centralized `render_dialog_frame`, styled scrollbars, and the in-app theme toggle.
+- Updated `docs/architecture/projections.md` to describe the single canonical timeline projection that feeds both the flat grid and the grouped timeline.
+- Documented the `dark-light` dependency in `docs/DEPENDENCIES.md` and the Windows copy-path UI-freeze fix in `docs/TROUBLESHOOTING.md`.
 - Rewrote the root `README.md` to reflect the current workspace architecture, implemented feature set, runtime/storage flow, platform packaging status, and practical usage/development guidance.
 - Added `docs/architecture/issue-12-runtime-optimization-summary.md` as the final consolidated explanation for the runtime-optimization work on `feat/catalog-first-architecture`.
 - Reconciled `message-flow`, `media-ui`, `thumbnails`, `catalog-first-architecture`, and `TROUBLESHOOTING` so they describe the final startup, projection, rendering, thumbnail, and thumb-drag model consistently.
@@ -15,6 +19,14 @@ All notable changes to this project are documented in this file.
 - Added ADR `0022` for the `librapix-video-tools` subsystem and documented Make Short architecture boundaries/config/dependency updates.
 
 ### Added
+- Real Light theme and OS-following System theme alongside the existing Dark theme, selected via a semantic `Palette` resolved by `palette(theme)` (replaces the 16 hardcoded dark-only color constants). System appearance is detected via the `dark-light` crate and cached/throttled off the render path.
+- In-app theme toggle (System / Light / Dark) in Settings → Appearance, persisted to config (`config.theme`).
+- Theme-aware UI icons (white on dark, black on light) and theme-aware text-style helpers; icon-size tokens (`ICON_XS`..`ICON_XL`) and a second Light chip palette.
+- Soft elevation tokens (`elevation_low/med/high`) applied to cards (resting + raised-on-hover + selected), the segmented control, scrubber panel, and dialogs.
+- Translucent "glass" dialog surface (gradient + edge highlight + drop shadow) shared by all modals through a centralized `render_dialog_frame`.
+- Selection checkmark badge on the selected gallery tile and a top scrim over thumbnails so overlaid badges stay legible.
+- Thin, rounded, translucent overlay scrollbars across the gallery, sidebar, details pane, dialogs, and diagnostics list.
+- OS window/taskbar icon set from the brand logo.
 - Migration `0009_catalog_first_foundation.sql` with:
   - `media_catalog` for normalized browse/search/timeline facts
   - `derived_artifacts` for named thumbnail variant readiness
@@ -61,6 +73,10 @@ All notable changes to this project are documented in this file.
 - Removed `packaging/windows/` scripts and packaging README from the repository.
 
 ### Changed
+- Gallery and Timeline are now one **Library** surface: a single sidebar entry plus a segmented Grid | Timeline toggle in the content header (reusing the existing `OpenGallery`/`OpenTimeline` messages). Projection now runs a single canonical `project_timeline` pass; the flat grid is the same date-bucketed feed with headers stripped (the duplicate `project_gallery` pass was removed). Layout caches, virtualization, drag width-freeze, and the startup snapshot fast-path are preserved.
+- All visual presentation is now theme-driven through `palette(theme)`; the `System` theme follows the OS instead of mapping to a fixed dark theme.
+- All modal dialogs render through one shared glass frame and size to their own content up to per-dialog caps (consistent look/feel; short dialogs hug content, tall ones scroll).
+- Window title corrected to brand casing `LibraPix`; header/about logo kept as the consistent brand-blue SVG across themes (UI icons still swap per theme).
 - Sidebar footer status presentation was corrected to match native sidebar section styling: removed the boxed/card container, renamed the sidebar footer heading to `STATUS`, kept the update chip at the top of the section, and tightened spacing for a flatter, cleaner integration with Browse/Library sections.
 - Sidebar footer status UI is now a unified system-status panel: the update-status chip moved from the header into the bottom-left sidebar footer above runtime activity/progress, spacing/typography were tightened for clearer hierarchy, metrics were compacted into a single secondary line, and long error text is now compact with hover-to-view-full details.
 - Startup now uses a bounded gallery snapshot (`projection_snapshots.version = 2`), an explicit ready-enough boundary, current-surface-first startup projection, and a non-blocking unchanged-launch gallery continuation instead of treating startup like a full-library preload.
@@ -103,6 +119,7 @@ All notable changes to this project are documented in this file.
 - New-file detected dialog now uses the same content-sized modal behavior as other dialogs, removing extra bottom gap below actions.
 
 ### Fixed
+- Copy Path no longer freezes the whole app on Windows. It previously spawned `clip.exe` and blocked on `child.wait()` inside `update()` (the UI thread); it now writes the clipboard directly via the native `SetClipboardData(CF_UNICODETEXT)` API (same flow as Copy File), returning instantly.
 - Make Short ffmpeg generation now drains `stderr` while the process is active, preventing long-running encodes from hanging when progress logs fill the pipe.
 - Canceling Make Short generation now removes only newly-created partial outputs and preserves pre-existing files at the selected target path.
 - `librapix-video-tools` now compiles cleanly under strict clippy settings on non-Windows targets by making Windows-only background command configuration explicitly conditional.

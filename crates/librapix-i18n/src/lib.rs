@@ -9,6 +9,11 @@ pub enum TextKey {
     AppSubtitle,
     GalleryTab,
     TimelineTab,
+    LibraryTab,
+    AppearanceSectionLabel,
+    ThemeSystem,
+    ThemeLight,
+    ThemeDark,
     ActiveViewLabel,
     RegisteredRootsLabel,
     RootInputLabel,
@@ -260,10 +265,15 @@ impl Translator {
 
 fn en_us(key: TextKey) -> &'static str {
     match key {
-        TextKey::AppTitle => "Librapix",
+        TextKey::AppTitle => "LibraPix",
         TextKey::AppSubtitle => "Non-destructive local media manager",
         TextKey::GalleryTab => "Gallery",
         TextKey::TimelineTab => "Timeline",
+        TextKey::LibraryTab => "Library",
+        TextKey::AppearanceSectionLabel => "APPEARANCE",
+        TextKey::ThemeSystem => "System",
+        TextKey::ThemeLight => "Light",
+        TextKey::ThemeDark => "Dark",
         TextKey::ActiveViewLabel => "Active view",
         TextKey::RegisteredRootsLabel => "Registered library roots",
         TextKey::RootInputLabel => "Library root path",

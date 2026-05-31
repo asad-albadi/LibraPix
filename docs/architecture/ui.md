@@ -1,11 +1,11 @@
 # UI Architecture
 
-Librapix UI uses a Fluent-inspired design system with an app-shell layout.
+Librapix UI uses a themeable, Fluent-inspired design system with an app-shell layout. See ADR 0023 (themeable design system) and ADR 0024 (unified Library surface).
 
 ## App shell baseline
 
-- Top header with product identity, integrated search bar, update-status chip, Settings button, About button, and GitHub link.
-- Left sidebar with sectioned navigation (browse, library roots); operational controls (indexing, ignore rules, diagnostics) moved to Settings dialog.
+- Top header with product identity (brand-blue SVG logo + wordmark), integrated search bar, update-status chip, Settings button, About button, and GitHub link.
+- Left sidebar with sectioned navigation: a single **Library** entry (the Grid/Timeline split is a segmented toggle in the content header, not separate tabs) plus library roots; operational controls (indexing, ignore rules, diagnostics) live in the Settings dialog.
 - Main media pane for gallery grid, timeline groups, and search result cards.
 - Right details pane for preview, file info, tags, and actions.
 - Details pane shows an intentional empty state when no media is selected.
@@ -14,12 +14,12 @@ Librapix UI uses a Fluent-inspired design system with an app-shell layout.
 
 All visual presentation is centralized in `librapix-app/src/ui.rs`:
 
-### Color palette
-- Fluent-inspired neutral dark theme.
-- Background hierarchy: base, layer, surface, card, hover, selected.
-- Accent: Windows Fluent blue for primary actions and selection states.
-- Text hierarchy: primary, secondary, tertiary, disabled.
-- Semantic colors for success, warning, and dividers.
+### Color palette / theming
+- Semantic `Palette` struct with two `static` instances, `DARK` and `LIGHT`; `palette(&Theme)` selects one via `theme.extended_palette().is_dark`.
+- Background hierarchy: base, layer, surface, card, hover, selected. Accent (cool blue) for primary actions/selection. Text hierarchy: primary, secondary, tertiary, disabled. Semantic success/warning/divider, plus a `focus_ring` token.
+- Style closures and theme-aware text helpers (`text_primary/secondary/...`) read `palette(theme).*`, so call sites are theme-agnostic.
+- Theme preference is `System` / `Dark` / `Light` (`config.theme`). `System` follows the OS via the `dark-light` crate, resolved by `theme()` and cached/throttled off the render path (`Librapix::is_dark_theme()` reads the same cache for icon/chip variants). See `docs/DEPENDENCIES.md`.
+- A second Light chip palette mirrors the dark one (`chip_tone_for_key(key, dark)`).
 
 ### Spacing and typography
 - Spacing scale: 2xs through 2xl (2px to 32px).
@@ -27,15 +27,25 @@ All visual presentation is centralized in `librapix-app/src/ui.rs`:
 - Consistent padding and gap values across all surfaces.
 
 ### Component styles
-- Button styles: primary (accent), subtle (transparent), action (card bg), nav (active/inactive), card (selection border), filter chip (pill radius, accent when active).
+- Button styles: primary (accent), subtle (transparent), action (card bg), nav (active/inactive), card (selection border + hover/elevation), filter chip and segmented control (active = accent).
 - Managed chips: deterministic color-mapped chip surfaces for tags/rules with inline edit/remove/toggle actions.
-- Text input styles: search and field now share the same rounded-corner language for consistency.
+- Text input styles: search and field share the same rounded-corner language; the focused state uses a 2px `focus_ring` border.
 - Container styles: header, sidebar, details pane, cards, empty states, thumbnail placeholders, dividers, timeline scrubber surfaces, media-kind badges, modal backdrop, and modal dialog surfaces.
-- Settings dialog scrollable uses embedded scrollbar spacing so form controls are not obscured by scrollbar chrome.
+- Icon-size tokens `ICON_XS`..`ICON_XL` replace raw pixel literals at icon/logo call sites.
+
+### Elevation and glass
+- Soft shadow helpers `elevation_low/med/high(&Theme)` (near-black on dark, soft gray on light) feed the `shadow` field of cards (resting/hover/selected), the segmented control, the scrubber panel, and dialogs.
+- Modal dialogs use a translucent "glass" surface: a vertical gradient at <1.0 alpha + a faint edge highlight + a strong shadow over the dimmed backdrop. There is **no** true backdrop blur (iced has no backdrop-filter primitive — see ADR 0023).
+
+### Scrollbars
+- `scrollbar_style` renders thin, rounded, translucent overlay scrollbars (invisible rail, pill scroller that darkens on hover/drag), applied to the gallery, sidebar, details pane, dialog frame, and diagnostics list.
+
+### Dialogs
+- All modals render through one shared `render_dialog_frame(content, max_width, max_height)`: the glass surface, consistent padding, a styled scrollable, and width/height that scale with the window. The frame hugs its content up to per-dialog caps, then scrolls — so short dialogs stay short and tall ones cap + scroll.
 
 ### Layout helpers
 - `section_heading()`: small-caps section label.
-- `h_divider()`: thin horizontal divider line.
+- `h_divider()` / `v_divider()`: 1px horizontal / vertical hairline dividers (vertical hairlines separate sidebar | content | details).
 
 ## Interaction model
 

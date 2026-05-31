@@ -1,107 +1,147 @@
-use iced::widget::{Container, Text, button, container, text, text_input};
-use iced::{Background, Border, Color, Length, Theme};
+use iced::widget::{Container, Text, button, container, scrollable, text, text_input};
+use iced::{Background, Border, Color, Length, Radians, Shadow, Theme, Vector, gradient};
 
-// ── Color Palette (Fluent-inspired dark theme) ──
+// ── Semantic palette ──
+//
+// A single `Palette` describes every chrome/text/accent surface. Two static
+// instances (`DARK`, `LIGHT`) hold the concrete values; `palette()` selects one
+// from the active theme. Style closures and the theme-aware text helpers read
+// `palette(theme).*` so the whole UI follows Dark / Light / System automatically.
 
-pub const BG_BASE: Color = Color {
-    r: 0.110,
-    g: 0.110,
-    b: 0.110,
-    a: 1.0,
-};
-pub const BG_LAYER: Color = Color {
-    r: 0.137,
-    g: 0.137,
-    b: 0.137,
-    a: 1.0,
-};
-pub const BG_SURFACE: Color = Color {
-    r: 0.176,
-    g: 0.176,
-    b: 0.176,
-    a: 1.0,
-};
-pub const BG_CARD: Color = Color {
-    r: 0.220,
-    g: 0.220,
-    b: 0.220,
-    a: 1.0,
-};
-pub const BG_HOVER: Color = Color {
-    r: 0.259,
-    g: 0.259,
-    b: 0.259,
-    a: 1.0,
-};
-pub const BG_SELECTED: Color = Color {
-    r: 0.055,
-    g: 0.290,
-    b: 0.478,
-    a: 1.0,
-};
+#[derive(Debug, Clone, Copy)]
+pub struct Palette {
+    pub bg_base: Color,
+    pub bg_layer: Color,
+    pub bg_surface: Color,
+    pub bg_card: Color,
+    pub bg_hover: Color,
+    pub bg_selected: Color,
+    pub accent: Color,
+    pub accent_hover: Color,
+    pub accent_subtle: Color,
+    pub text_primary: Color,
+    pub text_secondary: Color,
+    pub text_tertiary: Color,
+    pub text_disabled: Color,
+    pub divider: Color,
+    pub success: Color,
+    pub warning: Color,
+    pub focus_ring: Color,
+    pub skeleton: Color,
+}
 
-pub const ACCENT: Color = Color {
-    r: 0.0,
-    g: 0.471,
-    b: 0.831,
-    a: 1.0,
-};
-pub const ACCENT_HOVER: Color = Color {
-    r: 0.102,
-    g: 0.533,
-    b: 0.910,
-    a: 1.0,
-};
-pub const ACCENT_SUBTLE: Color = Color {
-    r: 0.0,
-    g: 0.278,
-    b: 0.502,
-    a: 1.0,
-};
+const fn rgb(r: f32, g: f32, b: f32) -> Color {
+    Color { r, g, b, a: 1.0 }
+}
 
-pub const TEXT_PRIMARY: Color = Color {
-    r: 0.961,
-    g: 0.961,
-    b: 0.961,
-    a: 1.0,
-};
-pub const TEXT_SECONDARY: Color = Color {
-    r: 0.620,
-    g: 0.620,
-    b: 0.620,
-    a: 1.0,
-};
-pub const TEXT_TERTIARY: Color = Color {
-    r: 0.431,
-    g: 0.431,
-    b: 0.431,
-    a: 1.0,
-};
-pub const TEXT_DISABLED: Color = Color {
-    r: 0.306,
-    g: 0.306,
-    b: 0.306,
-    a: 1.0,
+const fn rgba(r: f32, g: f32, b: f32, a: f32) -> Color {
+    Color { r, g, b, a }
+}
+
+/// Near-black, content-first dark surface (the original Fluent values).
+pub static DARK: Palette = Palette {
+    bg_base: rgb(0.110, 0.110, 0.110),
+    bg_layer: rgb(0.137, 0.137, 0.137),
+    bg_surface: rgb(0.176, 0.176, 0.176),
+    bg_card: rgb(0.220, 0.220, 0.220),
+    bg_hover: rgb(0.259, 0.259, 0.259),
+    bg_selected: rgb(0.055, 0.290, 0.478),
+    accent: rgb(0.0, 0.471, 0.831),
+    accent_hover: rgb(0.102, 0.533, 0.910),
+    accent_subtle: rgb(0.0, 0.278, 0.502),
+    text_primary: rgb(0.961, 0.961, 0.961),
+    text_secondary: rgb(0.620, 0.620, 0.620),
+    text_tertiary: rgb(0.431, 0.431, 0.431),
+    text_disabled: rgb(0.306, 0.306, 0.306),
+    divider: rgb(0.200, 0.200, 0.200),
+    success: rgb(0.424, 0.796, 0.373),
+    warning: rgb(1.0, 0.702, 0.278),
+    focus_ring: rgba(0.0, 0.471, 0.831, 0.55),
+    skeleton: rgb(0.286, 0.286, 0.286),
 };
 
-pub const DIVIDER_COLOR: Color = Color {
-    r: 0.200,
-    g: 0.200,
-    b: 0.200,
-    a: 1.0,
+/// Soft off-white base with white surfaces; deeper accent + text for WCAG AA.
+pub static LIGHT: Palette = Palette {
+    bg_base: rgb(0.969, 0.969, 0.973),
+    bg_layer: rgb(0.957, 0.957, 0.961),
+    bg_surface: rgb(1.0, 1.0, 1.0),
+    bg_card: rgb(0.929, 0.929, 0.937),
+    bg_hover: rgb(0.898, 0.898, 0.910),
+    bg_selected: rgb(0.847, 0.918, 0.984),
+    accent: rgb(0.0, 0.357, 0.682),
+    accent_hover: rgb(0.0, 0.408, 0.769),
+    accent_subtle: rgb(0.788, 0.875, 0.961),
+    text_primary: rgb(0.110, 0.110, 0.118),
+    text_secondary: rgb(0.345, 0.345, 0.365),
+    text_tertiary: rgb(0.420, 0.420, 0.443),
+    text_disabled: rgb(0.620, 0.620, 0.635),
+    divider: rgb(0.882, 0.882, 0.894),
+    success: rgb(0.149, 0.553, 0.231),
+    warning: rgb(0.706, 0.439, 0.0),
+    focus_ring: rgba(0.0, 0.357, 0.682, 0.45),
+    skeleton: rgb(0.910, 0.910, 0.918),
 };
-pub const SUCCESS_COLOR: Color = Color {
-    r: 0.424,
-    g: 0.796,
-    b: 0.373,
-    a: 1.0,
-};
-pub const WARNING_COLOR: Color = Color {
-    r: 1.0,
-    g: 0.702,
-    b: 0.278,
-    a: 1.0,
-};
+
+/// Resolve the palette for the active theme (System-aware via `theme()`).
+pub fn palette(theme: &Theme) -> &'static Palette {
+    if theme.extended_palette().is_dark {
+        &DARK
+    } else {
+        &LIGHT
+    }
+}
+
+// ── Elevation (soft shadows) ──
+//
+// Dark surfaces use a near-black shadow; light surfaces a softer cool-gray at
+// reduced alpha. Helpers feed the `shadow` field of container/button styles to
+// lift cards, controls, and dialogs off the base without changing layout.
+
+fn shadow_color(theme: &Theme, alpha: f32) -> Color {
+    if theme.extended_palette().is_dark {
+        Color {
+            r: 0.0,
+            g: 0.0,
+            b: 0.0,
+            a: alpha,
+        }
+    } else {
+        // Cool-gray, noticeably lighter so white surfaces don't get a harsh halo.
+        Color {
+            r: 0.20,
+            g: 0.22,
+            b: 0.28,
+            a: alpha * 0.55,
+        }
+    }
+}
+
+/// Resting card lift.
+pub fn elevation_low(theme: &Theme) -> Shadow {
+    Shadow {
+        color: shadow_color(theme, 0.30),
+        offset: Vector::new(0.0, 1.0),
+        blur_radius: 4.0,
+    }
+}
+
+/// Hovered card / raised control.
+pub fn elevation_med(theme: &Theme) -> Shadow {
+    Shadow {
+        color: shadow_color(theme, 0.40),
+        offset: Vector::new(0.0, 3.0),
+        blur_radius: 12.0,
+    }
+}
+
+/// Modal dialogs.
+pub fn elevation_high(theme: &Theme) -> Shadow {
+    Shadow {
+        color: shadow_color(theme, 0.48),
+        offset: Vector::new(0.0, 10.0),
+        blur_radius: 30.0,
+    }
+}
 
 // ── Spacing ──
 
@@ -122,6 +162,14 @@ pub const FONT_SECTION: u32 = 11;
 pub const FONT_BODY: u32 = 13;
 pub const FONT_CAPTION: u32 = 11;
 
+// ── Icon sizes ──
+
+pub const ICON_XS: f32 = 14.0;
+pub const ICON_SM: f32 = 16.0;
+pub const ICON_MD: f32 = 18.0;
+pub const ICON_LG: f32 = 20.0;
+pub const ICON_XL: f32 = 40.0;
+
 // ── Layout ──
 
 pub const SIDEBAR_WIDTH: f32 = 240.0;
@@ -134,6 +182,51 @@ pub const RADIUS_MD: f32 = 6.0;
 pub const RADIUS_LG: f32 = 8.0;
 pub const RADIUS_PILL: f32 = 16.0;
 
+// ── Theme-aware text styles ──
+
+pub fn text_primary(theme: &Theme) -> text::Style {
+    text::Style {
+        color: Some(palette(theme).text_primary),
+    }
+}
+
+pub fn text_secondary(theme: &Theme) -> text::Style {
+    text::Style {
+        color: Some(palette(theme).text_secondary),
+    }
+}
+
+pub fn text_tertiary(theme: &Theme) -> text::Style {
+    text::Style {
+        color: Some(palette(theme).text_tertiary),
+    }
+}
+
+#[allow(dead_code)]
+pub fn text_disabled(theme: &Theme) -> text::Style {
+    text::Style {
+        color: Some(palette(theme).text_disabled),
+    }
+}
+
+pub fn text_accent(theme: &Theme) -> text::Style {
+    text::Style {
+        color: Some(palette(theme).accent),
+    }
+}
+
+pub fn text_success(theme: &Theme) -> text::Style {
+    text::Style {
+        color: Some(palette(theme).success),
+    }
+}
+
+pub fn text_warning(theme: &Theme) -> text::Style {
+    text::Style {
+        color: Some(palette(theme).warning),
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct ChipTone {
     pub background: Color,
@@ -143,330 +236,179 @@ pub struct ChipTone {
     pub accent_text: Color,
 }
 
-const CHIP_PALETTE: [ChipTone; 12] = [
+const CHIP_PALETTE_DARK: [ChipTone; 12] = [
     ChipTone {
-        background: Color {
-            r: 0.204,
-            g: 0.165,
-            b: 0.235,
-            a: 1.0,
-        },
-        background_hover: Color {
-            r: 0.243,
-            g: 0.200,
-            b: 0.278,
-            a: 1.0,
-        },
-        border: Color {
-            r: 0.463,
-            g: 0.373,
-            b: 0.565,
-            a: 1.0,
-        },
-        text: TEXT_PRIMARY,
-        accent_text: Color {
-            r: 0.839,
-            g: 0.722,
-            b: 0.941,
-            a: 1.0,
-        },
+        background: rgb(0.204, 0.165, 0.235),
+        background_hover: rgb(0.243, 0.200, 0.278),
+        border: rgb(0.463, 0.373, 0.565),
+        text: DARK.text_primary,
+        accent_text: rgb(0.839, 0.722, 0.941),
     },
     ChipTone {
-        background: Color {
-            r: 0.169,
-            g: 0.216,
-            b: 0.267,
-            a: 1.0,
-        },
-        background_hover: Color {
-            r: 0.204,
-            g: 0.255,
-            b: 0.314,
-            a: 1.0,
-        },
-        border: Color {
-            r: 0.345,
-            g: 0.486,
-            b: 0.612,
-            a: 1.0,
-        },
-        text: TEXT_PRIMARY,
-        accent_text: Color {
-            r: 0.702,
-            g: 0.843,
-            b: 0.980,
-            a: 1.0,
-        },
+        background: rgb(0.169, 0.216, 0.267),
+        background_hover: rgb(0.204, 0.255, 0.314),
+        border: rgb(0.345, 0.486, 0.612),
+        text: DARK.text_primary,
+        accent_text: rgb(0.702, 0.843, 0.980),
     },
     ChipTone {
-        background: Color {
-            r: 0.149,
-            g: 0.224,
-            b: 0.188,
-            a: 1.0,
-        },
-        background_hover: Color {
-            r: 0.184,
-            g: 0.267,
-            b: 0.224,
-            a: 1.0,
-        },
-        border: Color {
-            r: 0.341,
-            g: 0.549,
-            b: 0.451,
-            a: 1.0,
-        },
-        text: TEXT_PRIMARY,
-        accent_text: Color {
-            r: 0.718,
-            g: 0.941,
-            b: 0.812,
-            a: 1.0,
-        },
+        background: rgb(0.149, 0.224, 0.188),
+        background_hover: rgb(0.184, 0.267, 0.224),
+        border: rgb(0.341, 0.549, 0.451),
+        text: DARK.text_primary,
+        accent_text: rgb(0.718, 0.941, 0.812),
     },
     ChipTone {
-        background: Color {
-            r: 0.239,
-            g: 0.204,
-            b: 0.145,
-            a: 1.0,
-        },
-        background_hover: Color {
-            r: 0.286,
-            g: 0.243,
-            b: 0.180,
-            a: 1.0,
-        },
-        border: Color {
-            r: 0.620,
-            g: 0.494,
-            b: 0.302,
-            a: 1.0,
-        },
-        text: TEXT_PRIMARY,
-        accent_text: Color {
-            r: 0.980,
-            g: 0.839,
-            b: 0.663,
-            a: 1.0,
-        },
+        background: rgb(0.239, 0.204, 0.145),
+        background_hover: rgb(0.286, 0.243, 0.180),
+        border: rgb(0.620, 0.494, 0.302),
+        text: DARK.text_primary,
+        accent_text: rgb(0.980, 0.839, 0.663),
     },
     ChipTone {
-        background: Color {
-            r: 0.239,
-            g: 0.173,
-            b: 0.149,
-            a: 1.0,
-        },
-        background_hover: Color {
-            r: 0.282,
-            g: 0.204,
-            b: 0.176,
-            a: 1.0,
-        },
-        border: Color {
-            r: 0.643,
-            g: 0.427,
-            b: 0.373,
-            a: 1.0,
-        },
-        text: TEXT_PRIMARY,
-        accent_text: Color {
-            r: 0.980,
-            g: 0.776,
-            b: 0.722,
-            a: 1.0,
-        },
+        background: rgb(0.239, 0.173, 0.149),
+        background_hover: rgb(0.282, 0.204, 0.176),
+        border: rgb(0.643, 0.427, 0.373),
+        text: DARK.text_primary,
+        accent_text: rgb(0.980, 0.776, 0.722),
     },
     ChipTone {
-        background: Color {
-            r: 0.247,
-            g: 0.161,
-            b: 0.184,
-            a: 1.0,
-        },
-        background_hover: Color {
-            r: 0.294,
-            g: 0.196,
-            b: 0.220,
-            a: 1.0,
-        },
-        border: Color {
-            r: 0.620,
-            g: 0.349,
-            b: 0.467,
-            a: 1.0,
-        },
-        text: TEXT_PRIMARY,
-        accent_text: Color {
-            r: 0.961,
-            g: 0.698,
-            b: 0.812,
-            a: 1.0,
-        },
+        background: rgb(0.247, 0.161, 0.184),
+        background_hover: rgb(0.294, 0.196, 0.220),
+        border: rgb(0.620, 0.349, 0.467),
+        text: DARK.text_primary,
+        accent_text: rgb(0.961, 0.698, 0.812),
     },
     ChipTone {
-        background: Color {
-            r: 0.173,
-            g: 0.188,
-            b: 0.255,
-            a: 1.0,
-        },
-        background_hover: Color {
-            r: 0.208,
-            g: 0.227,
-            b: 0.306,
-            a: 1.0,
-        },
-        border: Color {
-            r: 0.408,
-            g: 0.447,
-            b: 0.678,
-            a: 1.0,
-        },
-        text: TEXT_PRIMARY,
-        accent_text: Color {
-            r: 0.733,
-            g: 0.761,
-            b: 0.961,
-            a: 1.0,
-        },
+        background: rgb(0.173, 0.188, 0.255),
+        background_hover: rgb(0.208, 0.227, 0.306),
+        border: rgb(0.408, 0.447, 0.678),
+        text: DARK.text_primary,
+        accent_text: rgb(0.733, 0.761, 0.961),
     },
     ChipTone {
-        background: Color {
-            r: 0.149,
-            g: 0.243,
-            b: 0.251,
-            a: 1.0,
-        },
-        background_hover: Color {
-            r: 0.184,
-            g: 0.290,
-            b: 0.298,
-            a: 1.0,
-        },
-        border: Color {
-            r: 0.325,
-            g: 0.588,
-            b: 0.608,
-            a: 1.0,
-        },
-        text: TEXT_PRIMARY,
-        accent_text: Color {
-            r: 0.698,
-            g: 0.929,
-            b: 0.961,
-            a: 1.0,
-        },
+        background: rgb(0.149, 0.243, 0.251),
+        background_hover: rgb(0.184, 0.290, 0.298),
+        border: rgb(0.325, 0.588, 0.608),
+        text: DARK.text_primary,
+        accent_text: rgb(0.698, 0.929, 0.961),
     },
     ChipTone {
-        background: Color {
-            r: 0.208,
-            g: 0.231,
-            b: 0.157,
-            a: 1.0,
-        },
-        background_hover: Color {
-            r: 0.247,
-            g: 0.275,
-            b: 0.188,
-            a: 1.0,
-        },
-        border: Color {
-            r: 0.502,
-            g: 0.604,
-            b: 0.357,
-            a: 1.0,
-        },
-        text: TEXT_PRIMARY,
-        accent_text: Color {
-            r: 0.851,
-            g: 0.937,
-            b: 0.714,
-            a: 1.0,
-        },
+        background: rgb(0.208, 0.231, 0.157),
+        background_hover: rgb(0.247, 0.275, 0.188),
+        border: rgb(0.502, 0.604, 0.357),
+        text: DARK.text_primary,
+        accent_text: rgb(0.851, 0.937, 0.714),
     },
     ChipTone {
-        background: Color {
-            r: 0.251,
-            g: 0.224,
-            b: 0.161,
-            a: 1.0,
-        },
-        background_hover: Color {
-            r: 0.302,
-            g: 0.271,
-            b: 0.196,
-            a: 1.0,
-        },
-        border: Color {
-            r: 0.659,
-            g: 0.565,
-            b: 0.357,
-            a: 1.0,
-        },
-        text: TEXT_PRIMARY,
-        accent_text: Color {
-            r: 0.949,
-            g: 0.902,
-            b: 0.725,
-            a: 1.0,
-        },
+        background: rgb(0.251, 0.224, 0.161),
+        background_hover: rgb(0.302, 0.271, 0.196),
+        border: rgb(0.659, 0.565, 0.357),
+        text: DARK.text_primary,
+        accent_text: rgb(0.949, 0.902, 0.725),
     },
     ChipTone {
-        background: Color {
-            r: 0.161,
-            g: 0.161,
-            b: 0.231,
-            a: 1.0,
-        },
-        background_hover: Color {
-            r: 0.196,
-            g: 0.196,
-            b: 0.278,
-            a: 1.0,
-        },
-        border: Color {
-            r: 0.380,
-            g: 0.380,
-            b: 0.620,
-            a: 1.0,
-        },
-        text: TEXT_PRIMARY,
-        accent_text: Color {
-            r: 0.776,
-            g: 0.776,
-            b: 0.980,
-            a: 1.0,
-        },
+        background: rgb(0.161, 0.161, 0.231),
+        background_hover: rgb(0.196, 0.196, 0.278),
+        border: rgb(0.380, 0.380, 0.620),
+        text: DARK.text_primary,
+        accent_text: rgb(0.776, 0.776, 0.980),
     },
     ChipTone {
-        background: Color {
-            r: 0.231,
-            g: 0.161,
-            b: 0.208,
-            a: 1.0,
-        },
-        background_hover: Color {
-            r: 0.282,
-            g: 0.196,
-            b: 0.255,
-            a: 1.0,
-        },
-        border: Color {
-            r: 0.596,
-            g: 0.380,
-            b: 0.502,
-            a: 1.0,
-        },
-        text: TEXT_PRIMARY,
-        accent_text: Color {
-            r: 0.929,
-            g: 0.757,
-            b: 0.871,
-            a: 1.0,
-        },
+        background: rgb(0.231, 0.161, 0.208),
+        background_hover: rgb(0.282, 0.196, 0.255),
+        border: rgb(0.596, 0.380, 0.502),
+        text: DARK.text_primary,
+        accent_text: rgb(0.929, 0.757, 0.871),
+    },
+];
+
+// Light-theme chips: soft tinted fills, white-ish hover, saturated border, and a
+// darkened accent text that meets AA over the pale fill.
+const CHIP_PALETTE_LIGHT: [ChipTone; 12] = [
+    ChipTone {
+        background: rgb(0.929, 0.910, 0.965),
+        background_hover: rgb(0.886, 0.851, 0.945),
+        border: rgb(0.612, 0.518, 0.722),
+        text: LIGHT.text_primary,
+        accent_text: rgb(0.357, 0.235, 0.510),
+    },
+    ChipTone {
+        background: rgb(0.902, 0.937, 0.973),
+        background_hover: rgb(0.851, 0.910, 0.965),
+        border: rgb(0.435, 0.580, 0.710),
+        text: LIGHT.text_primary,
+        accent_text: rgb(0.149, 0.310, 0.498),
+    },
+    ChipTone {
+        background: rgb(0.894, 0.957, 0.918),
+        background_hover: rgb(0.835, 0.937, 0.875),
+        border: rgb(0.396, 0.620, 0.510),
+        text: LIGHT.text_primary,
+        accent_text: rgb(0.137, 0.420, 0.275),
+    },
+    ChipTone {
+        background: rgb(0.969, 0.937, 0.875),
+        background_hover: rgb(0.957, 0.906, 0.808),
+        border: rgb(0.682, 0.553, 0.345),
+        text: LIGHT.text_primary,
+        accent_text: rgb(0.451, 0.337, 0.137),
+    },
+    ChipTone {
+        background: rgb(0.973, 0.910, 0.898),
+        background_hover: rgb(0.961, 0.859, 0.835),
+        border: rgb(0.706, 0.471, 0.408),
+        text: LIGHT.text_primary,
+        accent_text: rgb(0.498, 0.255, 0.196),
+    },
+    ChipTone {
+        background: rgb(0.973, 0.898, 0.922),
+        background_hover: rgb(0.961, 0.843, 0.890),
+        border: rgb(0.682, 0.392, 0.518),
+        text: LIGHT.text_primary,
+        accent_text: rgb(0.498, 0.176, 0.302),
+    },
+    ChipTone {
+        background: rgb(0.910, 0.918, 0.973),
+        background_hover: rgb(0.859, 0.871, 0.961),
+        border: rgb(0.451, 0.490, 0.722),
+        text: LIGHT.text_primary,
+        accent_text: rgb(0.220, 0.247, 0.494),
+    },
+    ChipTone {
+        background: rgb(0.890, 0.957, 0.961),
+        background_hover: rgb(0.824, 0.937, 0.945),
+        border: rgb(0.353, 0.620, 0.639),
+        text: LIGHT.text_primary,
+        accent_text: rgb(0.118, 0.396, 0.412),
+    },
+    ChipTone {
+        background: rgb(0.937, 0.957, 0.882),
+        background_hover: rgb(0.902, 0.937, 0.808),
+        border: rgb(0.529, 0.631, 0.380),
+        text: LIGHT.text_primary,
+        accent_text: rgb(0.314, 0.388, 0.180),
+    },
+    ChipTone {
+        background: rgb(0.965, 0.945, 0.875),
+        background_hover: rgb(0.953, 0.918, 0.804),
+        border: rgb(0.682, 0.588, 0.376),
+        text: LIGHT.text_primary,
+        accent_text: rgb(0.435, 0.365, 0.165),
+    },
+    ChipTone {
+        background: rgb(0.910, 0.910, 0.965),
+        background_hover: rgb(0.863, 0.863, 0.953),
+        border: rgb(0.408, 0.408, 0.659),
+        text: LIGHT.text_primary,
+        accent_text: rgb(0.224, 0.224, 0.471),
+    },
+    ChipTone {
+        background: rgb(0.965, 0.910, 0.953),
+        background_hover: rgb(0.953, 0.859, 0.933),
+        border: rgb(0.627, 0.408, 0.533),
+        text: LIGHT.text_primary,
+        accent_text: rgb(0.435, 0.224, 0.357),
     },
 ];
 
@@ -483,25 +425,31 @@ fn stable_color_index(value: &str, size: usize) -> usize {
     (hash as usize) % size
 }
 
-pub fn chip_tone_for_key(key: &str) -> ChipTone {
-    let index = stable_color_index(key.trim().to_ascii_lowercase().as_str(), CHIP_PALETTE.len());
-    CHIP_PALETTE[index]
+pub fn chip_tone_for_key(key: &str, dark: bool) -> ChipTone {
+    let palette = if dark {
+        &CHIP_PALETTE_DARK
+    } else {
+        &CHIP_PALETTE_LIGHT
+    };
+    let index = stable_color_index(key.trim().to_ascii_lowercase().as_str(), palette.len());
+    palette[index]
 }
 
 // ── Container Styles ──
 
-pub fn app_bg_style(_theme: &Theme) -> container::Style {
+pub fn app_bg_style(theme: &Theme) -> container::Style {
     container::Style {
-        background: Some(Background::Color(BG_BASE)),
+        background: Some(Background::Color(palette(theme).bg_base)),
         ..container::Style::default()
     }
 }
 
-pub fn header_style(_theme: &Theme) -> container::Style {
+pub fn header_style(theme: &Theme) -> container::Style {
+    let p = palette(theme);
     container::Style {
-        background: Some(Background::Color(BG_LAYER)),
+        background: Some(Background::Color(p.bg_layer)),
         border: Border {
-            color: DIVIDER_COLOR,
+            color: p.divider,
             width: 1.0,
             radius: 0.0.into(),
         },
@@ -509,74 +457,73 @@ pub fn header_style(_theme: &Theme) -> container::Style {
     }
 }
 
-pub fn sidebar_style(_theme: &Theme) -> container::Style {
+pub fn sidebar_style(theme: &Theme) -> container::Style {
     container::Style {
-        background: Some(Background::Color(BG_LAYER)),
+        background: Some(Background::Color(palette(theme).bg_layer)),
         ..container::Style::default()
     }
 }
 
-pub fn details_pane_style(_theme: &Theme) -> container::Style {
+pub fn details_pane_style(theme: &Theme) -> container::Style {
     container::Style {
-        background: Some(Background::Color(BG_LAYER)),
+        background: Some(Background::Color(palette(theme).bg_layer)),
         ..container::Style::default()
     }
 }
 
-pub fn card_style(_theme: &Theme) -> container::Style {
+pub fn card_style(theme: &Theme) -> container::Style {
     container::Style {
-        background: Some(Background::Color(BG_SURFACE)),
+        background: Some(Background::Color(palette(theme).bg_surface)),
         border: iced::border::rounded(RADIUS_LG),
+        shadow: elevation_low(theme),
         ..container::Style::default()
     }
 }
 
-pub fn thumb_placeholder_style(_theme: &Theme) -> container::Style {
+pub fn thumb_placeholder_style(theme: &Theme) -> container::Style {
     container::Style {
-        background: Some(Background::Color(BG_CARD)),
+        background: Some(Background::Color(palette(theme).bg_card)),
         border: iced::border::rounded(RADIUS_SM),
         ..container::Style::default()
     }
 }
 
-pub fn preview_loading_block_style(_theme: &Theme) -> container::Style {
+pub fn preview_loading_block_style(theme: &Theme) -> container::Style {
     container::Style {
-        background: Some(Background::Color(Color {
-            r: 0.286,
-            g: 0.286,
-            b: 0.286,
-            a: 1.0,
-        })),
+        background: Some(Background::Color(palette(theme).skeleton)),
         border: iced::border::rounded(RADIUS_MD),
         ..container::Style::default()
     }
 }
 
-pub fn empty_state_style(_theme: &Theme) -> container::Style {
+pub fn empty_state_style(theme: &Theme) -> container::Style {
     container::Style {
-        background: Some(Background::Color(BG_SURFACE)),
+        background: Some(Background::Color(palette(theme).bg_surface)),
         border: iced::border::rounded(RADIUS_LG),
         ..container::Style::default()
     }
 }
 
-pub fn scrubber_panel_style(_theme: &Theme) -> container::Style {
+pub fn scrubber_panel_style(theme: &Theme) -> container::Style {
+    let p = palette(theme);
     container::Style {
-        background: Some(Background::Color(BG_SURFACE)),
+        background: Some(Background::Color(p.bg_surface)),
         border: Border {
-            color: DIVIDER_COLOR,
+            color: p.divider,
             width: 1.0,
             radius: RADIUS_MD.into(),
         },
+        shadow: elevation_low(theme),
         ..container::Style::default()
     }
 }
 
-pub fn scrubber_chip_style(_theme: &Theme) -> container::Style {
+pub fn scrubber_chip_style(theme: &Theme) -> container::Style {
+    let p = palette(theme);
     container::Style {
-        background: Some(Background::Color(BG_CARD)),
+        background: Some(Background::Color(p.bg_card)),
         border: Border {
-            color: ACCENT,
+            color: p.accent,
             width: 1.0,
             radius: RADIUS_PILL.into(),
         },
@@ -586,43 +533,115 @@ pub fn scrubber_chip_style(_theme: &Theme) -> container::Style {
 
 pub fn modal_backdrop_style(_theme: &Theme) -> container::Style {
     container::Style {
-        background: Some(Background::Color(Color {
-            r: 0.0,
-            g: 0.0,
-            b: 0.0,
-            a: 0.60,
-        })),
+        background: Some(Background::Color(rgba(0.0, 0.0, 0.0, 0.60))),
         ..container::Style::default()
     }
 }
 
-pub fn modal_dialog_style(_theme: &Theme) -> container::Style {
+/// Translucent "glass" dialog surface: a soft vertical gradient at < 1.0 alpha so
+/// the dimmed backdrop reads through as frosted tint, a faint light edge
+/// highlight, and a pronounced drop shadow. (No true backdrop blur — iced has no
+/// backdrop-filter primitive — but over the modal scrim this reads as glass.)
+pub fn modal_dialog_style(theme: &Theme) -> container::Style {
+    let (top, bottom, edge) = if theme.extended_palette().is_dark {
+        (
+            rgba(0.22, 0.23, 0.27, 0.86),
+            rgba(0.11, 0.12, 0.14, 0.92),
+            rgba(1.0, 1.0, 1.0, 0.10),
+        )
+    } else {
+        (
+            rgba(1.0, 1.0, 1.0, 0.86),
+            rgba(0.95, 0.96, 0.98, 0.92),
+            rgba(1.0, 1.0, 1.0, 0.70),
+        )
+    };
+    let fill = gradient::Linear::new(Radians(std::f32::consts::PI))
+        .add_stop(0.0, top)
+        .add_stop(1.0, bottom);
     container::Style {
-        background: Some(Background::Color(BG_LAYER)),
+        background: Some(Background::Gradient(fill.into())),
         border: Border {
-            color: ACCENT_SUBTLE,
+            color: edge,
             width: 1.0,
             radius: RADIUS_LG.into(),
         },
+        shadow: elevation_high(theme),
         ..container::Style::default()
     }
 }
 
-pub fn divider_line_style(_theme: &Theme) -> container::Style {
+pub fn divider_line_style(theme: &Theme) -> container::Style {
     container::Style {
-        background: Some(Background::Color(DIVIDER_COLOR)),
+        background: Some(Background::Color(palette(theme).divider)),
+        ..container::Style::default()
+    }
+}
+
+/// Thin, rounded, translucent scrollbars: invisible rail, a pill scroller that
+/// darkens on hover/drag. Reads as a modern overlay scrollbar in both themes.
+pub fn scrollbar_style(theme: &Theme, status: scrollable::Status) -> scrollable::Style {
+    let p = palette(theme);
+    let mut style = scrollable::default(theme, status);
+    let scroller_color = match status {
+        scrollable::Status::Dragged { .. } => p.text_secondary,
+        scrollable::Status::Hovered {
+            is_vertical_scrollbar_hovered: true,
+            ..
+        }
+        | scrollable::Status::Hovered {
+            is_horizontal_scrollbar_hovered: true,
+            ..
+        } => p.text_secondary,
+        _ => p.text_tertiary.scale_alpha(0.7),
+    };
+    let rail = scrollable::Rail {
+        background: Some(Background::Color(Color::TRANSPARENT)),
+        border: Border {
+            color: Color::TRANSPARENT,
+            width: 0.0,
+            radius: RADIUS_PILL.into(),
+        },
+        scroller: scrollable::Scroller {
+            background: Background::Color(scroller_color),
+            border: iced::border::rounded(RADIUS_PILL),
+        },
+    };
+    style.vertical_rail = rail;
+    style.horizontal_rail = rail;
+    style
+}
+
+/// Top-down dark scrim over a thumbnail so overlaid badges (kind, selection)
+/// stay legible on bright images, fading to transparent by mid-height.
+pub fn thumb_scrim_style(_theme: &Theme) -> container::Style {
+    let fill = gradient::Linear::new(Radians(std::f32::consts::PI))
+        .add_stop(0.0, rgba(0.0, 0.0, 0.0, 0.45))
+        .add_stop(0.4, rgba(0.0, 0.0, 0.0, 0.0));
+    container::Style {
+        background: Some(Background::Gradient(fill.into())),
+        ..container::Style::default()
+    }
+}
+
+/// Accent pill behind the selection checkmark on a selected tile.
+pub fn check_badge_style(theme: &Theme) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(palette(theme).accent)),
+        border: iced::border::rounded(RADIUS_PILL),
         ..container::Style::default()
     }
 }
 
 // ── Button Styles ──
 
-pub fn primary_button_style(_theme: &Theme, status: button::Status) -> button::Style {
+pub fn primary_button_style(theme: &Theme, status: button::Status) -> button::Style {
+    let p = palette(theme);
     let (bg, text_color) = match status {
-        button::Status::Active => (ACCENT, Color::WHITE),
-        button::Status::Hovered => (ACCENT_HOVER, Color::WHITE),
-        button::Status::Pressed => (ACCENT_SUBTLE, Color::WHITE),
-        button::Status::Disabled => (BG_CARD, TEXT_DISABLED),
+        button::Status::Active => (p.accent, Color::WHITE),
+        button::Status::Hovered => (p.accent_hover, Color::WHITE),
+        button::Status::Pressed => (p.accent_subtle, Color::WHITE),
+        button::Status::Disabled => (p.bg_card, p.text_disabled),
     };
     button::Style {
         background: Some(Background::Color(bg)),
@@ -632,12 +651,13 @@ pub fn primary_button_style(_theme: &Theme, status: button::Status) -> button::S
     }
 }
 
-pub fn subtle_button_style(_theme: &Theme, status: button::Status) -> button::Style {
+pub fn subtle_button_style(theme: &Theme, status: button::Status) -> button::Style {
+    let p = palette(theme);
     let (bg, text_color) = match status {
-        button::Status::Active => (Color::TRANSPARENT, TEXT_SECONDARY),
-        button::Status::Hovered => (BG_HOVER, TEXT_PRIMARY),
-        button::Status::Pressed => (BG_CARD, TEXT_PRIMARY),
-        button::Status::Disabled => (Color::TRANSPARENT, TEXT_DISABLED),
+        button::Status::Active => (Color::TRANSPARENT, p.text_secondary),
+        button::Status::Hovered => (p.bg_hover, p.text_primary),
+        button::Status::Pressed => (p.bg_card, p.text_primary),
+        button::Status::Disabled => (Color::TRANSPARENT, p.text_disabled),
     };
     button::Style {
         background: Some(Background::Color(bg)),
@@ -647,12 +667,13 @@ pub fn subtle_button_style(_theme: &Theme, status: button::Status) -> button::St
     }
 }
 
-pub fn action_button_style(_theme: &Theme, status: button::Status) -> button::Style {
+pub fn action_button_style(theme: &Theme, status: button::Status) -> button::Style {
+    let p = palette(theme);
     let (bg, text_color) = match status {
-        button::Status::Active => (BG_CARD, TEXT_PRIMARY),
-        button::Status::Hovered => (BG_HOVER, TEXT_PRIMARY),
-        button::Status::Pressed => (BG_SURFACE, TEXT_PRIMARY),
-        button::Status::Disabled => (BG_SURFACE, TEXT_DISABLED),
+        button::Status::Active => (p.bg_card, p.text_primary),
+        button::Status::Hovered => (p.bg_hover, p.text_primary),
+        button::Status::Pressed => (p.bg_surface, p.text_primary),
+        button::Status::Disabled => (p.bg_surface, p.text_disabled),
     };
     button::Style {
         background: Some(Background::Color(bg)),
@@ -663,13 +684,14 @@ pub fn action_button_style(_theme: &Theme, status: button::Status) -> button::St
 }
 
 pub fn nav_button_style(active: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
-    move |_theme, status| {
+    move |theme, status| {
+        let p = palette(theme);
         let (bg, text_color) = if active {
-            (BG_SURFACE, TEXT_PRIMARY)
+            (p.bg_surface, p.text_primary)
         } else {
             match status {
-                button::Status::Hovered => (BG_HOVER, TEXT_PRIMARY),
-                _ => (Color::TRANSPARENT, TEXT_SECONDARY),
+                button::Status::Hovered => (p.bg_hover, p.text_primary),
+                _ => (Color::TRANSPARENT, p.text_secondary),
             }
         };
         button::Style {
@@ -682,19 +704,41 @@ pub fn nav_button_style(active: bool) -> impl Fn(&Theme, button::Status) -> butt
 }
 
 pub fn filter_chip_style(active: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
-    move |_theme, status| {
+    move |theme, status| {
+        let p = palette(theme);
         let (bg, text_color) = if active {
-            (ACCENT, Color::WHITE)
+            (p.accent, Color::WHITE)
         } else {
             match status {
-                button::Status::Hovered => (BG_HOVER, TEXT_PRIMARY),
-                _ => (BG_SURFACE, TEXT_SECONDARY),
+                button::Status::Hovered => (p.bg_hover, p.text_primary),
+                _ => (p.bg_surface, p.text_secondary),
             }
         };
         button::Style {
             background: Some(Background::Color(bg)),
             text_color,
             border: iced::border::rounded(RADIUS_PILL),
+            ..button::Style::default()
+        }
+    }
+}
+
+/// Segmented control button (Grid | Timeline toggle in the Library header).
+pub fn segment_button_style(active: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |theme, status| {
+        let p = palette(theme);
+        let (bg, text_color) = if active {
+            (p.accent, Color::WHITE)
+        } else {
+            match status {
+                button::Status::Hovered => (p.bg_hover, p.text_primary),
+                _ => (Color::TRANSPARENT, p.text_secondary),
+            }
+        };
+        button::Style {
+            background: Some(Background::Color(bg)),
+            text_color,
+            border: iced::border::rounded(RADIUS_MD),
             ..button::Style::default()
         }
     }
@@ -716,9 +760,9 @@ pub fn managed_chip_action_style(
     tone: ChipTone,
     destructive: bool,
 ) -> impl Fn(&Theme, button::Status) -> button::Style {
-    move |_theme, status| {
+    move |theme, status| {
         let text_color = if destructive {
-            WARNING_COLOR
+            palette(theme).warning
         } else {
             tone.accent_text
         };
@@ -746,23 +790,26 @@ pub fn managed_chip_action_style(
 }
 
 pub fn card_button_style(selected: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
-    move |_theme, status| {
-        let (bg, border_color, border_width) = if selected {
-            (BG_SELECTED, ACCENT, 2.0)
+    move |theme, status| {
+        let p = palette(theme);
+        // (background, border color, border width, shadow)
+        let (bg, border_color, border_width, shadow) = if selected {
+            (p.bg_selected, p.accent, 2.0, elevation_med(theme))
         } else {
             match status {
-                button::Status::Hovered => (BG_HOVER, Color::TRANSPARENT, 0.0),
-                _ => (BG_SURFACE, Color::TRANSPARENT, 0.0),
+                button::Status::Hovered => (p.bg_hover, p.focus_ring, 1.0, elevation_med(theme)),
+                _ => (p.bg_surface, Color::TRANSPARENT, 0.0, elevation_low(theme)),
             }
         };
         button::Style {
             background: Some(Background::Color(bg)),
-            text_color: TEXT_PRIMARY,
+            text_color: p.text_primary,
             border: Border {
                 color: border_color,
                 width: border_width,
                 radius: RADIUS_LG.into(),
             },
+            shadow,
             ..button::Style::default()
         }
     }
@@ -770,57 +817,67 @@ pub fn card_button_style(selected: bool) -> impl Fn(&Theme, button::Status) -> b
 
 // ── Text Input Styles ──
 
-pub fn search_input_style(_theme: &Theme, status: text_input::Status) -> text_input::Style {
-    let border_color = match status {
-        text_input::Status::Active => BG_CARD,
-        text_input::Status::Hovered => BG_HOVER,
-        text_input::Status::Focused { .. } => ACCENT,
-        text_input::Status::Disabled => BG_SURFACE,
+pub fn search_input_style(theme: &Theme, status: text_input::Status) -> text_input::Style {
+    let p = palette(theme);
+    let (border_color, border_width) = match status {
+        text_input::Status::Active => (p.bg_card, 1.0),
+        text_input::Status::Hovered => (p.bg_hover, 1.0),
+        text_input::Status::Focused { .. } => (p.focus_ring, 2.0),
+        text_input::Status::Disabled => (p.bg_surface, 1.0),
     };
     text_input::Style {
-        background: Background::Color(BG_SURFACE),
+        background: Background::Color(p.bg_surface),
         border: Border {
             color: border_color,
-            width: 1.0,
+            width: border_width,
             radius: RADIUS_MD.into(),
         },
-        icon: TEXT_TERTIARY,
-        placeholder: TEXT_TERTIARY,
-        value: TEXT_PRIMARY,
-        selection: ACCENT_SUBTLE,
+        icon: p.text_tertiary,
+        placeholder: p.text_tertiary,
+        value: p.text_primary,
+        selection: p.accent_subtle,
     }
 }
 
-pub fn field_input_style(_theme: &Theme, status: text_input::Status) -> text_input::Style {
-    let border_color = match status {
-        text_input::Status::Active => BG_CARD,
-        text_input::Status::Hovered => BG_HOVER,
-        text_input::Status::Focused { .. } => ACCENT,
-        text_input::Status::Disabled => BG_SURFACE,
+pub fn field_input_style(theme: &Theme, status: text_input::Status) -> text_input::Style {
+    let p = palette(theme);
+    let (border_color, border_width) = match status {
+        text_input::Status::Active => (p.bg_card, 1.0),
+        text_input::Status::Hovered => (p.bg_hover, 1.0),
+        text_input::Status::Focused { .. } => (p.focus_ring, 2.0),
+        text_input::Status::Disabled => (p.bg_surface, 1.0),
     };
     text_input::Style {
-        background: Background::Color(BG_SURFACE),
+        background: Background::Color(p.bg_surface),
         border: Border {
             color: border_color,
-            width: 1.0,
+            width: border_width,
             radius: RADIUS_MD.into(),
         },
-        icon: TEXT_TERTIARY,
-        placeholder: TEXT_TERTIARY,
-        value: TEXT_PRIMARY,
-        selection: ACCENT_SUBTLE,
+        icon: p.text_tertiary,
+        placeholder: p.text_tertiary,
+        value: p.text_primary,
+        selection: p.accent_subtle,
     }
 }
 
 // ── Layout Helpers ──
 
 pub fn section_heading(label: &str) -> Text<'_> {
-    text(label).size(FONT_SECTION).color(TEXT_TERTIARY)
+    text(label).size(FONT_SECTION).style(text_tertiary)
 }
 
 pub fn h_divider<'a, Message: 'a>() -> Container<'a, Message> {
     container(text(""))
         .width(Length::Fill)
         .height(Length::Fixed(1.0))
+        .style(divider_line_style)
+}
+
+/// 1px vertical hairline, used to separate the sidebar / content / details panes.
+pub fn v_divider<'a, Message: 'a>() -> Container<'a, Message> {
+    container(text(""))
+        .width(Length::Fixed(1.0))
+        .height(Length::Fill)
         .style(divider_line_style)
 }

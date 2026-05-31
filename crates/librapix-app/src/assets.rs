@@ -1,98 +1,123 @@
 //! Centralized embedded assets for branding and icons.
 //!
 //! Assets are compiled into the binary so release executables do not depend
-//! on an external `assets/` folder for UI icon rendering.
+//! on an external `assets/` folder for UI icon rendering. UI icons ship in two
+//! tints — white (for dark surfaces) and black (for light surfaces) — and the
+//! accessors pick the variant from the active theme via a `dark` flag.
 use iced::widget::{image, svg};
 use std::sync::LazyLock;
 
 /// Project repository URL for the GitHub link in the app header.
 pub const REPO_URL: &str = "https://github.com/asad-albadi/LibraPix";
 
-// ── Canonical brand (blue) ──
+// ── Canonical brand ──
 
 #[allow(dead_code)]
 pub fn logo_icon_64() -> image::Handle {
     LOGO_ICON_64.clone()
 }
 
-/// Blue logo as SVG for scalable display (e.g. header).
+/// Canonical brand logo (blue) as SVG for scalable display (header, about).
+/// Reads on both dark and light surfaces, so it stays consistent across themes.
 pub fn logo_svg() -> svg::Handle {
-    LOGO_SVG.clone()
+    LOGO_SVG_BLUE.clone()
 }
 
-// ── UI icons (white for dark surfaces) ──
-
-pub fn icon_gallery() -> image::Handle {
-    ICON_GALLERY.clone()
+/// OS window / taskbar icon (brand blue). `None` if the embedded PNG fails to
+/// decode, in which case iced falls back to the platform default.
+pub fn window_icon() -> Option<iced::window::Icon> {
+    iced::window::icon::from_file_data(
+        include_bytes!("../../../assets/logo/blue/icon-256.png"),
+        None,
+    )
+    .ok()
 }
 
-pub fn icon_timeline() -> image::Handle {
-    ICON_TIMELINE.clone()
+// ── UI icons (white for dark surfaces, black for light surfaces) ──
+
+fn pick(
+    white: &LazyLock<image::Handle>,
+    black: &LazyLock<image::Handle>,
+    dark: bool,
+) -> image::Handle {
+    if dark {
+        (**white).clone()
+    } else {
+        (**black).clone()
+    }
 }
 
-pub fn icon_search() -> image::Handle {
-    ICON_SEARCH.clone()
+pub fn icon_gallery(dark: bool) -> image::Handle {
+    pick(&ICON_GALLERY_W, &ICON_GALLERY_B, dark)
 }
 
-pub fn icon_refresh() -> image::Handle {
-    ICON_REFRESH.clone()
+pub fn icon_timeline(dark: bool) -> image::Handle {
+    pick(&ICON_TIMELINE_W, &ICON_TIMELINE_B, dark)
 }
 
-pub fn icon_github() -> image::Handle {
-    ICON_GITHUB.clone()
+pub fn icon_search(dark: bool) -> image::Handle {
+    pick(&ICON_SEARCH_W, &ICON_SEARCH_B, dark)
 }
 
-pub fn icon_open() -> image::Handle {
-    ICON_OPEN.clone()
+pub fn icon_refresh(dark: bool) -> image::Handle {
+    pick(&ICON_REFRESH_W, &ICON_REFRESH_B, dark)
 }
 
-pub fn icon_show_in_folder() -> image::Handle {
-    ICON_SHOW_IN_FOLDER.clone()
+pub fn icon_github(dark: bool) -> image::Handle {
+    pick(&ICON_GITHUB_W, &ICON_GITHUB_B, dark)
 }
 
-pub fn icon_copy_file() -> image::Handle {
-    ICON_COPY_FILE.clone()
+pub fn icon_open(dark: bool) -> image::Handle {
+    pick(&ICON_OPEN_W, &ICON_OPEN_B, dark)
 }
 
-pub fn icon_copy_path() -> image::Handle {
-    ICON_COPY_PATH.clone()
+pub fn icon_show_in_folder(dark: bool) -> image::Handle {
+    pick(&ICON_SHOW_IN_FOLDER_W, &ICON_SHOW_IN_FOLDER_B, dark)
 }
 
-pub fn icon_filter() -> image::Handle {
-    ICON_FILTER.clone()
+pub fn icon_copy_file(dark: bool) -> image::Handle {
+    pick(&ICON_COPY_FILE_W, &ICON_COPY_FILE_B, dark)
+}
+
+pub fn icon_copy_path(dark: bool) -> image::Handle {
+    pick(&ICON_COPY_PATH_W, &ICON_COPY_PATH_B, dark)
+}
+
+pub fn icon_filter(dark: bool) -> image::Handle {
+    pick(&ICON_FILTER_W, &ICON_FILTER_B, dark)
 }
 
 #[allow(dead_code)]
-pub fn icon_filter_remove() -> image::Handle {
-    ICON_FILTER_REMOVE.clone()
+pub fn icon_filter_remove(dark: bool) -> image::Handle {
+    pick(&ICON_FILTER_REMOVE_W, &ICON_FILTER_REMOVE_B, dark)
 }
 
-pub fn icon_index() -> image::Handle {
-    ICON_INDEX.clone()
+pub fn icon_index(dark: bool) -> image::Handle {
+    pick(&ICON_INDEX_W, &ICON_INDEX_B, dark)
 }
 
-pub fn icon_browse() -> image::Handle {
-    ICON_BROWSE.clone()
+pub fn icon_browse(dark: bool) -> image::Handle {
+    pick(&ICON_BROWSE_W, &ICON_BROWSE_B, dark)
 }
 
-pub fn icon_save() -> image::Handle {
-    ICON_SAVE.clone()
+pub fn icon_save(dark: bool) -> image::Handle {
+    pick(&ICON_SAVE_W, &ICON_SAVE_B, dark)
 }
 
-pub fn icon_youtube() -> image::Handle {
-    ICON_YOUTUBE.clone()
+pub fn icon_youtube(dark: bool) -> image::Handle {
+    pick(&ICON_YOUTUBE_W, &ICON_YOUTUBE_B, dark)
 }
 
-pub fn icon_generate() -> image::Handle {
-    ICON_GENERATE.clone()
+pub fn icon_generate(dark: bool) -> image::Handle {
+    pick(&ICON_GENERATE_W, &ICON_GENERATE_B, dark)
 }
 
-pub fn icon_type_image() -> image::Handle {
-    ICON_TYPE_IMAGE.clone()
+pub fn icon_type_image(dark: bool) -> image::Handle {
+    pick(&ICON_TYPE_IMAGE_W, &ICON_TYPE_IMAGE_B, dark)
 }
 
-pub fn icon_type_video() -> image::Handle {
-    ICON_TYPE_VIDEO.clone()
+pub fn icon_type_video(dark: bool) -> image::Handle {
+    pick(&ICON_TYPE_VIDEO_W, &ICON_TYPE_VIDEO_B, dark)
 }
 
 fn make_image_handle(bytes: &'static [u8]) -> image::Handle {
@@ -105,52 +130,49 @@ fn make_svg_handle(bytes: &'static [u8]) -> svg::Handle {
 
 static LOGO_ICON_64: LazyLock<image::Handle> =
     LazyLock::new(|| make_image_handle(include_bytes!("../../../assets/logo/blue/icon-64.png")));
-static LOGO_SVG: LazyLock<svg::Handle> =
+static LOGO_SVG_BLUE: LazyLock<svg::Handle> =
     LazyLock::new(|| make_svg_handle(include_bytes!("../../../assets/logo/blue/logo-blue.svg")));
 
-static ICON_GALLERY: LazyLock<image::Handle> =
-    LazyLock::new(|| make_image_handle(include_bytes!("../../../assets/icons/white/gallary.png")));
-static ICON_TIMELINE: LazyLock<image::Handle> =
-    LazyLock::new(|| make_image_handle(include_bytes!("../../../assets/icons/white/timeline.png")));
-static ICON_SEARCH: LazyLock<image::Handle> =
-    LazyLock::new(|| make_image_handle(include_bytes!("../../../assets/icons/white/search.png")));
-static ICON_REFRESH: LazyLock<image::Handle> =
-    LazyLock::new(|| make_image_handle(include_bytes!("../../../assets/icons/white/refresh.png")));
-static ICON_GITHUB: LazyLock<image::Handle> =
-    LazyLock::new(|| make_image_handle(include_bytes!("../../../assets/icons/white/github.png")));
-static ICON_OPEN: LazyLock<image::Handle> =
-    LazyLock::new(|| make_image_handle(include_bytes!("../../../assets/icons/white/open.png")));
-static ICON_SHOW_IN_FOLDER: LazyLock<image::Handle> = LazyLock::new(|| {
-    make_image_handle(include_bytes!(
-        "../../../assets/icons/white/show-in-folder.png"
-    ))
-});
-static ICON_COPY_FILE: LazyLock<image::Handle> = LazyLock::new(|| {
-    make_image_handle(include_bytes!("../../../assets/icons/white/copy-file.png"))
-});
-static ICON_COPY_PATH: LazyLock<image::Handle> = LazyLock::new(|| {
-    make_image_handle(include_bytes!("../../../assets/icons/white/copy-path.png"))
-});
-static ICON_FILTER: LazyLock<image::Handle> =
-    LazyLock::new(|| make_image_handle(include_bytes!("../../../assets/icons/white/filter.png")));
-static ICON_FILTER_REMOVE: LazyLock<image::Handle> = LazyLock::new(|| {
-    make_image_handle(include_bytes!(
-        "../../../assets/icons/white/filter-remove.png"
-    ))
-});
-static ICON_INDEX: LazyLock<image::Handle> =
-    LazyLock::new(|| make_image_handle(include_bytes!("../../../assets/icons/white/index.png")));
-static ICON_BROWSE: LazyLock<image::Handle> =
-    LazyLock::new(|| make_image_handle(include_bytes!("../../../assets/icons/white/browse.png")));
-static ICON_SAVE: LazyLock<image::Handle> =
-    LazyLock::new(|| make_image_handle(include_bytes!("../../../assets/icons/white/save.png")));
-static ICON_YOUTUBE: LazyLock<image::Handle> =
-    LazyLock::new(|| make_image_handle(include_bytes!("../../../assets/icons/white/youtube.png")));
-static ICON_GENERATE: LazyLock<image::Handle> =
-    LazyLock::new(|| make_image_handle(include_bytes!("../../../assets/icons/white/generate.png")));
-static ICON_TYPE_IMAGE: LazyLock<image::Handle> = LazyLock::new(|| {
-    make_image_handle(include_bytes!("../../../assets/icons/white/type-image.png"))
-});
-static ICON_TYPE_VIDEO: LazyLock<image::Handle> = LazyLock::new(|| {
-    make_image_handle(include_bytes!("../../../assets/icons/white/type-video.png"))
-});
+macro_rules! icon_pair {
+    ($white:ident, $black:ident, $file:literal) => {
+        static $white: LazyLock<image::Handle> = LazyLock::new(|| {
+            make_image_handle(include_bytes!(concat!(
+                "../../../assets/icons/white/",
+                $file
+            )))
+        });
+        static $black: LazyLock<image::Handle> = LazyLock::new(|| {
+            make_image_handle(include_bytes!(concat!(
+                "../../../assets/icons/black/",
+                $file
+            )))
+        });
+    };
+}
+
+icon_pair!(ICON_GALLERY_W, ICON_GALLERY_B, "gallary.png");
+icon_pair!(ICON_TIMELINE_W, ICON_TIMELINE_B, "timeline.png");
+icon_pair!(ICON_SEARCH_W, ICON_SEARCH_B, "search.png");
+icon_pair!(ICON_REFRESH_W, ICON_REFRESH_B, "refresh.png");
+icon_pair!(ICON_GITHUB_W, ICON_GITHUB_B, "github.png");
+icon_pair!(ICON_OPEN_W, ICON_OPEN_B, "open.png");
+icon_pair!(
+    ICON_SHOW_IN_FOLDER_W,
+    ICON_SHOW_IN_FOLDER_B,
+    "show-in-folder.png"
+);
+icon_pair!(ICON_COPY_FILE_W, ICON_COPY_FILE_B, "copy-file.png");
+icon_pair!(ICON_COPY_PATH_W, ICON_COPY_PATH_B, "copy-path.png");
+icon_pair!(ICON_FILTER_W, ICON_FILTER_B, "filter.png");
+icon_pair!(
+    ICON_FILTER_REMOVE_W,
+    ICON_FILTER_REMOVE_B,
+    "filter-remove.png"
+);
+icon_pair!(ICON_INDEX_W, ICON_INDEX_B, "index.png");
+icon_pair!(ICON_BROWSE_W, ICON_BROWSE_B, "browse.png");
+icon_pair!(ICON_SAVE_W, ICON_SAVE_B, "save.png");
+icon_pair!(ICON_YOUTUBE_W, ICON_YOUTUBE_B, "youtube.png");
+icon_pair!(ICON_GENERATE_W, ICON_GENERATE_B, "generate.png");
+icon_pair!(ICON_TYPE_IMAGE_W, ICON_TYPE_IMAGE_B, "type-image.png");
+icon_pair!(ICON_TYPE_VIDEO_W, ICON_TYPE_VIDEO_B, "type-video.png");

@@ -156,3 +156,18 @@ Issue `#12` is summarized in `docs/architecture/issue-12-runtime-optimization-su
   - If launching from a terminal, check the stderr line starting with `Librapix log:`.
 - Prevention guidance
   - Keep active log-path visibility intact whenever startup logging changes.
+
+## Copy Path (or other clipboard text) freezes the whole UI on Windows
+
+- Symptoms
+  - Clicking "Copy Path" briefly hangs the entire app (input, scrolling, rendering all stall), sometimes with a console-window flash.
+  - "Copy File" does not exhibit the same hang.
+- Affected area
+  - Clipboard text write in `crates/librapix-app/src/main.rs` (`copy_text_to_clipboard`).
+- Confirmed cause
+  - The Windows branch spawned the `clip.exe` process and blocked on `child.wait()`. That call ran synchronously inside `update()`, which is the Iced UI thread, so the app froze for the duration of process spawn + stdin pipe + wait (plus a console-window flash, since the subprocess had no `CREATE_NO_WINDOW`). Copy File never hung because it already used the native clipboard API.
+- Resolution
+  - Write text to the clipboard with the native Win32 API (`SetClipboardData(CF_UNICODETEXT)`) using the same `GlobalAlloc` -> `GlobalLock`/write -> `GlobalUnlock` -> `SetClipboardData` ownership flow as the file (`CF_HDROP`) path. No subprocess, no `wait()`, no console flash.
+- Prevention guidance
+  - Never spawn a process and `wait()` on it inside `update()` / on the UI thread. Use the native API, or move blocking work to a background `Task`/thread.
+  - On Windows, any subprocess launched from the GUI must set `CREATE_NO_WINDOW` to avoid console flicker.

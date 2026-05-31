@@ -36,7 +36,7 @@ Implemented in the current codebase:
 
 ## Screenshot
 
-![LibraPix application screenshot](assets/screenshots/Screenshot%202026-03-11%20190524.png)
+![LibraPix application screenshot](assets/screenshots/librapix-0.6.0.png)
 
 ## Technology stack
 

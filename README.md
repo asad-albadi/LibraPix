@@ -13,7 +13,7 @@ Many screenshot and clip workflows are folder-based and grow over time across mu
 
 ## Project status
 
-LibraPix is at an MVP-complete baseline (`0.6.0`) focused on a usable, non-destructive desktop workflow with a coherent, themeable UI. The codebase is actively evolving, but the main end-to-end flow is implemented. Recent work added a real Light/Dark/System theme system and merged Gallery and Timeline into a single **Library** surface.
+LibraPix `0.7.0` provides a non-destructive desktop workflow with a centralized, theme-aware UI. This release adds independently collapsible panes with persisted layout, refined dialogs and timeline navigation, and the new INDEX identity. Gallery and Timeline remain part of one **Library** surface, with Light, Dark, and System themes.
 
 ## Current feature set
 
@@ -42,12 +42,6 @@ Implemented in the current codebase:
 ![LibraPix Library with INDEX branding, gallery, and media details](assets/screenshots/librapix-centralized-ui-1080p.png)
 
 Current centralized UI, captured at 1920 x 1080 on Windows.
-
-## Known branch limitation
-
-Settings actions can occasionally be lost near its narrow responsive breakpoint
-if the dialog relayouts between mouse press and release. This confirmed issue is
-still open; see [Troubleshooting](docs/TROUBLESHOOTING.md#settings-action-clicks-can-be-lost-near-a-responsive-breakpoint-open).
 
 ## Technology stack
 

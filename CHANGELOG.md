@@ -4,32 +4,39 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
-### Fixed
-- Preserved Settings action presses across view rebuilds near responsive breakpoints by isolating dialog natural-height measurement from live widget state; added persistent-tree Enable/Disable, Edit, and Remove regression coverage.
-- Corrected header/About brand balance through a shared native Iced component with aspect-derived widths and 8px minimum header vertical clearspace; preserved artwork and theme variants. Documented project-specific sizing, official design references, and generated-asset fidelity limitations.
-- Restored complete, content-sized filter labels with native width-aware wrapping and readable inline error/warning contrast in both themes.
-- Centered the collapsed Details word with true 90-degree rotation using Iced's existing renderer, and placed the library collapse action in the Browse header instead of an empty top row.
-- Added localized remove-action hover help for managed tags and ignore rules.
-- Made dialogs content-sized, including New Media and a more compact, product-focused About dialog; overflowing bodies remain bounded and scrollable with footer actions visible and reachable.
-- Restored content-sized library navigation rows so long names wrap completely within distinct clickable areas.
-- Gave Make Short its own generation-active indeterminate animation timer and kept long ffmpeg errors in the scrolling dialog body so result actions remain visible.
-- Preserved media scroll position when layout-save notices appear or are dismissed by keeping the shell widget-tree structure stable.
+## [0.7.0] - 2026-11-11
+
+### Added
+- Centralized app-local UI tokens, styles, reusable components, presentation patterns, and focused product views, documented in ADR 0025.
+- Independently collapsible panes with persisted preferences: a global-actions Libraries rail and centered, rotated Details edge.
+- INDEX brand assets with theme-aware logo/wordmark, Windows/macOS/Linux icon derivatives, and an updated native 1920 x 1080 README screenshot.
+- Localized hover explanations for icon-only remove actions and regression tests for layout, input, rendering, and theme contrast.
 
 ### Changed
-- Simplified Settings with compact ignore-rule rows retaining deterministic per-key chip colors, responsive action layout, consistent section spacing, and localized diagnostics labels; all settings and messages are preserved.
-- Restyled the native timeline slider as a quiet two-pixel rail with current-year emphasis and semantic hover/drag feedback, preserving the reserved label lane, anchor mapping, and viewport geometry.
-- Completed app-local product view extraction and removed legacy UI facades, superseded visual helpers, and staged dead-code allowances; retained orchestration, layout caches, and background behavior unchanged.
-- Migrated Library, details, header/navigation, search, managed chips, and runtime feedback to centralized app-local components while preserving media interactions and viewport-bounded layout/cache behavior.
-- Migrated every product dialog into focused app-local view modules using shared dialog frames, fields, buttons, tabs, separators, and status treatments; retained existing actions and background workflows, with one Make Short working line and inline library-path validation.
-- Applied media-first light/dark semantic palettes with quieter surfaces, blue focus/selection, explicit destructive tones, and contrast-tested foregrounds.
-- Split app-local UI tokens and widget styles into focused `ui/tokens` and `ui/styles` modules, preserving existing values, public names, visuals, and behavior; added palette/chip regression tests.
+- Refined media-first neutral surfaces, dialogs, Settings, About, navigation, and the timeline year rail while retaining deterministic tag/rule colors.
+- Content-sized dialogs reserve stable header/footer actions and keep overflowing content scrollable.
+- Make Short uses one stage line with a generation-active indeterminate animation; detailed failures remain scrollable. Existing generation and cancellation behavior is preserved.
+- Product composition is separated from state, message handling, persistence, and background orchestration; source media remains read-only and media rendering stays viewport-bounded.
+
+### Fixed
+- Preserved Settings button press state through dialog relayout near responsive breakpoints by isolating measurement from the persistent live widget tree.
+- Restored complete long library/filter labels and non-overlapping clickable regions.
+- Improved inline error and Smooth-warning contrast in both themes.
+- Preserved media scroll state when shell notices appear or are dismissed.
+- Standardized header/About brand proportions, alignment, and clear space without stretching artwork.
 
 ### Docs
-- Refreshed the README with a native 1920 x 1080 screenshot of the centralized UI, corrected current module/typography guidance, consolidated superseded unreleased UI descriptions, and documented the Settings breakpoint interaction diagnosis and resolution.
-- Added ADR `0025` and finalized the centralized app-local UI boundaries, hybrid pane persistence/error flow, truthful loading treatment, and preserved source-media/background behavior; documented retained specialized styles and removed unused scaffolding.
-- Documented the hybrid shell/pane presentation boundary and the Windows running-executable lock encountered during manual validation.
+- Updated UI architecture, pane persistence/message flow, branding guidance, dependency notes, troubleshooting, and the code knowledge base.
+- Recorded confirmed migration issues and their fixes; native Linux, Rust 1.85 toolchain, and exhaustive platform visual validation are not claimed.
+
+## Development history through 0.6.0
+
+The following entries are retained from the previous release's cumulative
+unreleased log. They describe earlier work, not new 0.7.0 functionality.
+
+### Docs
 - Added ADR `0023` (themeable design system: semantic palette + Light/Dark/System) and ADR `0024` (unified Library surface) documenting the visual-overhaul branch decisions.
-- Updated UI architecture for semantic palettes, Light/Dark/System theming, shared dialog patterns, styled scrollbars, and the in-app theme toggle.
+- Updated `docs/architecture/ui.md` for the semantic `Palette`/`palette(theme)` token layer, Light/Dark/System theming, soft elevation, glass dialogs, the centralized `render_dialog_frame`, styled scrollbars, and the in-app theme toggle.
 - Updated `docs/architecture/projections.md` to describe the single canonical timeline projection that feeds both the flat grid and the grouped timeline.
 - Documented the `dark-light` dependency in `docs/DEPENDENCIES.md` and the Windows copy-path UI-freeze fix in `docs/TROUBLESHOOTING.md`.
 - Rewrote the root `README.md` to reflect the current workspace architecture, implemented feature set, runtime/storage flow, platform packaging status, and practical usage/development guidance.
@@ -42,15 +49,11 @@ All notable changes to this project are documented in this file.
 - Added ADR `0022` for the `librapix-video-tools` subsystem and documented Make Short architecture boundaries/config/dependency updates.
 
 ### Added
-- Replaced legacy branding with transparent INDEX logo/wordmark assets, theme-aware header and About branding, README artwork, and desktop packaging icons; removed the old logo sets.
-- Added shared app-local dialog, field, and status patterns with bounded scrolling, error-over-help precedence, and indeterminate-only working feedback; migrated About while preserving its content and dismissal behavior.
-- Added independently collapsible application panes: a global-actions library rail, a compact labeled Details edge, and overlay layout-save error notices, using the existing persisted pane preferences without changing browsing/background behavior.
-- Added centralized app-local Iced components for controls, cards, badges, loading, empty states, and dismissible notices, now consumed by product views and dialogs.
-- Added backward-compatible independent pane-collapse preferences, immediate session transitions, dismissible save-error notices, and localized collapse/expand labels.
 - Real Light theme and OS-following System theme alongside the existing Dark theme, selected via a semantic `Palette` resolved by `palette(theme)` (replaces the 16 hardcoded dark-only color constants). System appearance is detected via the `dark-light` crate and cached/throttled off the render path.
 - In-app theme toggle (System / Light / Dark) in Settings → Appearance, persisted to config (`config.theme`).
 - Theme-aware UI icons (white on dark, black on light) and theme-aware text-style helpers; icon-size tokens (`ICON_XS`..`ICON_XL`) and a second Light chip palette.
-- Centralized surface/elevation styling and a translucent dialog surface shared by all modals through `ui/patterns/dialog.rs`.
+- Soft elevation tokens (`elevation_low/med/high`) applied to cards (resting + raised-on-hover + selected), the segmented control, scrubber panel, and dialogs.
+- Translucent "glass" dialog surface (gradient + edge highlight + drop shadow) shared by all modals through a centralized `render_dialog_frame`.
 - Selection checkmark badge on the selected gallery tile and a top scrim over thumbnails so overlaid badges stay legible.
 - Thin, rounded, translucent overlay scrollbars across the gallery, sidebar, details pane, dialogs, and diagnostics list.
 - OS window/taskbar icon set from the brand logo.
@@ -65,7 +68,7 @@ All notable changes to this project are documented in this file.
   - otherwise triggers manual re-check (rate-limited to once every 5 minutes)
 - Periodic in-session update re-check scheduling (24-hour interval) for long-running app sessions.
 - Startup update check scheduled after first render and run non-blocking alongside existing background tasks.
-- Reusable managed-chip UI system for tags and ignore rules with centralized components and styles under `ui/`.
+- Reusable managed-chip UI system for tags and ignore rules with centralized styling in `ui.rs`.
 - Deterministic string-to-palette chip coloring for stable, tasteful dark-theme tag/rule visualization.
 - Edit flows for chip-managed tags and ignore rules (Library dialog, Details pane, Settings).
 - Storage APIs for chip workflows: media-tag listing and ignore-rule deletion by id.

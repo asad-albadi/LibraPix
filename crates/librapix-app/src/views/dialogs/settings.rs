@@ -2,19 +2,17 @@ use super::modal_overlay;
 use crate::ui::components::input::app_input;
 use crate::ui::components::tabs::tab_trigger;
 use crate::ui::components::text::section_heading;
+use crate::ui::components::tooltip::app_tooltip;
 use crate::ui::components::{
     button::{ButtonSize, ButtonVariant, app_button},
     separator::horizontal,
-};
-use crate::ui::components::{
-    card::{CardVariant, card},
-    tooltip::app_tooltip,
 };
 use crate::ui::patterns::dialog::{DialogSpec, dialog};
 use crate::ui::patterns::field::{FieldSpec, field};
 use crate::ui::{
     styles::{
-        container::raised_surface_style,
+        button::managed_chip_action_style,
+        container::{managed_chip_style, raised_surface_style},
         scrollable::scrollbar_style,
         text::{text_secondary, text_tertiary},
     },
@@ -319,13 +317,14 @@ fn ignore_rule_row<'a>(
     rule: &'a librapix_storage::IgnoreRuleRecord,
 ) -> Element<'a, Message> {
     responsive(move |size| {
+        let tone = chip_tone_for_key(&rule.pattern, app.is_dark_theme());
         let status = text(app.i18n.text(if rule.is_enabled {
             TextKey::IgnoreRuleEnabled
         } else {
             TextKey::IgnoreRuleDisabled
         }))
         .size(FONT_CAPTION)
-        .style(text_tertiary);
+        .color(tone.accent_text);
         let actions = row![
             app_button(
                 text(app.i18n.text(if rule.is_enabled {
@@ -337,20 +336,23 @@ fn ignore_rule_row<'a>(
                 Some(Message::IgnoreRuleToggleEnabled(rule.id)),
                 ButtonVariant::Ghost,
                 ButtonSize::Small
-            ),
+            )
+            .style(managed_chip_action_style(tone, false)),
             app_button(
                 text(app.i18n.text(TextKey::RootEditButton)).size(FONT_CAPTION),
                 Some(Message::IgnoreRuleStartEdit(rule.id)),
                 ButtonVariant::Ghost,
                 ButtonSize::Small
-            ),
+            )
+            .style(managed_chip_action_style(tone, false)),
             app_tooltip(
                 app_button(
                     text("x").size(FONT_CAPTION),
                     Some(Message::IgnoreRuleRemove(rule.id)),
                     ButtonVariant::Ghost,
                     ButtonSize::Small
-                ),
+                )
+                .style(managed_chip_action_style(tone, false)),
                 app.i18n.text(TextKey::RemoveIgnoreRuleHelp)
             ),
         ]
@@ -358,7 +360,7 @@ fn ignore_rule_row<'a>(
         .align_y(iced::Alignment::Center);
         let pattern = text(rule.pattern.as_str())
             .size(FONT_BODY)
-            .style(text_secondary)
+            .color(tone.text)
             .width(Length::Fill);
         let content: Element<'_, Message> = if size.width < 420.0 {
             column![
@@ -374,7 +376,8 @@ fn ignore_rule_row<'a>(
                 .align_y(iced::Alignment::Center)
                 .into()
         };
-        card(content, CardVariant::Default)
+        container(content)
+            .style(managed_chip_style(tone))
             .padding([SPACE_2XS as u16, SPACE_SM as u16])
             .width(Length::Fill)
             .into()

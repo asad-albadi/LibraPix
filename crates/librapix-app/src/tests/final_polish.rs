@@ -94,11 +94,22 @@ impl<'a> Harness<'a> {
     }
 }
 
+pub(super) fn dialog_padding_point(element: Element<'_, Message>) -> Point {
+    let mut harness = Harness::new(element, Size::new(1400.0, 900.0));
+    let labels = harness.labels();
+    let frame = labels
+        .1
+        .iter()
+        .find(|bounds| bounds.width < 1300.0)
+        .expect("dialog frame");
+    Point::new(frame.x + 2.0, frame.y + 2.0)
+}
+
 #[test]
-fn final_details_edge_centers_vertical_label_and_expands() {
+fn final_details_edge_centers_rotated_word_and_expands() {
     use ui::patterns::details_pane::{DetailsPaneMode, details_pane};
     let app = test_app();
-    for height in [300.0, 900.0] {
+    for height in [80.0, 300.0, 900.0] {
         let mut harness = Harness::new(
             details_pane(
                 DetailsPaneMode::Edge,
@@ -114,8 +125,19 @@ fn final_details_edge_centers_vertical_label_and_expands() {
         let label = labels
             .0
             .iter()
-            .find(|(s, _)| s.replace('\n', "") == "Details")
-            .unwrap();
+            .find(|(s, _)| s == "Details")
+            .expect("one localized word, not stacked letters");
+        let natural = Harness::new(
+            text("Details")
+                .size(FONT_CAPTION)
+                .shaping(iced::widget::text::Shaping::Advanced)
+                .into(),
+            Size::new(200.0, 200.0),
+        )
+        .node
+        .size();
+        assert!((label.1.width - natural.height).abs() < 1.0);
+        assert!((label.1.height - natural.width).abs() < 1.0);
         assert!(
             label.1.height > label.1.width * 2.0,
             "Details must read vertically"
@@ -133,6 +155,14 @@ fn final_details_edge_centers_vertical_label_and_expands() {
             [Message::ToggleDetailsSidebar]
         ));
         harness.tooltip(label.1.center());
+        for y in [16.0, height - 16.0] {
+            assert!(matches!(
+                harness
+                    .click(Point::new(harness.node.size().width / 2.0, y))
+                    .as_slice(),
+                [Message::ToggleDetailsSidebar]
+            ));
+        }
     }
 }
 
@@ -292,6 +322,19 @@ fn final_settings_rules_are_compact_with_live_actions_at_narrow_widths() {
                 .iter()
                 .any(|m| matches!(m, Message::IgnoreRuleToggleEnabled(7)))
         );
+        let enable = labels
+            .0
+            .iter()
+            .rev()
+            .find(|(s, _)| s == app.i18n.text(TextKey::IgnoreRuleAddButton))
+            .unwrap()
+            .1;
+        assert!(
+            harness
+                .click(enable.center())
+                .iter()
+                .any(|m| matches!(m, Message::IgnoreRuleToggleEnabled(8)))
+        );
         let edit = labels.0.iter().find(|(s, _)| s == "Edit").unwrap().1;
         assert!(
             harness
@@ -322,6 +365,66 @@ fn final_settings_rules_are_compact_with_live_actions_at_narrow_widths() {
             &layout::Limits::new(Size::ZERO, Size::new(long.width + 0.5, 2000.0)),
         );
         assert!(long.height + 0.5 >= natural.size().height);
+    }
+}
+
+#[test]
+fn final_settings_compact_rows_keep_distinct_deterministic_chip_tones() {
+    let keys = ["landscape", "portrait", "gameplay"];
+    for (theme, preference, dark) in [
+        (Theme::Dark, ThemePreference::Dark, true),
+        (Theme::Light, ThemePreference::Light, false),
+    ] {
+        let mut app = test_app();
+        app.theme_preference = preference;
+        app.ignore_rules = keys
+            .iter()
+            .enumerate()
+            .map(|(id, key)| librapix_storage::IgnoreRuleRecord {
+                id: id as i64,
+                scope: "global".into(),
+                pattern: (*key).into(),
+                is_enabled: true,
+            })
+            .collect();
+        let tones = keys.map(|key| chip_tone_for_key(key, dark));
+        assert!(tones.iter().enumerate().all(|(i, tone)| {
+            tones[..i]
+                .iter()
+                .all(|other| other.background != tone.background)
+        }));
+        for enabled in [true, false] {
+            for rule in &mut app.ignore_rules {
+                rule.is_enabled = enabled;
+            }
+            let pixels = dialog_frame_pixels(render_settings_dialog(&app), theme.clone());
+            assert_eq!(
+                pixels,
+                dialog_frame_pixels(render_settings_dialog(&app), theme.clone()),
+                "tones must not vary between frames"
+            );
+            for (key, tone) in keys.iter().zip(&tones) {
+                let expected = tone.background.into_rgba8();
+                let count = pixels
+                    .chunks_exact(4)
+                    .filter(|pixel| pixel.iter().zip(expected).all(|(a, b)| a.abs_diff(b) <= 1))
+                    .count();
+                assert!(
+                    count > 500,
+                    "{theme:?} {key} enabled={enabled}: compact rule row lost its keyed fill ({count} pixels)"
+                );
+                for foreground in [tone.text, tone.accent_text] {
+                    for background in [tone.background, tone.background_hover] {
+                        let a = foreground.relative_luminance();
+                        let b = background.relative_luminance();
+                        assert!(
+                            (a.max(b) + 0.05) / (a.min(b) + 0.05) >= 4.5,
+                            "{theme:?} {key}: unreadable chip text"
+                        );
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -374,5 +477,186 @@ fn final_timeline_emphasizes_current_year_without_changing_actions() {
                 .iter()
                 .any(|m| matches!(m, Message::TimelineScrubReleased))
         );
+    }
+}
+
+fn new_media_spacing_fixture(long_path: bool) -> Librapix {
+    let mut app = test_app();
+    app.new_media_announcement = Some(NewMediaAnnouncement {
+        media_id: 7,
+        title: "capture.png".into(),
+        metadata_line: "Image".into(),
+        preview_path: None,
+        media_kind: "image".into(),
+        file_size_bytes: 4096,
+        modified_unix_seconds: None,
+        width_px: Some(3440),
+        height_px: Some(1440),
+        absolute_path: if long_path {
+            PathBuf::from(format!(
+                "/media/{}/capture.png",
+                "nested directory/".repeat(100)
+            ))
+        } else {
+            PathBuf::from("/media/capture.png")
+        },
+        additional_count: 0,
+    });
+    app
+}
+
+fn assert_new_media_actions(h: &mut Harness<'_>, app: &Librapix) {
+    let labels = h.labels();
+    for (key, expected) in [
+        (TextKey::MediaSelectButton, "select"),
+        (TextKey::DetailsOpenFileButton, "open"),
+        (TextKey::DetailsCopyFileButton, "copy"),
+        (TextKey::DismissButton, "dismiss"),
+    ] {
+        let bounds = labels
+            .0
+            .iter()
+            .find(|(s, _)| s == app.i18n.text(key))
+            .unwrap()
+            .1;
+        assert!(
+            bounds.height > 0.0 && bounds.y >= 0.0 && bounds.y + bounds.height <= h.size.height
+        );
+        let messages = h.click(bounds.center());
+        assert!(
+            matches!(
+                (expected, messages.as_slice()),
+                ("select", [Message::SelectMedia(7)])
+                    | ("open", [Message::OpenMediaById(7)])
+                    | ("copy", [Message::CopyMediaFileById(7)])
+                    | ("dismiss", [Message::DismissNewMediaAnnouncement])
+            ),
+            "{expected}: {messages:?}"
+        );
+    }
+}
+
+#[test]
+fn dialog_spacing_new_media_short_content_has_no_blank_body_and_live_footer() {
+    let app = new_media_spacing_fixture(false);
+    for size in [Size::new(900.0, 900.0), Size::new(480.0, 720.0)] {
+        let mut h = Harness::new(render_new_media_dialog(&app), size);
+        let labels = h.labels();
+        let frame = labels
+            .1
+            .iter()
+            .find(|b| b.width <= 640.0 && b.height < size.height - 64.0)
+            .unwrap();
+        let path = labels
+            .0
+            .iter()
+            .find(|(s, _)| s.starts_with("Path:"))
+            .unwrap()
+            .1;
+        let footer = labels.0.iter().find(|(s, _)| s == "Dismiss").unwrap().1;
+        let gap = footer.y - (path.y + path.height);
+        eprintln!(
+            "New Media at {size:?}: frame height {}, footer gap {gap}",
+            frame.height
+        );
+        assert!(
+            gap < 60.0,
+            "short New Media has {gap}px of empty space before its footer"
+        );
+        assert!(frame.height < 600.0, "content must not fill the 680px cap");
+        let inside = h.event(
+            mouse::Event::ButtonPressed(mouse::Button::Left),
+            Point::new(frame.x + 2.0, frame.y + 2.0),
+        );
+        assert!(matches!(inside.as_slice(), [Message::ModalContentClicked]));
+        assert_new_media_actions(&mut h, &app);
+        let messages = h.event(
+            mouse::Event::ButtonPressed(mouse::Button::Left),
+            Point::new(1.0, 1.0),
+        );
+        assert!(matches!(messages.as_slice(), [Message::CloseAllDialogs]));
+    }
+}
+
+#[derive(Default)]
+struct DialogScrolls(Vec<(Rectangle, Rectangle, Vector)>);
+impl Operation for DialogScrolls {
+    fn traverse(&mut self, f: &mut dyn FnMut(&mut dyn Operation)) {
+        f(self);
+    }
+    fn scrollable(
+        &mut self,
+        _: Option<&Id>,
+        bounds: Rectangle,
+        content: Rectangle,
+        offset: Vector,
+        _: &mut dyn iced_futures::core::widget::operation::scrollable::Scrollable,
+    ) {
+        self.0.push((bounds, content, offset));
+    }
+}
+
+#[test]
+fn dialog_spacing_new_media_overflow_scrolls_with_stationary_reachable_footer() {
+    let app = new_media_spacing_fixture(true);
+    for size in [Size::new(800.0, 720.0), Size::new(480.0, 400.0)] {
+        let mut h = Harness::new(render_new_media_dialog(&app), size);
+        let mut before = DialogScrolls::default();
+        h.element.as_widget_mut().operate(
+            &mut h.tree,
+            Layout::new(&h.node),
+            &h.renderer,
+            &mut before,
+        );
+        assert_eq!(before.0.len(), 1);
+        let (viewport, content, _) = before.0[0];
+        assert!(content.height > viewport.height && viewport.height > 0.0);
+        let footer_before = h
+            .labels()
+            .0
+            .into_iter()
+            .find(|(s, _)| s == "Dismiss")
+            .unwrap()
+            .1;
+        assert!(viewport.y + viewport.height <= footer_before.y);
+        assert_new_media_actions(&mut h, &app);
+        h.event(
+            mouse::Event::WheelScrolled {
+                delta: mouse::ScrollDelta::Lines { x: 0.0, y: -1000.0 },
+            },
+            viewport.center(),
+        );
+        // Reconcile/layout the same native tree, as the live app does between frames.
+        h.tree.diff(&h.element);
+        h.node = h.element.as_widget_mut().layout(
+            &mut h.tree,
+            &h.renderer,
+            &layout::Limits::new(Size::ZERO, size),
+        );
+        let mut after = DialogScrolls::default();
+        h.element.as_widget_mut().operate(
+            &mut h.tree,
+            Layout::new(&h.node),
+            &h.renderer,
+            &mut after,
+        );
+        assert!(
+            after.0[0].2.y > 0.0,
+            "wheel input must reach the native scrollable"
+        );
+        let labels = h.labels();
+        let footer_after = labels.0.iter().find(|(s, _)| s == "Dismiss").unwrap().1;
+        assert_eq!(footer_before, footer_after);
+        let path = labels
+            .0
+            .iter()
+            .find(|(s, _)| s.starts_with("Path:"))
+            .unwrap()
+            .1;
+        let visible_bottom = path.y + path.height - after.0[0].2.y;
+        assert!(
+            visible_bottom <= viewport.y + viewport.height + 1.0 && visible_bottom >= viewport.y
+        );
+        assert_new_media_actions(&mut h, &app);
     }
 }

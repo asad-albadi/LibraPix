@@ -9844,7 +9844,9 @@ mod tests {
                     .iter()
                     .any(|m| matches!(m, Message::CloseAllDialogs))
             );
-            let inside = pane_click(view(&app), iced::Point::new(700.0, 450.0));
+            // Content-sized frames can place controls at the screen center.
+            // Test surface capture in measured padding, not on a child control.
+            let inside = pane_click(view(&app), final_polish::dialog_padding_point(view(&app)));
             assert!(!inside.iter().any(|m| matches!(m, Message::CloseAllDialogs)));
             assert!(
                 inside
@@ -10570,11 +10572,7 @@ mod tests {
             )
             .into(),
         );
-        assert!(
-            texts
-                .iter()
-                .any(|label| label.replace('\n', "") == "Details")
-        );
+        assert!(texts.iter().any(|label| label == "Details"));
         assert!(!texts.iter().any(|label| label == "Select a photo"));
     }
 
@@ -10639,11 +10637,7 @@ mod tests {
         });
         let collapsed = pane_texts(views::shell::view(&app));
         assert!(!collapsed.iter().any(|label| label == "My screenshots"));
-        assert!(
-            collapsed
-                .iter()
-                .any(|label| label.replace('\n', "") == "Details")
-        );
+        assert!(collapsed.iter().any(|label| label == "Details"));
         assert!(collapsed.iter().any(|label| label == "Test layout notice"));
         assert!(
             collapsed

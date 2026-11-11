@@ -37,7 +37,7 @@ remaining orchestration in `main.rs`.
 
 Both panes collapse independently. The left rail contains only Library, Add
 Library, Refresh, and Expand, with tooltips; root management returns on expansion.
-The right edge retains a compact horizontal Details label and expansion action.
+The right edge centers a compact 90-degree rotated Details word and expansion action.
 Two backward-compatible `[ui]` config booleans default to expanded. Toggles apply
 immediately, reload config, and save only UI preferences through the config crate.
 Save failure retains the session choice and logs an error, displaying a localized,
@@ -61,6 +61,21 @@ and legacy facades were removed rather than retained as speculative API.
 
 ## Consequences
 
+- The requested true rotated Details label uses Iced's native geometry Frame,
+  not a custom renderer. Its app-local widget measures a native paragraph and
+  exposes the intact localized word to text operations; the surrounding native
+  button/tooltip owns input. Enable Iced `canvas` solely for this supported
+  rotation path (general Transformation has no rotation constructor). This
+  activates Iced's standard Lyon geometry dependencies, not a separate rendering
+  stack or application dependency.
+
+- Approved dialog-sizing exception: a private layout-only adapter wraps the native
+  column. It measures natural height, caps it, then delegates fixed-height layout
+  so header/footer retain priority over the scrollable body. This uses Iced's
+  existing `advanced` feature in the app only, with no new dependency or renderer.
+  Widget state, events, operations, overlays, and drawing remain native; this is
+  not a general widget framework or a guessed footer-height budget.
+
 - Future controls reuse the owning token/style/component/pattern module; add an
   abstraction only for a real consumer. Do not recreate root compatibility facades.
 - Product views may read app presentation state, but reusable UI must not import
@@ -72,8 +87,8 @@ and legacy facades were removed rather than retained as speculative API.
   detailed ffmpeg errors belong in that body rather than the fixed footer.
 - Existing keyboard routing, cancellation/results, source-media safety,
   background execution, viewport windowing, and layout caches are preserved.
-- No dependency, MSRV, workspace crate, database schema, or video-processing
-  change is needed. Config merging is sequential, not cross-process locking.
+- No MSRV, workspace crate, database schema, or video-processing change is
+  needed. Config merging is sequential, not cross-process locking.
 - Layout/event/render tests guard pane, control, dialog, and performance-sensitive
   behavior. They supplement, not replace, native Windows/Linux visual checks.
 

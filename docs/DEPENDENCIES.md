@@ -19,6 +19,8 @@ This file tracks major direct dependencies that shape architecture and maintenan
 - Notes:
   - Latest stable verified at baseline: `0.14.0`.
   - Features enabled: `image` (raster icons), `svg` (vector logo in header), `tokio` (non-blocking timer subscriptions via `iced::time::every`).
+  - App-local `advanced` feature exposes the native Widget interface for the private dialog layout adapter. It adds no dependency or renderer: all rendering/input remains delegated to the existing native widgets. Verified against [Iced 0.14 Widget](https://docs.rs/iced/0.14.0/iced/advanced/trait.Widget.html) and the installed official `iced_core` Limits / `iced_widget` Column and Scrollable sources.
+  - App-local `canvas` enables native geometry rotation for the single-word Details edge label. Iced's general `Transformation` has no rotation API; the official geometry Frame supports `rotate` plus `fill_text` on both existing WGPU and tiny-skia backends. This necessarily activates Iced's optional Lyon geometry dependencies; there is no new direct crate or custom renderer. Consulted [Frame](https://docs.rs/iced_graphics/0.14.0/iced_graphics/geometry/struct.Frame.html), [Transformation](https://docs.rs/iced/0.14.0/iced/struct.Transformation.html), and installed upstream geometry/text implementations for both backends.
   - Timeline scrubber uses `operation::scroll_to` for absolute offset targeting with `operation::snap_to` fallback during early viewport initialization.
   - Startup/runtime ticks now use Iced's timer API on the tokio backend; the older blocking `std::thread::sleep` subscription loops were removed after they delayed thumbnail result handoff on Windows.
   - Keep presentation logic in `librapix-app` and prevent leakage into domain/storage.

@@ -59,28 +59,13 @@ pub fn details_pane<'a, Message: Clone + 'a>(
         ),
         DetailsPaneMode::Edge => (
             app_tooltip(
-                button(
-                    container(
-                        // Iced 0.14 cannot rotate Text; retain native text and hover
-                        // semantics with the approved vertical-lettering fallback.
-                        text(
-                            title
-                                .chars()
-                                .map(|c| c.to_string())
-                                .collect::<Vec<_>>()
-                                .join("\n"),
-                        )
-                        .size(FONT_CAPTION)
-                        .align_x(Alignment::Center),
-                    )
-                    .center(Length::Fill),
-                )
-                .on_press(toggle_message)
-                .style(|theme, status| {
-                    crate::ui::styles::button::button_style(theme, status, ButtonVariant::Ghost)
-                })
-                .height(Length::Fill)
-                .width(Length::Fill),
+                button(container(super::rotated_label::rotated_label(title)).center(Length::Fill))
+                    .on_press(toggle_message)
+                    .style(|theme, status| {
+                        crate::ui::styles::button::button_style(theme, status, ButtonVariant::Ghost)
+                    })
+                    .height(Length::Fill)
+                    .width(Length::Fill),
                 toggle_label,
             )
             .into(),

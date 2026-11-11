@@ -4,6 +4,39 @@ Librapix uses a centralized media-view architecture that underpins gallery, time
 
 Issue `#12` runtime rationale and before/after evidence are consolidated in `docs/architecture/issue-12-runtime-optimization-summary.md`. This document describes the final rendering and interaction model only.
 
+## Delivered presentation system
+
+ADR 0025 records the app-local, media-first shadcn-inspired direction. `ui/`
+provides tokens, styles, components, and patterns; `views/` owns product
+composition. It is native Iced, not a web framework. `views/gallery.rs` and
+`views/timeline.rs` assemble windowed content and the scrubber while the existing
+application helpers retain row math, cache ownership, anchors, and diagnostics.
+Media cards still use one interactive button, not extra abstraction layers.
+
+The Library and details panes independently restore their `[ui]` collapse
+preferences at startup; missing preferences mean expanded. Collapse changes only
+available media width, not the active route, root filter, selection, or data feed.
+The expanded sidebar footer retains runtime activity; the compact rail deliberately
+contains only the four global actions, not root management or a duplicate activity
+panel. Layout-save feedback overlays the shell without changing media geometry.
+
+All seven dialogs use the shared bounded frame: About, filters, library,
+library statistics, Make Short, new media, and settings. Header/footer actions
+stay outside the scrolling body. Field errors replace helper text when present.
+Make Short retains option help and its Smooth-only warning, shows one stage line
+with indeterminate dots and Cancel while running, and keeps success, failure,
+and canceled results distinct. Full failure diagnostics scroll in the body.
+Its dedicated 180 ms presentation timer runs only for an open, running dialog;
+it neither drives video work nor claims percentage progress.
+
+Light/Dark semantic palettes, System theme resolution, localized labels, icon
+tooltips, disabled-message suppression, and existing keyboard routing remain in
+place. Tests cover actual Iced layouts/events/rendering and bounded render windows;
+they do not establish complete native accessibility or platform visual coverage.
+Source media remains read-only; background execution and video-tool behavior are
+unchanged. See `ui.md` for justified direct-style uses and `message-flow.md` for
+pane persistence and generation ownership.
+
 ## Unified data model
 
 All browsing views consume `BrowseItem` which carries:

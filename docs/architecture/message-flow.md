@@ -6,11 +6,24 @@ Issue `#12` runtime rationale and evidence are consolidated in `docs/architectur
 
 ## Flow
 
-Pane layout messages (`ToggleLeftSidebar`, `ToggleDetailsSidebar`) update independent
-app-local state and `config.ui` through `apply_pane_preference`, then use the config
-crate's existing load/save flow to persist only layout preferences. Persistence
-failure keeps the session choice and sets a localized `ShellNotice` with error tone;
-`DismissShellNotice` clears that bounded notice without changing pane state.
+Pane layout messages are app-local rather than core domain transitions:
+
+1. Startup hydrates independent pane flags from `config.ui`; absent fields default
+   to `false` (expanded) without a config schema bump.
+2. `ToggleLeftSidebar` / `ToggleDetailsSidebar` call `toggle_pane_preference` and
+   `apply_pane_preference`, immediately updating only the intended pane flag and
+   its in-memory config preference.
+3. The app reloads config, replaces only `ui`, and saves through the config crate,
+   preserving unrelated settings saved since startup. This is an existing
+   synchronous config-file operation, not a new background job or cross-process
+   synchronization guarantee.
+4. Load/save failure keeps the visible session choice, logs
+   `ui.pane_preference.save_failed`, and sets a localized error `ShellNotice`.
+   `DismissShellNotice` clears only that notice.
+5. Views render the new pane width; existing responsive media layout reflows.
+   No indexing, projection rebuild, database write, route, or selection change is
+   requested by a toggle. A permanent shell stack preserves scroll state while
+   the notice layer changes, and dialogs remain above the notice.
 
 1. `view` renders controls from current `AppState`.
 2. User action emits a UI message.
@@ -100,6 +113,15 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
   - Stage-based dialog status transitions are explicit (`Preparing` -> `Probing` -> `Building filters` -> `Generating` -> `Finalizing`).
   - ffprobe/ffmpeg validation/probe/filter/args/process logic stays in `librapix-video-tools`.
   - Completion feeds explicit success/failure dialog state with open-file/open-folder follow-up actions.
+  - Cancel signals the existing cancellation token and background worker; the
+    video-tools process runner stops the child and attempts to remove newly
+    created partial output, without deleting a previously existing destination. Canceled
+    is distinct from Failed. The UI migration does not change these handlers or
+    Windows hidden-process flags.
+  - `MakeShortLoadingTick` advances only the presentation phase on a dedicated
+    180 ms subscription while the open dialog is Running. Terminal/closed states
+    unsubscribe and ignore stale ticks. One stage line and animated dots are
+    indeterminate feedback, not parsed ffmpeg progress or duplicate status rows.
 - Keyboard shortcuts
   - App subscribes to ignored keyboard events via `keyboard::listen`.
   - `Cmd/Ctrl+C` routes to copy-selected-file.

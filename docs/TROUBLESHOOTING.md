@@ -1,5 +1,9 @@
 # Troubleshooting
 
+The centralized UI migration's confirmed regressions and resolutions are recorded
+below. ADR 0025 defines the final presentation boundary. Layout/event/render tests
+are prevention evidence, not a claim that all native desktop checks were performed.
+
 ## Long library names are clipped or extend outside clickable rows
 
 - Symptoms: multi-line library names lose lines or spill beyond their row's hit area.

@@ -1,6 +1,8 @@
 # UI Architecture
 
-Librapix UI uses a themeable, Fluent-inspired design system with an app-shell layout. See ADR 0023 (themeable design system) and ADR 0024 (unified Library surface).
+Librapix UI uses a centralized, app-local, media-first shadcn-inspired design
+system with a native Iced app-shell layout. ADR 0025 refines the earlier Fluent
+direction; ADR 0023's Light/Dark/System policy and ADR 0024's unified Library remain.
 
 ## App shell baseline
 
@@ -65,14 +67,14 @@ Shared visual tokens and widget styles are centralized in `librapix-app/src/ui/`
 - Consistent padding and gap values across all surfaces.
 
 ### Component styles
-- Button styles: primary (accent), subtle (transparent), action (card bg), nav (active/inactive), card (selection border + hover/elevation), filter chip and segmented control (active = accent).
+- Action-button variants: Primary, Secondary, Outline, and Ghost. Tabs/navigation, interactive/selected cards, and managed chips have specialized centralized mappings; unused staged variants are not public API.
 - Managed chips: deterministic color-mapped chip surfaces for tags/rules with inline edit/remove/toggle actions.
 - Text input styles: search and field share the same rounded-corner language; the focused state uses a 2px `focus_ring` border.
 - Container styles: header, sidebar, details pane, cards, empty states, thumbnail placeholders, dividers, timeline scrubber surfaces, media-kind badges, modal backdrop, and modal dialog surfaces.
 - Icon-size tokens `ICON_XS`..`ICON_XL` replace raw pixel literals at icon/logo call sites.
 
 ### Elevation and glass
-- Soft shadow helpers `elevation_low/med/high(&Theme)` (near-black on dark, soft gray on light) feed the `shadow` field of cards (resting/hover/selected), the segmented control, the scrubber panel, and dialogs.
+- Centralized elevation helpers (near-black on dark, soft gray on light) feed card and dialog shadows; quiet borders separate the other surfaces. Unconsumed elevation helpers were removed rather than retained as dormant API.
 - Modal dialogs use a translucent "glass" surface: a vertical gradient at <1.0 alpha + a faint edge highlight + a strong shadow over the dimmed backdrop. There is **no** true backdrop blur (iced has no backdrop-filter primitive — see ADR 0023).
 
 ### Scrollbars
@@ -80,7 +82,7 @@ Shared visual tokens and widget styles are centralized in `librapix-app/src/ui/`
 
 ### Dialogs
 - `ui/patterns/dialog.rs` accepts a `DialogSpec` with a localized borrowed or owned title, optional labeled close message, body, optional footer, and size caps. It reserves a stable bounded frame with a fixed header and footer around a scrolling body, using built-in Iced widgets.
-- All seven product dialogs live in `views/dialogs/`: About, filters, library management, library statistics, Make Short, new media, and settings. Each module exposes one `view(&Librapix)` function and composes shared buttons, inputs, tabs, separators, fields, and status patterns. Dedicated wrapping, statistics, tooltip, and preview helpers live with their consuming dialog; managed tag/rule chips remain shared with non-dialog views until the later media-view migration.
+- All seven product dialogs live in `views/dialogs/`: About, filters, library management, library statistics, Make Short, new media, and settings. Each module exposes one `view(&Librapix)` function and composes shared buttons, inputs, tabs, separators, fields, and status patterns. Dedicated wrapping, statistics, tooltip, and preview helpers live with their consuming dialog; `ui/components/chip.rs` supplies managed tag/rule chips to dialogs and details.
 - `views/dialogs/mod.rs` owns the unchanged modal backdrop/content-click wrapper; `views/shell.rs` retains overlay ordering. Escape handling, state, validation decisions, request building, background tasks, cancellation, and lifecycle remain application-owned.
 - Make Short shows one stage line and one indeterminate working indicator, Cancel while running, and a Smooth-only warning. Success, failure details, canceled feedback, validation, and option hover help remain distinct. Library path errors use the existing `root_status` decision in a shared field instead of being hidden behind the modal.
 - Make Short owns a separate presentation phase driven by a 180 ms Iced timer only while its dialog is open and its run state is Running (including cancel-requested work). Preview loading has a separate timer/phase; animation never represents numeric generation progress. Terminal/hidden dialogs unsubscribe. Only the concise result summary and actions stay in the fixed footer; unrestricted failure details stay in the scrolling body.
@@ -89,7 +91,7 @@ Shared visual tokens and widget styles are centralized in `librapix-app/src/ui/`
 
 ### Layout helpers
 - `section_heading()`: small-caps section label.
-- `h_divider()` / `v_divider()`: 1px horizontal / vertical hairline dividers (vertical hairlines separate sidebar | content | details).
+- `ui/components/separator.rs`: horizontal / vertical hairlines separating regions and sections.
 
 ## Interaction model
 
@@ -201,15 +203,14 @@ Gallery, timeline, and search views share a unified media-view architecture:
 - On launch, app restores persisted state from storage and config.
 - If library roots exist, the app auto-indexes and loads gallery/timeline projections.
 - Startup restore is triggered via `Task::done(Message::StartupRestore)` from the init function.
-- Activity status indicator is shown in the header during restore.
+- Runtime activity is shown in the expanded sidebar footer, without duplicate header status text.
 - Startup restore also triggers a non-blocking GitHub release check after first render.
 
 ## Background activity
 
-- Activity status is tracked as a simple string in app state.
-- When non-empty, a subtle accent-colored caption is shown in the header.
-- Cleared when the active operation completes.
-- Surfaces indexing, startup restore, projection refresh, and search refresh activity.
+- Structured runtime activity belongs to application orchestration and is rendered in the expanded sidebar footer; the compact rail deliberately exposes only global actions.
+- Real item totals support determinate feedback; work without a measured total uses a working treatment rather than a fabricated percentage.
+- Startup readiness and deferred thumbnail catch-up remain distinct. Snapshot, indexing, projection/search, and thumbnail work retain their existing background scheduling and completion paths.
 
 ## Auto-refresh
 
@@ -232,8 +233,8 @@ Gallery, timeline, and search views share a unified media-view architecture:
 - Blue logo icon (from `assets/logo/blue/`) displays at 32×32.
 - "Libra" displays in primary text color, "Pix" in accent color, creating a split-color product identity with minimal spacing.
 - Header includes an About dialog entry point for project/creator context.
-- GitHub link button (white icon) opens the project repository.
-- The header maintains the Fluent-inspired dark theme aesthetic.
+- GitHub link button uses a theme-aware icon and localized tooltip to open the project repository.
+- The header follows the media-first neutral palette in Light, Dark, and System themes.
 
 ## Selection performance
 
@@ -245,7 +246,7 @@ Gallery, timeline, and search views share a unified media-view architecture:
 ## UX goals
 
 - Media-first browsing experience.
-- Fluent-inspired visual hierarchy.
+- Media-first, shadcn-inspired visual hierarchy using native Iced composition.
 - Low-clutter desktop workflow.
 - Coherent action placement.
 - Product-oriented language throughout.

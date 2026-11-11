@@ -17,6 +17,7 @@ All notable changes to this project are documented in this file.
 - Split app-local UI tokens and widget styles into focused `ui/tokens` and `ui/styles` modules, preserving existing values, public names, visuals, and behavior; added palette/chip regression tests.
 
 ### Docs
+- Added ADR `0025` and finalized the centralized app-local UI boundaries, hybrid pane persistence/error flow, truthful loading treatment, and preserved source-media/background behavior; documented retained specialized styles and removed unused scaffolding.
 - Documented the hybrid shell/pane presentation boundary and the Windows running-executable lock encountered during manual validation.
 - Added ADR `0023` (themeable design system: semantic palette + Light/Dark/System) and ADR `0024` (unified Library surface) documenting the visual-overhaul branch decisions.
 - Updated `docs/architecture/ui.md` for the semantic `Palette`/`palette(theme)` token layer, Light/Dark/System theming, soft elevation, glass dialogs, the centralized `render_dialog_frame`, styled scrollbars, and the in-app theme toggle.
@@ -34,8 +35,8 @@ All notable changes to this project are documented in this file.
 ### Added
 - Added shared app-local dialog, field, and status patterns with bounded scrolling, error-over-help precedence, and indeterminate-only working feedback; migrated About while preserving its content and dismissal behavior.
 - Added independently collapsible application panes: a global-actions library rail, a compact labeled Details edge, and overlay layout-save error notices, using the existing persisted pane preferences without changing browsing/background behavior.
-- Added centralized app-local Iced component primitives for controls, cards, badges, loading, empty states, and dismissible notices; view migration remains a separate step.
-- Added backward-compatible independent pane-collapse preferences, app-side persistence transitions, dismissible error-notice state, and localized layout labels; visual pane controls follow separately.
+- Added centralized app-local Iced components for controls, cards, badges, loading, empty states, and dismissible notices, now consumed by product views and dialogs.
+- Added backward-compatible independent pane-collapse preferences, immediate session transitions, dismissible save-error notices, and localized collapse/expand labels.
 - Real Light theme and OS-following System theme alongside the existing Dark theme, selected via a semantic `Palette` resolved by `palette(theme)` (replaces the 16 hardcoded dark-only color constants). System appearance is detected via the `dark-light` crate and cached/throttled off the render path.
 - In-app theme toggle (System / Light / Dark) in Settings → Appearance, persisted to config (`config.theme`).
 - Theme-aware UI icons (white on dark, black on light) and theme-aware text-style helpers; icon-size tokens (`ICON_XS`..`ICON_XL`) and a second Light chip palette.

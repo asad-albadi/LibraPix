@@ -86,3 +86,4 @@ This repository is documentation-driven. Architecture and operational decisions 
 - `docs/adrs/0022-video-short-generation-subsystem.md`
 - `docs/adrs/0023-themeable-design-system.md`
 - `docs/adrs/0024-unified-library-surface.md`
+- `docs/adrs/0025-centralized-app-ui-system.md`

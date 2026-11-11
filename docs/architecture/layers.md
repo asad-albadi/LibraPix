@@ -1,5 +1,24 @@
 # Layers
 
+## App-local presentation boundary
+
+ADR 0025 defines the delivered design system inside `librapix-app`; there is no
+separate UI crate or dependency change.
+
+| Layer | Owns | Must not own |
+| --- | --- | --- |
+| `ui/tokens` | Semantic palette/chip tones and visual constants | App state or services |
+| `ui/styles` | Token/variant/status-to-Iced appearance | Product transitions or side effects |
+| `ui/components` | Message-generic built-in widget composition | `Librapix`, storage, indexing, processes |
+| `ui/patterns` | Pane, dialog, field, and status layouts | Persistence, validation decisions, subscriptions |
+| `views` | Product composition from presentation state; message emission | Background jobs or persistence implementation |
+| Existing application orchestration | State/update/subscriptions, tasks, validation, config saves, cache/layout helpers | Reusable widget styling |
+
+Views consume the owning modules rather than legacy facades. Specialized media
+styles and the built-in scrubber slider remain direct composition where a wrapper
+would obscure geometry or add layers. Only proven component variants are retained.
+The remaining orchestration in `main.rs` has not been extracted by this migration.
+
 ## Layer responsibilities
 
 - Bootstrap (`librapix-app`)

@@ -29,6 +29,8 @@ requesting indexing or projection work or changing route/selection.
 
 Layout-save errors appear in a dismissible bottom-right notice layered above
 the shell, below modal dialogs. The notice does not consume media-layout space.
+The shell always occupies the first child of a permanent stack; adding/removing
+the notice layer preserves Iced's persistent media scroll state.
 
 The app-local `ui/components` vocabulary contains buttons/icon buttons, badges,
 cards, inputs, selects, checkboxes, tabs, separators, tooltips, loading, empty

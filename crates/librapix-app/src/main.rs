@@ -12187,7 +12187,7 @@ mod tests {
         });
         let (_, with_notice) = pane_layout(views::shell::view(&app));
         assert_eq!(
-            format!("{baseline:?}"),
+            format!("{:?}", baseline.children()[0]),
             format!("{:?}", with_notice.children()[0])
         );
         let messages = pane_click(
@@ -12198,6 +12198,105 @@ mod tests {
             ),
         );
         assert!(matches!(messages.as_slice(), [Message::OpenGallery]));
+    }
+
+    #[test]
+    fn pane_notice_preserves_media_scroll_across_persistent_tree_transitions() {
+        use iced_futures::core::{
+            Layout, Rectangle, Vector, layout,
+            renderer::Headless,
+            widget::{Operation, Tree, operation::scrollable as scroll_operation},
+        };
+
+        #[derive(Default)]
+        struct MediaOffset(Option<f32>);
+
+        impl Operation for MediaOffset {
+            fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
+                operate(self);
+            }
+
+            fn scrollable(
+                &mut self,
+                id: Option<&Id>,
+                _: Rectangle,
+                _: Rectangle,
+                translation: Vector,
+                _: &mut dyn scroll_operation::Scrollable,
+            ) {
+                if id == Some(&Id::new(MEDIA_SCROLLABLE_ID)) {
+                    self.0 = Some(translation.y);
+                }
+            }
+        }
+
+        let renderer = iced_futures::futures::executor::block_on(iced::Renderer::new(
+            iced::Font::DEFAULT,
+            iced::Pixels(13.0),
+            Some("tiny-skia"),
+        ))
+        .unwrap();
+        let mut app = test_app();
+        app.gallery_items = (1..=100).map(browse_item).collect();
+        app.media_scroll_absolute_y = 450.0;
+        app.media_viewport_height = 700.0;
+        let mut tree = Tree::new(views::shell::view(&app));
+        let mut observed_offsets = Vec::new();
+
+        for show_notice in [true, false] {
+            // Seed each transition independently, but never replace the tree.
+            let mut element = views::shell::view(&app);
+            tree.diff(element.as_widget());
+            let node = element.as_widget_mut().layout(
+                &mut tree,
+                &renderer,
+                &layout::Limits::new(Size::ZERO, Size::new(1400.0, 900.0)),
+            );
+            element.as_widget_mut().operate(
+                &mut tree,
+                Layout::new(&node),
+                &renderer,
+                &mut scroll_operation::scroll_to::<()>(
+                    Id::new(MEDIA_SCROLLABLE_ID),
+                    scroll_operation::AbsoluteOffset {
+                        x: None,
+                        y: Some(450.0),
+                    },
+                ),
+            );
+            let mut seeded = MediaOffset::default();
+            element
+                .as_widget_mut()
+                .operate(&mut tree, Layout::new(&node), &renderer, &mut seeded);
+            assert_eq!(seeded.0, Some(450.0), "source content must be scrollable");
+            drop(element);
+
+            if show_notice {
+                app.shell_notice = Some(ShellNotice {
+                    tone: NoticeTone::Error,
+                    summary: "Could not save layout preference.".into(),
+                });
+            } else {
+                let _ = update(&mut app, Message::DismissShellNotice);
+            }
+            let mut element = views::shell::view(&app);
+            tree.diff(element.as_widget());
+            let node = element.as_widget_mut().layout(
+                &mut tree,
+                &renderer,
+                &layout::Limits::new(Size::ZERO, Size::new(1400.0, 900.0)),
+            );
+            let mut offset = MediaOffset::default();
+            element
+                .as_widget_mut()
+                .operate(&mut tree, Layout::new(&node), &renderer, &mut offset);
+            observed_offsets.push(offset.0);
+        }
+        assert_eq!(
+            observed_offsets,
+            [Some(450.0), Some(450.0)],
+            "notice appearance and dismissal must retain media scroll state"
+        );
     }
 
     #[test]

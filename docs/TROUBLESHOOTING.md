@@ -1,5 +1,17 @@
 # Troubleshooting
 
+## Media jumps to the top when a shell notice changes
+
+- Symptoms: a layout-save error notice appearing or being dismissed resets the
+  gallery/media scroll offset to zero.
+- Affected area: application shell composition in `views/shell.rs`.
+- Confirmed cause: switching between a bare shell container and a notice stack
+  replaces Iced's persistent widget tree, discarding its scrollable state.
+- Resolution: always retain the same shell stack and first child; conditionally
+  append only the notice layer.
+- Prevention: test notice appearance and dismissal with one persistent tree,
+  reconciling each new view and inspecting the actual media scroll offset.
+
 ## Windows rebuild fails while the validation app is running
 
 - Symptom: Cargo reports `failed to remove file ... librapix-app.exe` with

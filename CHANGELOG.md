@@ -4,6 +4,9 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Preserved media scroll position when layout-save notices appear or are dismissed by keeping the shell widget-tree structure stable.
+
 ### Changed
 - Applied media-first light/dark semantic palettes with quieter surfaces, blue focus/selection, explicit destructive tones, and contrast-tested foregrounds.
 - Split app-local UI tokens and widget styles into focused `ui/tokens` and `ui/styles` modules, preserving existing values, public names, visuals, and behavior; added palette/chip regression tests.

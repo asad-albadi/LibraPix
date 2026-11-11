@@ -174,11 +174,11 @@ pub(crate) fn view(app: &Librapix) -> Element<'_, Message> {
         .style(app_bg_style)
         .into();
 
-    // Alignment layers overlay feedback without consuming media-layout space.
+    // Keep the shell at the same tree position so notices preserve widget state.
     // Modals are stacked afterwards so their input remains above the notice.
-    let mut overlay: Element<'_, Message> = if let Some(state) = &app.shell_notice {
-        stack([
-            shell,
+    let mut shell_layers = stack([shell]).width(Length::Fill).height(Length::Fill);
+    if let Some(state) = &app.shell_notice {
+        shell_layers = shell_layers.push(
             container(notice(
                 state,
                 app.i18n.text(TextKey::ErrorActionFailedLabel),
@@ -189,15 +189,10 @@ pub(crate) fn view(app: &Librapix) -> Element<'_, Message> {
             ))
             .align_right(Length::Fill)
             .align_bottom(Length::Fill)
-            .padding(SPACE_LG as u16)
-            .into(),
-        ])
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
-    } else {
-        shell
-    };
+            .padding(SPACE_LG as u16),
+        );
+    }
+    let mut overlay: Element<'_, Message> = shell_layers.into();
     if app.filter_dialog_open {
         overlay = stack([overlay, render_filter_dialog(app)])
             .width(Length::Fill)

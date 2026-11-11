@@ -63,7 +63,8 @@ Shared visual tokens and widget styles are centralized in `librapix-app/src/ui/`
 
 ### Spacing and typography
 - Spacing scale: 2xs through 2xl (2px to 32px).
-- Typography: display, title, subtitle, section, body, caption sizes.
+- Typography: title, subtitle, section, body, and caption sizes. Brand artwork is
+  sized separately through `ui/components/brand.rs`, not a display-font token.
 - Consistent padding and gap values across all surfaces.
 
 ### Component styles
@@ -81,7 +82,7 @@ Shared visual tokens and widget styles are centralized in `librapix-app/src/ui/`
 - `scrollbar_style` renders thin, rounded, translucent overlay scrollbars (invisible rail, pill scroller that darkens on hover/drag), applied to the gallery, sidebar, details pane, dialog frame, and diagnostics list.
 
 ### Dialogs
-- `ui/patterns/dialog.rs` accepts a `DialogSpec` with a localized borrowed or owned title, optional labeled close message, body, optional footer, and size caps. A private app-local `dialog_layout` adapter measures the native column's natural height at the available width, then lays it out again at that height capped to the available space. The second pass reserves header/footer before allocating the scrolling body. Short frames shrink; overflowing bodies scroll without displacing actions. The adapter forwards the native widget tree, input, operations, overlays, and drawing unchanged; it is not a custom renderer.
+- `ui/patterns/dialog.rs` accepts a `DialogSpec` with a localized borrowed or owned title, optional labeled close message, body, optional footer, and size caps. A private app-local `dialog_layout` adapter measures the native column's natural height at the available width, then lays it out again at that height capped to the available space. The second pass reserves header/footer before allocating the scrolling body. Short frames shrink; overflowing bodies scroll without displacing actions. The adapter delegates native input, operations, overlays, and drawing; it is not a custom renderer. **Known issue:** both layout passes currently mutate the same live widget tree. Near Settings' responsive breakpoint, scrollbar width can switch the row structure between passes and discard pressed-button state. See Troubleshooting; this interaction regression is not resolved.
 - All seven product dialogs live in `views/dialogs/`: About, filters, library management, library statistics, Make Short, new media, and settings. Each module exposes one `view(&Librapix)` function and composes shared buttons, inputs, tabs, separators, fields, and status patterns. Dedicated wrapping, statistics, tooltip, and preview helpers live with their consuming dialog; `ui/components/chip.rs` supplies managed tag/rule chips to dialogs and details.
 - `views/dialogs/mod.rs` owns the unchanged modal backdrop/content-click wrapper; `views/shell.rs` retains overlay ordering. Escape handling, state, validation decisions, request building, background tasks, cancellation, and lifecycle remain application-owned.
 - Make Short shows one stage line and one indeterminate working indicator, Cancel while running, and a Smooth-only warning. Success, failure details, canceled feedback, validation, and option hover help remain distinct. Library path errors use the existing `root_status` decision in a shared field instead of being hidden behind the modal.

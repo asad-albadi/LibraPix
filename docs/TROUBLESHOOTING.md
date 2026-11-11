@@ -1,5 +1,26 @@
 # Troubleshooting
 
+## Settings action clicks can be lost near a responsive breakpoint (open)
+
+- Status: confirmed, unresolved; the branch is not merge-ready with this issue.
+- Symptoms: Enable/Disable, Edit, or Remove may not fire when an app update
+  occurs between mouse press and release at a narrow dialog width.
+- Affected area: shared `ui/patterns/dialog_layout.rs` and responsive Settings
+  rule rows in `views/dialogs/settings.rs`.
+- Confirmed cause: natural-height measurement and final bounded layout mutate
+  the same live Iced widget tree. The bounded pass introduces a scrollbar,
+  reducing available width. Around the 420px row breakpoint, this can alternate
+  row/column composition and reset a button's pressed state.
+- Reproduction: at 425px available width, the reviewed fixture alternates
+  between 425px and 411px content widths. Press, rebuild/layout the persistent
+  tree without resizing, then release: no action is emitted. The same sequence
+  worked at 410px and 450px in the reduced reproduction.
+- Resolution: pending. Preserve live control state through measurement/final
+  layout, then add a press/rebuild/release regression at the breakpoint. Do not
+  treat the existing click-without-rebuild tests as coverage of this sequence.
+- Temporary mitigation: use a wider Settings window. This avoids the observed
+  breakpoint but is not a fix or a guarantee for every width.
+
 ## Header wordmark feels crowded despite being enlarged
 
 - Symptoms: branding nearly touches the header edges and lacks visual balance.

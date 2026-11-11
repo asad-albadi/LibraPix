@@ -6,7 +6,6 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 - Corrected header/About brand balance through a shared native Iced component with aspect-derived widths and 8px minimum header vertical clearspace; preserved artwork and theme variants. Documented project-specific sizing, official design references, and generated-asset fidelity limitations.
-- Increased header wordmark display size while preserving the artwork's aspect ratio to avoid a cramped appearance.
 - Restored complete, content-sized filter labels with native width-aware wrapping and readable inline error/warning contrast in both themes.
 - Centered the collapsed Details word with true 90-degree rotation using Iced's existing renderer, and placed the library collapse action in the Browse header instead of an empty top row.
 - Added localized remove-action hover help for managed tags and ignore rules.
@@ -25,10 +24,11 @@ All notable changes to this project are documented in this file.
 - Split app-local UI tokens and widget styles into focused `ui/tokens` and `ui/styles` modules, preserving existing values, public names, visuals, and behavior; added palette/chip regression tests.
 
 ### Docs
+- Refreshed the README with a native 1920 x 1080 screenshot of the centralized UI, corrected current module/typography guidance, consolidated superseded unreleased UI descriptions, and documented the unresolved Settings breakpoint interaction bug.
 - Added ADR `0025` and finalized the centralized app-local UI boundaries, hybrid pane persistence/error flow, truthful loading treatment, and preserved source-media/background behavior; documented retained specialized styles and removed unused scaffolding.
 - Documented the hybrid shell/pane presentation boundary and the Windows running-executable lock encountered during manual validation.
 - Added ADR `0023` (themeable design system: semantic palette + Light/Dark/System) and ADR `0024` (unified Library surface) documenting the visual-overhaul branch decisions.
-- Updated `docs/architecture/ui.md` for the semantic `Palette`/`palette(theme)` token layer, Light/Dark/System theming, soft elevation, glass dialogs, the centralized `render_dialog_frame`, styled scrollbars, and the in-app theme toggle.
+- Updated UI architecture for semantic palettes, Light/Dark/System theming, shared dialog patterns, styled scrollbars, and the in-app theme toggle.
 - Updated `docs/architecture/projections.md` to describe the single canonical timeline projection that feeds both the flat grid and the grouped timeline.
 - Documented the `dark-light` dependency in `docs/DEPENDENCIES.md` and the Windows copy-path UI-freeze fix in `docs/TROUBLESHOOTING.md`.
 - Rewrote the root `README.md` to reflect the current workspace architecture, implemented feature set, runtime/storage flow, platform packaging status, and practical usage/development guidance.
@@ -49,8 +49,7 @@ All notable changes to this project are documented in this file.
 - Real Light theme and OS-following System theme alongside the existing Dark theme, selected via a semantic `Palette` resolved by `palette(theme)` (replaces the 16 hardcoded dark-only color constants). System appearance is detected via the `dark-light` crate and cached/throttled off the render path.
 - In-app theme toggle (System / Light / Dark) in Settings → Appearance, persisted to config (`config.theme`).
 - Theme-aware UI icons (white on dark, black on light) and theme-aware text-style helpers; icon-size tokens (`ICON_XS`..`ICON_XL`) and a second Light chip palette.
-- Soft elevation tokens (`elevation_low/med/high`) applied to cards (resting + raised-on-hover + selected), the segmented control, scrubber panel, and dialogs.
-- Translucent "glass" dialog surface (gradient + edge highlight + drop shadow) shared by all modals through a centralized `render_dialog_frame`.
+- Centralized surface/elevation styling and a translucent dialog surface shared by all modals through `ui/patterns/dialog.rs`.
 - Selection checkmark badge on the selected gallery tile and a top scrim over thumbnails so overlaid badges stay legible.
 - Thin, rounded, translucent overlay scrollbars across the gallery, sidebar, details pane, dialogs, and diagnostics list.
 - OS window/taskbar icon set from the brand logo.
@@ -65,7 +64,7 @@ All notable changes to this project are documented in this file.
   - otherwise triggers manual re-check (rate-limited to once every 5 minutes)
 - Periodic in-session update re-check scheduling (24-hour interval) for long-running app sessions.
 - Startup update check scheduled after first render and run non-blocking alongside existing background tasks.
-- Reusable managed-chip UI system for tags and ignore rules with centralized styling in `ui.rs`.
+- Reusable managed-chip UI system for tags and ignore rules with centralized components and styles under `ui/`.
 - Deterministic string-to-palette chip coloring for stable, tasteful dark-theme tag/rule visualization.
 - Edit flows for chip-managed tags and ignore rules (Library dialog, Details pane, Settings).
 - Storage APIs for chip workflows: media-tag listing and ignore-rule deletion by id.

@@ -39,7 +39,15 @@ Implemented in the current codebase:
 
 ## Screenshot
 
-![LibraPix application screenshot](assets/screenshots/librapix-0.6.0.png)
+![LibraPix Library with INDEX branding, gallery, and media details](assets/screenshots/librapix-centralized-ui-1080p.png)
+
+Current centralized UI, captured at 1920 x 1080 on Windows.
+
+## Known branch limitation
+
+Settings actions can occasionally be lost near its narrow responsive breakpoint
+if the dialog relayouts between mouse press and release. This confirmed issue is
+still open; see [Troubleshooting](docs/TROUBLESHOOTING.md#settings-action-clicks-can-be-lost-near-a-responsive-breakpoint-open).
 
 ## Technology stack
 

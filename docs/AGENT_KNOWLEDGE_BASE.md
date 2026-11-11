@@ -377,7 +377,8 @@ Start reading order:
 
 Hotspots by concern:
 - Message/state/view orchestration: `crates/librapix-app/src/main.rs`
-- Styles/tokens: `crates/librapix-app/src/ui.rs`
+- Styles/tokens and reusable presentation: `crates/librapix-app/src/ui/`
+- Product view composition: `crates/librapix-app/src/views/`
 - Assets/branding embedding: `crates/librapix-app/src/assets.rs`
 - Storage schema and APIs: `crates/librapix-storage/src/lib.rs` + `migrations/*.sql`
 - Scan/index behavior: `crates/librapix-indexer/src/lib.rs`

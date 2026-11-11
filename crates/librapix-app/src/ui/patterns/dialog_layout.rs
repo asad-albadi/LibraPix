@@ -50,10 +50,15 @@ impl<Message> Widget<Message, Theme, Renderer> for ContentSized<'_, Message> {
         let natural_limits =
             layout::Limits::new(Size::ZERO, Size::new(limits.max().width, f32::INFINITY))
                 .height(Length::Shrink);
-        let natural = self
-            .content
-            .as_widget_mut()
-            .layout(tree, renderer, &natural_limits);
+        // Measurement may choose a different responsive structure before the
+        // bounded body reserves scrollbar width. Never reconcile that structure
+        // against live input/scroll state. Responsive rebuilds its widget-local
+        // content on every layout, including the final pass below.
+        let mut measurement_tree = Tree::new(&self.content);
+        let natural =
+            self.content
+                .as_widget_mut()
+                .layout(&mut measurement_tree, renderer, &natural_limits);
         let height = natural.size().height.min(limits.max().height);
 
         // Fixed height clears compression: the native column reserves header and

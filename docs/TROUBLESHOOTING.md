@@ -1,25 +1,34 @@
 # Troubleshooting
 
-## Settings action clicks can be lost near a responsive breakpoint (open)
+## Settings action clicks lost near a responsive breakpoint (resolved)
 
-- Status: confirmed, unresolved; the branch is not merge-ready with this issue.
-- Symptoms: Enable/Disable, Edit, or Remove may not fire when an app update
-  occurs between mouse press and release at a narrow dialog width.
+- Status: resolved by isolating natural-height measurement from live widget state.
+- Symptoms: Enable/Disable, Edit, or Remove could fail when an app update
+  occurred between mouse press and release at a narrow dialog width.
 - Affected area: shared `ui/patterns/dialog_layout.rs` and responsive Settings
   rule rows in `views/dialogs/settings.rs`.
-- Confirmed cause: natural-height measurement and final bounded layout mutate
-  the same live Iced widget tree. The bounded pass introduces a scrollbar,
-  reducing available width. Around the 420px row breakpoint, this can alternate
-  row/column composition and reset a button's pressed state.
-- Reproduction: at 425px available width, the reviewed fixture alternates
-  between 425px and 411px content widths. Press, rebuild/layout the persistent
-  tree without resizing, then release: no action is emitted. The same sequence
-  worked at 410px and 450px in the reduced reproduction.
-- Resolution: pending. Preserve live control state through measurement/final
-  layout, then add a press/rebuild/release regression at the breakpoint. Do not
-  treat the existing click-without-rebuild tests as coverage of this sequence.
-- Temporary mitigation: use a wider Settings window. This avoids the observed
-  breakpoint but is not a fix or a guarantee for every width.
+- Confirmed cause: measurement and bounded layout reconciled the same live tree
+  at different widths. Measurement removed scrollbar spacing; `Responsive`
+  rebuilt row/column structures across its 420px breakpoint and reset presses.
+  Installed Iced 0.14.2 `Responsive::layout` rebuilds its internal content every
+  call and diffs the supplied tree; isolating only that internal content would
+  not protect live state.
+- Reproduction: a reduced fixture crossed 425px/411px. The production Settings
+  regression reproduces the lost Disable action at 500px outer width with an
+  overflowing rule list, after press, view rebuild/layout, then release.
+- Resolution: measure with a disposable `Tree`, then perform final bounded layout
+  with the persistent live tree. Responsive content is rebuilt again during the
+  final pass. Content-hugging frames, bounded scrolling, footer placement, and
+  the Settings breakpoint/actions are unchanged.
+- Prevention: the production-view test sweeps outer widths 400-519px plus
+  320px/680px, preserving one live tree per width through Enable/Disable, Edit,
+  and Remove press/rebuild/release sequences. Retain short-dialog and overflow
+  tests, and recheck Responsive's content rebuilding when upgrading Iced.
+- Validation: `cargo test --workspace -- --test-threads=1` passes, including
+  native headless layout/input/scrolling tests. Serial execution keeps the
+  renderer-heavy tests from competing for resources; it is not a substitute
+  for native interactive Windows/Linux checks, which were not repeated for
+  this fix.
 
 ## Header wordmark feels crowded despite being enlarged
 

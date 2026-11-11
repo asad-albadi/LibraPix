@@ -191,6 +191,24 @@ impl<'a> Harness<'a> {
         self.event(mouse::Event::ButtonPressed(mouse::Button::Left), point);
         self.event(mouse::Event::ButtonReleased(mouse::Button::Left), point)
     }
+    fn click_across_rebuild(
+        &mut self,
+        point: Point,
+        element: Element<'a, Message>,
+    ) -> Vec<Message> {
+        assert!(
+            self.event(mouse::Event::ButtonPressed(mouse::Button::Left), point)
+                .is_empty()
+        );
+        self.element = element;
+        self.tree.diff(self.element.as_widget());
+        self.node = self.element.as_widget_mut().layout(
+            &mut self.tree,
+            &self.renderer,
+            &layout::Limits::new(Size::ZERO, self.size),
+        );
+        self.event(mouse::Event::ButtonReleased(mouse::Button::Left), point)
+    }
     fn tooltip(&mut self, point: Point) {
         self.event(mouse::Event::CursorMoved { position: point }, point);
         let mut overlay = self
@@ -413,7 +431,19 @@ fn final_settings_rules_are_compact_with_live_actions_at_narrow_widths() {
             is_enabled: false,
         },
     ];
-    for width in [680.0, 320.0] {
+    // Force overflow so final layout reserves scrollbar width but measurement does not.
+    app.ignore_rules
+        .extend((9..39).map(|id| librapix_storage::IgnoreRuleRecord {
+            id,
+            scope: "global".into(),
+            pattern: format!("**/cache-{id}/**"),
+            is_enabled: true,
+        }));
+    // Sweep the breakpoint and neighbors through the real modal padding/margins.
+    for width in [320.0, 680.0]
+        .into_iter()
+        .chain((400..520).map(|w| w as f32))
+    {
         let mut harness = Harness::new(render_settings_dialog(&app), Size::new(width, 900.0));
         let labels = harness.labels();
         let pattern = labels.0.iter().find(|(s, _)| s == "**/cache/**").unwrap().1;
@@ -433,9 +463,10 @@ fn final_settings_rules_are_compact_with_live_actions_at_narrow_widths() {
         let disable = labels.0.iter().find(|(s, _)| s == "Disable").unwrap().1;
         assert!(
             harness
-                .click(disable.center())
+                .click_across_rebuild(disable.center(), render_settings_dialog(&app))
                 .iter()
-                .any(|m| matches!(m, Message::IgnoreRuleToggleEnabled(7)))
+                .any(|m| matches!(m, Message::IgnoreRuleToggleEnabled(7))),
+            "lost Disable at width {width}"
         );
         let enable = labels
             .0
@@ -446,14 +477,14 @@ fn final_settings_rules_are_compact_with_live_actions_at_narrow_widths() {
             .1;
         assert!(
             harness
-                .click(enable.center())
+                .click_across_rebuild(enable.center(), render_settings_dialog(&app))
                 .iter()
                 .any(|m| matches!(m, Message::IgnoreRuleToggleEnabled(8)))
         );
         let edit = labels.0.iter().find(|(s, _)| s == "Edit").unwrap().1;
         assert!(
             harness
-                .click(edit.center())
+                .click_across_rebuild(edit.center(), render_settings_dialog(&app))
                 .iter()
                 .any(|m| matches!(m, Message::IgnoreRuleStartEdit(7)))
         );
@@ -461,7 +492,7 @@ fn final_settings_rules_are_compact_with_live_actions_at_narrow_widths() {
         harness.tooltip(remove.center());
         assert!(
             harness
-                .click(remove.center())
+                .click_across_rebuild(remove.center(), render_settings_dialog(&app))
                 .iter()
                 .any(|m| matches!(m, Message::IgnoreRuleRemove(7)))
         );

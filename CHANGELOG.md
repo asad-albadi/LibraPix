@@ -5,6 +5,7 @@ All notable changes to this project are documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- Preserved Settings action presses across view rebuilds near responsive breakpoints by isolating dialog natural-height measurement from live widget state; added persistent-tree Enable/Disable, Edit, and Remove regression coverage.
 - Corrected header/About brand balance through a shared native Iced component with aspect-derived widths and 8px minimum header vertical clearspace; preserved artwork and theme variants. Documented project-specific sizing, official design references, and generated-asset fidelity limitations.
 - Restored complete, content-sized filter labels with native width-aware wrapping and readable inline error/warning contrast in both themes.
 - Centered the collapsed Details word with true 90-degree rotation using Iced's existing renderer, and placed the library collapse action in the Browse header instead of an empty top row.
@@ -24,7 +25,7 @@ All notable changes to this project are documented in this file.
 - Split app-local UI tokens and widget styles into focused `ui/tokens` and `ui/styles` modules, preserving existing values, public names, visuals, and behavior; added palette/chip regression tests.
 
 ### Docs
-- Refreshed the README with a native 1920 x 1080 screenshot of the centralized UI, corrected current module/typography guidance, consolidated superseded unreleased UI descriptions, and documented the unresolved Settings breakpoint interaction bug.
+- Refreshed the README with a native 1920 x 1080 screenshot of the centralized UI, corrected current module/typography guidance, consolidated superseded unreleased UI descriptions, and documented the Settings breakpoint interaction diagnosis and resolution.
 - Added ADR `0025` and finalized the centralized app-local UI boundaries, hybrid pane persistence/error flow, truthful loading treatment, and preserved source-media/background behavior; documented retained specialized styles and removed unused scaffolding.
 - Documented the hybrid shell/pane presentation boundary and the Windows running-executable lock encountered during manual validation.
 - Added ADR `0023` (themeable design system: semantic palette + Light/Dark/System) and ADR `0024` (unified Library surface) documenting the visual-overhaul branch decisions.

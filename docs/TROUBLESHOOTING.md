@@ -1,5 +1,13 @@
 # Troubleshooting
 
+## Make Short indicator is static or long errors crowd the actions
+
+- Symptoms: the loading dots do not animate during ordinary short generation; lengthy ffmpeg stderr crowds or collapses Close/Generate in the result footer.
+- Affected area: Make Short dialog presentation after the shared-dialog migration.
+- Confirmed causes: dots used the unrelated new-media preview phase, whose subscription is disabled without a pending preview. Unrestricted stderr was placed in the non-scrolling fixed footer.
+- Resolution: use a separate presentation phase/timer while the visible Make Short dialog is Running. Keep only the concise summary/actions in the footer and put stderr in the scrollable body. Generation and cancellation logic are unchanged.
+- Prevention: exercise the actual app subscription/update path without preview activity and verify phase-driven frames change. Test lengthy stderr at constrained window sizes, including reachable error content and stable visible actions after scrolling.
+
 ## Dialog migration verification and hidden library validation
 
 - Symptoms: an invalid library path leaves the dialog open without visible error feedback; Windows desktop automation may also fail to activate the validation app.

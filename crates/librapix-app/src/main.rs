@@ -160,6 +160,7 @@ enum Message {
     AutomationTick,
     DeferredThumbnailCatchupKickoff,
     NewMediaPreviewTick,
+    MakeShortLoadingTick,
     OpenMediaById(i64),
     CopyMediaFileById(i64),
     DismissNewMediaAnnouncement,
@@ -209,6 +210,7 @@ enum IntervalMessageKind {
     AutomationTick,
     DeferredThumbnailCatchupKickoff,
     NewMediaPreviewTick,
+    MakeShortLoadingTick,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -785,6 +787,7 @@ struct MakeShortDialogState {
     validation_error: Option<String>,
     run_state: MakeShortRunState,
     cancellation: Option<ShortGenerationCancellation>,
+    loading_phase: usize,
 }
 
 impl Default for MakeShortDialogState {
@@ -802,6 +805,7 @@ impl Default for MakeShortDialogState {
             validation_error: None,
             run_state: MakeShortRunState::Idle,
             cancellation: None,
+            loading_phase: 0,
         }
     }
 }
@@ -1043,6 +1047,7 @@ const MEDIA_VIRTUAL_OVERSCAN_DRAG_PX: f32 = 400.0;
 const TIMELINE_GROUP_HEADER_HEIGHT: f32 = 40.0;
 const AUTOMATION_TICK_INTERVAL: Duration = Duration::from_millis(100);
 const NEW_MEDIA_PREVIEW_TICK_INTERVAL: Duration = Duration::from_millis(180);
+const MAKE_SHORT_LOADING_TICK_INTERVAL: Duration = Duration::from_millis(180);
 const VIEWPORT_SETTLE_TICK_INTERVAL: Duration = Duration::from_millis(16);
 const VIEWPORT_SETTLE_DELAY: Duration = Duration::from_millis(420);
 const VIEWPORT_SETTLE_DELAY_LARGE_JUMP: Duration = Duration::from_millis(560);
@@ -1267,6 +1272,15 @@ fn subscription(app: &Librapix) -> Subscription<Message> {
         NEW_MEDIA_PREVIEW_TICK_INTERVAL,
         IntervalMessageKind::NewMediaPreviewTick,
     );
+    let make_short_loading_subscription = interval_subscription(
+        app.make_short_dialog.open
+            && matches!(
+                app.make_short_dialog.run_state,
+                MakeShortRunState::Running { .. }
+            ),
+        MAKE_SHORT_LOADING_TICK_INTERVAL,
+        IntervalMessageKind::MakeShortLoadingTick,
+    );
     let deferred_thumbnail_subscription = interval_subscription(
         app.background.deferred_thumbnail_due_at.is_some(),
         DEFERRED_THUMBNAIL_TICK_INTERVAL,
@@ -1291,6 +1305,7 @@ fn subscription(app: &Librapix) -> Subscription<Message> {
             viewport_settle_subscription,
             automation_subscription,
             new_media_preview_subscription,
+            make_short_loading_subscription,
             deferred_thumbnail_subscription,
         ])
     } else {
@@ -1303,6 +1318,7 @@ fn subscription(app: &Librapix) -> Subscription<Message> {
             viewport_settle_subscription,
             automation_subscription,
             new_media_preview_subscription,
+            make_short_loading_subscription,
             deferred_thumbnail_subscription,
             Subscription::run_with(WatchSubscriptionConfig { roots }, watch_filesystem),
         ])
@@ -1335,6 +1351,7 @@ fn interval_message((message, _instant): (IntervalMessageKind, Instant)) -> Mess
             Message::DeferredThumbnailCatchupKickoff
         }
         IntervalMessageKind::NewMediaPreviewTick => Message::NewMediaPreviewTick,
+        IntervalMessageKind::MakeShortLoadingTick => Message::MakeShortLoadingTick,
     }
 }
 
@@ -1485,6 +1502,7 @@ fn message_event_label(msg: &Message) -> String {
         Message::AutomationTick => "AutomationTick".into(),
         Message::DeferredThumbnailCatchupKickoff => "DeferredThumbnailCatchupKickoff".into(),
         Message::NewMediaPreviewTick => "NewMediaPreviewTick".into(),
+        Message::MakeShortLoadingTick => "MakeShortLoadingTick".into(),
         Message::OpenMediaById(id) => format!("OpenMediaById({id})"),
         Message::CopyMediaFileById(id) => format!("CopyMediaFileById({id})"),
         Message::DismissNewMediaAnnouncement => "DismissNewMediaAnnouncement".into(),
@@ -2150,6 +2168,17 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
                 app.new_media_preview_loading_phase = (app.new_media_preview_loading_phase + 1) % 6;
             } else {
                 app.new_media_preview_loading_phase = 0;
+            }
+            return Task::none();
+        }
+        Message::MakeShortLoadingTick => {
+            if app.make_short_dialog.open
+                && matches!(
+                    app.make_short_dialog.run_state,
+                    MakeShortRunState::Running { .. }
+                )
+            {
+                app.make_short_dialog.loading_phase = (app.make_short_dialog.loading_phase + 1) % 3;
             }
             return Task::none();
         }
@@ -10720,6 +10749,245 @@ mod tests {
                     .iter()
                     .any(|s| s == app.i18n.text(TextKey::MakeShortRunButton))
             );
+        }
+    }
+
+    #[test]
+    fn dialog_short_running_timer_animates_without_new_media() {
+        use iced_futures::{
+            Runtime,
+            backend::default::Executor,
+            futures::{StreamExt, channel::mpsc},
+            subscription::into_recipes,
+        };
+        let mut app = test_app();
+        app.make_short_dialog.open = true;
+        app.make_short_dialog.run_state = MakeShortRunState::Running {
+            stage: GenerationStage::Generating,
+            status: "Generating short".into(),
+        };
+        app.make_short_dialog.cancellation = Some(ShortGenerationCancellation::default());
+        assert!(app.new_media_announcement.is_none());
+        let background = format!("{:?}", app.background);
+        let executor = <Executor as iced_futures::Executor>::new().unwrap();
+        let (mut sender, mut receiver) = mpsc::channel(16);
+        let mut runtime = Runtime::new(executor, sender.clone());
+        runtime.track(into_recipes(subscription(&app)));
+        // A bounded deadline makes a missing presentation subscription fail,
+        // rather than hanging until the unrelated 60-second release-check tick.
+        let deadline = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(1500));
+            let _ = sender.try_send(Message::ModalContentClicked);
+        });
+        let initial = dialog_frame_pixels(render_make_short_dialog(&app), Theme::Light);
+        let mut previous = initial.clone();
+        for expected_phase in [1, 2, 0] {
+            let message = runtime.block_on(receiver.next()).unwrap();
+            assert!(
+                !matches!(message, Message::ModalContentClicked),
+                "running generation must enable its own animation timer"
+            );
+            assert_eq!(update(&mut app, message).units(), 0);
+            assert_eq!(app.make_short_dialog.loading_phase, expected_phase);
+            let frame = dialog_frame_pixels(render_make_short_dialog(&app), Theme::Light);
+            assert!(
+                previous != frame,
+                "real timer updates must advance the rendered indicator"
+            );
+            previous = frame;
+            assert_eq!(app.new_media_preview_loading_phase, 0);
+            assert!(app.make_short_dialog.cancellation.is_some());
+            assert!(
+                !app.make_short_dialog
+                    .cancellation
+                    .as_ref()
+                    .unwrap()
+                    .is_cancelled()
+            );
+            assert!(matches!(
+                app.make_short_dialog.run_state,
+                MakeShortRunState::Running {
+                    stage: GenerationStage::Generating,
+                    ..
+                }
+            ));
+            assert_eq!(format!("{:?}", app.background), background);
+        }
+        assert!(
+            initial == previous,
+            "three indeterminate phases must cycle, not accumulate progress"
+        );
+        deadline.join().unwrap();
+    }
+
+    #[test]
+    fn dialog_short_animation_subscription_only_runs_for_visible_running_dialog() {
+        fn recipes(app: &Librapix) -> usize {
+            iced_futures::subscription::into_recipes(subscription(app)).len()
+        }
+        let mut app = test_app();
+        let idle = recipes(&app);
+        app.make_short_dialog.run_state = MakeShortRunState::Running {
+            stage: GenerationStage::Generating,
+            status: "Generating short".into(),
+        };
+        assert_eq!(
+            recipes(&app),
+            idle,
+            "closed dialogs need no animation timer"
+        );
+        assert_eq!(update(&mut app, Message::MakeShortLoadingTick).units(), 0);
+        assert_eq!(app.make_short_dialog.loading_phase, 0);
+        app.make_short_dialog.open = true;
+        assert_eq!(recipes(&app), idle + 1);
+        for state in [
+            MakeShortRunState::Idle,
+            MakeShortRunState::Success {
+                output_file: PathBuf::from("/output/short.mp4"),
+            },
+            MakeShortRunState::Canceled {
+                summary: "Canceled".into(),
+            },
+            MakeShortRunState::Failed {
+                summary: "Failed".into(),
+                details: "stderr".into(),
+            },
+        ] {
+            app.make_short_dialog.run_state = state;
+            assert_eq!(recipes(&app), idle, "terminal states must unsubscribe");
+            assert_eq!(update(&mut app, Message::MakeShortLoadingTick).units(), 0);
+            assert_eq!(
+                app.make_short_dialog.loading_phase, 0,
+                "late ticks cannot animate terminal states"
+            );
+        }
+    }
+
+    #[test]
+    fn dialog_short_long_failure_details_scroll_without_crowding_actions() {
+        use iced_futures::core::{
+            Layout, layout,
+            renderer::Headless,
+            widget::{
+                Tree,
+                operation::scrollable::{RelativeOffset, Scrollable},
+            },
+        };
+        #[derive(Default)]
+        struct Inspect {
+            scrolls: Vec<(iced::Rectangle, iced::Rectangle, iced::Vector)>,
+            details: Option<iced::Rectangle>,
+            detail_lines: usize,
+            close: Option<iced::Rectangle>,
+            generate: Option<iced::Rectangle>,
+            scroll_to_end: bool,
+        }
+        impl iced_futures::core::widget::Operation for Inspect {
+            fn traverse(
+                &mut self,
+                f: &mut dyn FnMut(&mut dyn iced_futures::core::widget::Operation),
+            ) {
+                f(self);
+            }
+            fn scrollable(
+                &mut self,
+                _: Option<&Id>,
+                bounds: iced::Rectangle,
+                content: iced::Rectangle,
+                translation: iced::Vector,
+                state: &mut dyn Scrollable,
+            ) {
+                self.scrolls.push((bounds, content, translation));
+                if self.scroll_to_end {
+                    state.snap_to(RelativeOffset {
+                        x: None,
+                        y: Some(1.0),
+                    });
+                }
+            }
+            fn text(&mut self, _: Option<&Id>, bounds: iced::Rectangle, value: &str) {
+                if value.starts_with("ffmpeg stderr line") {
+                    self.details = Some(bounds);
+                    self.detail_lines = value.lines().count();
+                }
+                if value == "Close" {
+                    self.close = Some(bounds);
+                }
+                if value == "Generate" {
+                    self.generate = Some(bounds);
+                }
+            }
+        }
+        let mut app = test_app();
+        let details = (0..150)
+            .map(|n| format!("ffmpeg stderr line {n}: encoder diagnostic\n"))
+            .collect::<String>();
+        app.make_short_dialog.run_state = MakeShortRunState::Failed {
+            summary: "Generation failed".into(),
+            details: details.clone(),
+        };
+        let renderer = iced_futures::futures::executor::block_on(iced::Renderer::new(
+            iced::Font::DEFAULT,
+            iced::Pixels(13.0),
+            Some("tiny-skia"),
+        ))
+        .unwrap();
+        for size in [Size::new(800.0, 600.0), Size::new(480.0, 400.0)] {
+            let mut element = render_make_short_dialog(&app);
+            let mut tree = Tree::new(&element);
+            let node = element.as_widget_mut().layout(
+                &mut tree,
+                &renderer,
+                &layout::Limits::new(Size::ZERO, size),
+            );
+            let mut before = Inspect {
+                scroll_to_end: true,
+                ..Inspect::default()
+            };
+            element
+                .as_widget_mut()
+                .operate(&mut tree, Layout::new(&node), &renderer, &mut before);
+            let close = before.close.expect("Close remains rendered");
+            let generate = before.generate.expect("Generate remains rendered");
+            for bounds in [close, generate] {
+                assert!(
+                    bounds.height > 0.0
+                        && bounds.y >= 0.0
+                        && bounds.y + bounds.height <= size.height,
+                    "failure actions must stay inside the window: {bounds:?}"
+                );
+            }
+            let (viewport, content, _) = before.scrolls[0];
+            assert!(
+                viewport.height > 30.0,
+                "errors must not collapse the body viewport"
+            );
+            let stderr = before.details.expect("all stderr remains in the dialog");
+            assert_eq!(
+                before.detail_lines, 150,
+                "failure details must not be truncated"
+            );
+            assert!(stderr.height > viewport.height);
+            assert!(
+                stderr.y >= content.y
+                    && stderr.y + stderr.height <= content.y + content.height + 1.0,
+                "stderr must belong to the scrollable body, not the fixed footer"
+            );
+            let mut after = Inspect::default();
+            element
+                .as_widget_mut()
+                .operate(&mut tree, Layout::new(&node), &renderer, &mut after);
+            assert!(
+                after.scrolls[0].2.y > 0.0,
+                "the error region must actually scroll"
+            );
+            assert!(
+                stderr.y + stderr.height - after.scrolls[0].2.y
+                    <= viewport.y + viewport.height + 1.0,
+                "the end of stderr must be reachable"
+            );
+            assert_eq!(before.close, after.close);
+            assert_eq!(before.generate, after.generate);
         }
     }
 

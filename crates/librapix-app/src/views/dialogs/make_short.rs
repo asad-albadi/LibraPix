@@ -56,7 +56,7 @@ pub(crate) fn view(app: &Librapix) -> Element<'_, Message> {
                 GenerationStage::Failed => StatusTone::Error,
                 _ => StatusTone::Working,
             };
-            status_row(status, tone, app.new_media_preview_loading_phase)
+            status_row(status, tone, state.loading_phase)
         }
         MakeShortRunState::Success { .. } => status_row(
             app.i18n.text(TextKey::MakeShortSuccessLabel),
@@ -64,12 +64,7 @@ pub(crate) fn view(app: &Librapix) -> Element<'_, Message> {
             0,
         ),
         MakeShortRunState::Canceled { summary } => status_row(summary, StatusTone::Neutral, 0),
-        MakeShortRunState::Failed { summary, details } => column![
-            status_row(summary, StatusTone::Error, 0),
-            text(details).size(FONT_CAPTION).style(text_tertiary),
-        ]
-        .spacing(SPACE_2XS)
-        .into(),
+        MakeShortRunState::Failed { summary, .. } => status_row(summary, StatusTone::Error, 0),
         MakeShortRunState::Idle => Space::new().into(),
     };
     let warning: Element<'_, Message> = if make_short_has_smooth_warning(state) {
@@ -163,7 +158,7 @@ pub(crate) fn view(app: &Librapix) -> Element<'_, Message> {
     ]
     .spacing(SPACE_SM)
     .align_y(iced::Alignment::Center);
-    let body = column![
+    let mut body = column![
         field(FieldSpec {
             label: app.i18n.text(TextKey::MakeShortOutputPathLabel),
             control: output_row.into(),
@@ -261,6 +256,9 @@ pub(crate) fn view(app: &Librapix) -> Element<'_, Message> {
         validation,
     ]
     .spacing(SPACE_SM);
+    if let MakeShortRunState::Failed { details, .. } = &state.run_state {
+        body = body.push(text(details).size(FONT_CAPTION).style(text_tertiary));
+    }
     modal_overlay(dialog(DialogSpec {
         title: app.i18n.text(TextKey::MakeShortDialogTitle).into(),
         close_message: (!is_running).then_some((

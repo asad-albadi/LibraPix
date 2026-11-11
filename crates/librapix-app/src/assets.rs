@@ -4,7 +4,7 @@
 //! on an external `assets/` folder for UI icon rendering. UI icons ship in two
 //! tints — white (for dark surfaces) and black (for light surfaces) — and the
 //! accessors pick the variant from the active theme via a `dark` flag.
-use iced::widget::{image, svg};
+use iced::widget::image;
 use std::sync::LazyLock;
 
 /// Project repository URL for the GitHub link in the app header.
@@ -12,17 +12,21 @@ pub const REPO_URL: &str = "https://github.com/asad-albadi/LibraPix";
 
 // ── Canonical brand ──
 
-/// Canonical brand logo (blue) as SVG for scalable display (header, about).
-/// Reads on both dark and light surfaces, so it stays consistent across themes.
-pub fn logo_svg() -> svg::Handle {
-    LOGO_SVG_BLUE.clone()
+/// INDEX mark, with a light or dark foreground chosen for the active surface.
+pub fn logo(dark: bool) -> image::Handle {
+    pick(&LOGO_LIGHT, &LOGO_DARK, dark)
+}
+
+/// Approved custom wordmark, not a font approximation of the brand lettering.
+pub fn wordmark(dark: bool) -> image::Handle {
+    pick(&WORDMARK_LIGHT, &WORDMARK_DARK, dark)
 }
 
 /// OS window / taskbar icon (brand blue). `None` if the embedded PNG fails to
 /// decode, in which case iced falls back to the platform default.
 pub fn window_icon() -> Option<iced::window::Icon> {
     iced::window::icon::from_file_data(
-        include_bytes!("../../../assets/logo/blue/icon-256.png"),
+        include_bytes!("../../../assets/logo/index/icon-256.png"),
         None,
     )
     .ok()
@@ -114,12 +118,26 @@ fn make_image_handle(bytes: &'static [u8]) -> image::Handle {
     image::Handle::from_bytes(bytes.to_vec())
 }
 
-fn make_svg_handle(bytes: &'static [u8]) -> svg::Handle {
-    svg::Handle::from_memory(bytes.to_vec())
-}
-
-static LOGO_SVG_BLUE: LazyLock<svg::Handle> =
-    LazyLock::new(|| make_svg_handle(include_bytes!("../../../assets/logo/blue/logo-blue.svg")));
+static LOGO_LIGHT: LazyLock<image::Handle> = LazyLock::new(|| {
+    make_image_handle(include_bytes!(
+        "../../../assets/logo/index/librapix-icon-light.png"
+    ))
+});
+static LOGO_DARK: LazyLock<image::Handle> = LazyLock::new(|| {
+    make_image_handle(include_bytes!(
+        "../../../assets/logo/index/librapix-icon-dark.png"
+    ))
+});
+static WORDMARK_LIGHT: LazyLock<image::Handle> = LazyLock::new(|| {
+    make_image_handle(include_bytes!(
+        "../../../assets/logo/index/librapix-wordmark-light.png"
+    ))
+});
+static WORDMARK_DARK: LazyLock<image::Handle> = LazyLock::new(|| {
+    make_image_handle(include_bytes!(
+        "../../../assets/logo/index/librapix-wordmark-dark.png"
+    ))
+});
 
 macro_rules! icon_pair {
     ($white:ident, $black:ident, $file:literal) => {
@@ -159,3 +177,17 @@ icon_pair!(ICON_YOUTUBE_W, ICON_YOUTUBE_B, "youtube.png");
 icon_pair!(ICON_GENERATE_W, ICON_GENERATE_B, "generate.png");
 icon_pair!(ICON_TYPE_IMAGE_W, ICON_TYPE_IMAGE_B, "type-image.png");
 icon_pair!(ICON_TYPE_VIDEO_W, ICON_TYPE_VIDEO_B, "type-video.png");
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn index_brand_assets_are_theme_specific_and_window_icon_decodes() {
+        assert_ne!(logo(true).id(), logo(false).id());
+        assert_ne!(wordmark(true).id(), wordmark(false).id());
+        assert_eq!(logo(true).id(), logo(true).id());
+        assert_eq!(wordmark(false).id(), wordmark(false).id());
+        assert!(window_icon().is_some());
+    }
+}

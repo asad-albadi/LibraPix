@@ -354,6 +354,6 @@ This file tracks major direct dependencies that shape architecture and maintenan
   - [https://docs.rs/winresource/latest/winresource/](https://docs.rs/winresource/latest/winresource/)
 - Notes:
   - Used in `crates/librapix-app/build.rs` and gated to Windows builds only.
-  - Embeds `assets/logo/blue/icon.ico` and `LibraPix` product metadata into `librapix-app.exe`.
+  - Embeds `assets/logo/index/icon.ico` and `LibraPix` product metadata into `librapix-app.exe`.
 - Risks/tradeoffs:
   - Adds a Windows-only build-time dependency surface.

@@ -21,12 +21,6 @@ pub fn text_tertiary(theme: &Theme) -> text::Style {
     }
 }
 
-pub fn text_accent(theme: &Theme) -> text::Style {
-    text::Style {
-        color: Some(palette(theme).accent_text),
-    }
-}
-
 pub fn text_warning(theme: &Theme) -> text::Style {
     text::Style {
         color: Some(palette(theme).warning),

@@ -6,19 +6,21 @@ LibraPix branding assets and usage guidelines.
 
 **LibraPix** (PascalCase, no space).
 
-## Primary brand variant
+## INDEX identity
 
-**Blue** is the canonical/default brand variant for the app.
+The approved INDEX identity uses a custom lowercase wordmark, a standalone
+geometric mark, and blue pixel accents. Product copy remains **LibraPix**.
 
-- Primary logo: `assets/logo/blue/logo.svg`
-- App icon: `assets/logo/blue/icon.ico` (Windows), `assets/logo/blue/icon.icns` (macOS)
-- PNG sizes: `assets/logo/blue/icon-32.png` through `assets/logo/blue/icon-1024.png`
+All brand assets live under `assets/logo/index/`:
 
-## Alternate variants
+- `librapix-icon-dark.png` and `librapix-wordmark-dark.png`: black lettering for light surfaces.
+- `librapix-icon-light.png` and `librapix-wordmark-light.png`: white lettering for dark surfaces.
+- `icon.ico`, `icon.icns`, and sized PNGs: desktop packaging derivatives.
 
-- **White** (`assets/logo/white/*`): Use on dark backgrounds or image-heavy surfaces.
-- **Black** (`assets/logo/black/*`): Use on light backgrounds or document-style layouts.
-
+The app embeds theme-specific PNG handles centrally in `assets.rs`. The header
+uses the custom wordmark; About uses the mark and wordmark. The README uses a
+`picture` element to select the appropriate foreground for GitHub's theme.
+See the asset directory README for production details. No legacy logo set remains.
 ## Icon assets
 
 UI icons live under `assets/icons/` with color variants:
@@ -47,7 +49,7 @@ UI icons live under `assets/icons/` with color variants:
 
 ## App integration
 
-- **Header**: Blue logo icon (32×32) + "Libra" (primary) + "Pix" (accent) + GitHub link (opens https://github.com/asad-albadi/LibraPix).
+- **Header**: Theme-aware INDEX wordmark and GitHub repository action.
 - **Sidebar**: White icons for Gallery, Timeline, Index Library.
 - **Media pane**: White refresh icon, Filters button (opens filter dialog with type/extension/tag controls).
 - **Details panel**: White icons for Open, Show in Folder, Copy File, Copy Path.

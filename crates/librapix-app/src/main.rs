@@ -10399,7 +10399,9 @@ mod tests {
             app.i18n.text(TextKey::AboutVersionLabel),
             APP_VERSION
         )));
-        assert!(texts.contains(&app.i18n.text(TextKey::AppTitle).to_owned()));
+        // The custom INDEX wordmark replaces the duplicated plain-text name.
+        // The localized dialog title above still identifies the application.
+        assert!(!texts.contains(&app.i18n.text(TextKey::AppTitle).to_owned()));
 
         let messages = pane_click(render_about_dialog(&app), iced::Point::new(1.0, 1.0));
         assert!(

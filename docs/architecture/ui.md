@@ -230,8 +230,8 @@ Gallery, timeline, and search views share a unified media-view architecture:
 
 ## Header branding
 
-- Blue logo icon (from `assets/logo/blue/`) displays at 32×32.
-- "Libra" displays in primary text color, "Pix" in accent color, creating a split-color product identity with minimal spacing.
+- The approved INDEX PNG wordmark from `assets/logo/index/` is embedded centrally and displayed with preserved aspect ratio.
+- Dark lettering is used on light surfaces; white lettering is used on dark surfaces. Both retain the blue pixel accents. About also displays the standalone mark.
 - Header includes an About dialog entry point for project/creator context.
 - GitHub link button uses a theme-aware icon and localized tooltip to open the project repository.
 - The header follows the media-first neutral palette in Light, Dark, and System themes.

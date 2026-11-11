@@ -275,10 +275,10 @@ Packaging/release baseline:
 ## 12) Branding and Asset Integration
 
 Canonical branding:
-- Blue variant is default/canonical (`assets/logo/blue/...`).
+- INDEX identity is canonical (`assets/logo/index/`), with blue pixel accents.
 
 Alt variants:
-- white and black logo sets exist for surface contrast variants.
+- Light and dark foreground PNGs support both themes; legacy logo sets are removed.
 
 In-app asset integration:
 - logos/icons are embedded via `include_bytes!` in `librapix-app/src/assets.rs`.

@@ -70,7 +70,7 @@ jobs:
               mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources" "$DMG_ROOT"
               cp "$BIN" "$APP_DIR/Contents/MacOS/librapix-app"
               chmod +x "$APP_DIR/Contents/MacOS/librapix-app"
-              cp assets/logo/blue/icon.icns "$APP_DIR/Contents/Resources/icon.icns"
+              cp assets/logo/index/icon.icns "$APP_DIR/Contents/Resources/icon.icns"
 
               printf '%s\n' \
                 '<?xml version="1.0" encoding="UTF-8"?>' \
@@ -133,7 +133,7 @@ jobs:
                 > "$APPDIR/librapix.desktop"
               cp "$APPDIR/librapix.desktop" "$APPDIR/usr/share/applications/librapix.desktop"
 
-              cp assets/logo/blue/icon-256.png "$APPDIR/librapix.png"
+              cp assets/logo/index/icon-256.png "$APPDIR/librapix.png"
               cp "$APPDIR/librapix.png" "$APPDIR/.DirIcon"
 
               curl -L -o appimagetool.AppImage \

@@ -477,7 +477,7 @@ fn shared_accent_text_remains_readable_on_neutral_surfaces() {
         let p = palette(&theme);
         for surface in [p.bg_base, p.bg_layer, p.bg_surface] {
             assert!(
-                contrast(styles::text::text_accent(&theme).color.unwrap(), surface) >= 4.5,
+                contrast(palette(&theme).accent_text, surface) >= 4.5,
                 "{theme:?}"
             );
         }

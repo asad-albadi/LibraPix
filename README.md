@@ -1,6 +1,9 @@
 # LibraPix
 
-![LibraPix logo](assets/logo/blue/icon-128.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/logo/index/librapix-wordmark-light.png">
+  <img src="assets/logo/index/librapix-wordmark-dark.png" alt="LibraPix" width="320">
+</picture>
 
 LibraPix is a cross-platform desktop application for browsing and managing local screenshots and recordings without modifying the original files.
 

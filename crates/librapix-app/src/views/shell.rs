@@ -4,7 +4,7 @@ use crate::ui::{
     styles::{
         container::{app_bg_style, header_style},
         scrollable::scrollbar_style,
-        text::{text_accent, text_primary, text_tertiary, text_warning},
+        text::{text_primary, text_tertiary, text_warning},
     },
     tokens::*,
 };
@@ -32,7 +32,7 @@ use crate::{
 };
 use iced::widget::image::FilterMethod;
 use iced::widget::progress_bar;
-use iced::widget::{Space, column, container, image, row, scrollable, stack, svg, text};
+use iced::widget::{Space, column, container, image, row, scrollable, stack, text};
 use iced::{ContentFit, Element, Length};
 use librapix_core::{
     app::{RootLifecycle, Route},
@@ -44,20 +44,11 @@ pub(crate) fn view(app: &Librapix) -> Element<'_, Message> {
     let _required_rules = non_destructive::required_rules();
 
     // ── Header ──
-    let brand = row![
-        svg(assets::logo_svg())
-            .width(Length::Fixed(ICON_XL))
-            .height(Length::Fixed(ICON_XL))
-            .content_fit(ContentFit::Contain),
-        row![
-            text("Libra").size(FONT_DISPLAY).style(text_primary),
-            text("Pix").size(FONT_DISPLAY).style(text_accent),
-        ]
-        .spacing(0)
-        .align_y(iced::Alignment::Center),
-    ]
-    .spacing(SPACE_SM)
-    .align_y(iced::Alignment::Center);
+    let brand = image(assets::wordmark(app.is_dark_theme()))
+        .width(Length::Fixed(142.0))
+        .height(Length::Fixed(36.0))
+        .content_fit(ContentFit::Contain)
+        .filter_method(FilterMethod::Linear);
 
     let settings_btn = app_button(
         text(app.i18n.text(TextKey::SettingsButtonLabel)).size(FONT_BODY),

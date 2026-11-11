@@ -5,6 +5,7 @@ All notable changes to this project are documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- Increased header wordmark display size while preserving the artwork's aspect ratio to avoid a cramped appearance.
 - Restored complete, content-sized filter labels with native width-aware wrapping and readable inline error/warning contrast in both themes.
 - Centered the collapsed Details word with true 90-degree rotation using Iced's existing renderer, and placed the library collapse action in the Browse header instead of an empty top row.
 - Added localized remove-action hover help for managed tags and ignore rules.

@@ -45,8 +45,8 @@ pub(crate) fn view(app: &Librapix) -> Element<'_, Message> {
 
     // ── Header ──
     let brand = image(assets::wordmark(app.is_dark_theme()))
-        .width(Length::Fixed(142.0))
-        .height(Length::Fixed(36.0))
+        .width(Length::Fixed(180.0))
+        .height(Length::Fixed(44.0))
         .content_fit(ContentFit::Contain)
         .filter_method(FilterMethod::Linear);
 

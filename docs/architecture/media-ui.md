@@ -35,6 +35,9 @@ The application shell is composed in `views/shell.rs`. Its independently
 collapsible panes use app-local presentation patterns: the left rail contains
 only Library, Add Library, Refresh, and Expand, with localized tooltips. Dynamic
 library roots and their Edit/Statistics actions remain in the expanded sidebar.
+Root navigation uses the sidebar pattern's content-sized `navigation_item`,
+sharing centralized active/hover styling without the fixed height of tab triggers.
+Wrapped library labels therefore remain inside their complete clickable rows.
 The collapsed right edge shows a compact horizontal Details label and an Expand
 Details tooltip; no text rotation or custom renderer is used. Expanding restores
 the existing inspector content. Pane widths change the available media width,

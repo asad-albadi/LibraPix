@@ -21,7 +21,7 @@ use crate::ui::components::{
 use crate::ui::patterns::status::{StatusTone, status_row};
 use crate::ui::patterns::{
     details_pane::{DetailsPaneMode, details_pane},
-    sidebar::{GlobalRailAction, SidebarMode, sidebar},
+    sidebar::{GlobalRailAction, SidebarMode, navigation_item, sidebar},
 };
 use crate::ui::{self, *};
 use crate::{
@@ -312,7 +312,7 @@ fn render_expanded_sidebar(app: &Librapix) -> Element<'_, Message> {
                 };
                 col.push(
                     row![
-                        tab_trigger(
+                        navigation_item(
                             row![
                                 text("\u{25CF}").size(FONT_CAPTION).color(status_color),
                                 text(label).size(FONT_BODY).color(if is_selected {
@@ -325,8 +325,7 @@ fn render_expanded_sidebar(app: &Librapix) -> Element<'_, Message> {
                             .align_y(iced::Alignment::Center),
                             Some(Message::SelectRoot(root.id)),
                             is_selected
-                        )
-                        .width(Length::Fill),
+                        ),
                         app_button(
                             text(app.i18n.text(TextKey::RootEditButton)).size(FONT_CAPTION),
                             Some(Message::OpenEditLibraryDialog(root.id)),

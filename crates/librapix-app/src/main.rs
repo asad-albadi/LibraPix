@@ -10032,6 +10032,133 @@ mod tests {
                 .any(|s| s == app.i18n.text(TextKey::ActivityWorkingLabel))
         );
     }
+
+    #[test]
+    fn presentation_long_library_names_fit_distinct_clickable_rows() {
+        use iced_futures::core::{
+            Layout, Shell, clipboard, layout, mouse,
+            renderer::Headless,
+            widget::{Operation, Tree},
+        };
+
+        #[derive(Default)]
+        struct Labels(Vec<(String, iced::Rectangle)>);
+        impl Operation for Labels {
+            fn traverse(&mut self, f: &mut dyn FnMut(&mut dyn Operation)) {
+                f(self);
+            }
+            fn text(&mut self, _: Option<&Id>, bounds: iced::Rectangle, value: &str) {
+                self.0.push((value.to_owned(), bounds));
+            }
+        }
+
+        let renderer = iced_futures::futures::executor::block_on(iced::Renderer::new(
+            iced::Font::DEFAULT,
+            iced::Pixels(13.0),
+            Some("tiny-skia"),
+        ))
+        .unwrap();
+        let mut app = test_app();
+        let names = [
+            "Screenshots and recordings from an exceptionally long named library",
+            "Another adjacent library with a complete descriptive multi line name",
+        ];
+        for (index, name) in names.iter().enumerate() {
+            app.state.library_roots.push(LibraryRootView {
+                id: index as i64 + 1,
+                normalized_path: PathBuf::from(format!("/media/library-{index}")),
+                lifecycle: RootLifecycle::Active,
+                display_name: Some((*name).to_owned()),
+            });
+        }
+        let size = Size::new(980.0, 900.0);
+        for selected in [1, 2] {
+            app.state.selected_root_id = Some(selected);
+            let mut element = views::shell::view(&app);
+            let mut tree = Tree::new(&element);
+            let node = element.as_widget_mut().layout(
+                &mut tree,
+                &renderer,
+                &layout::Limits::new(Size::ZERO, size),
+            );
+            let mut labels = Labels::default();
+            element
+                .as_widget_mut()
+                .operate(&mut tree, Layout::new(&node), &renderer, &mut labels);
+            let mut root_bounds = Vec::new();
+            for (index, name) in names.iter().enumerate() {
+                let matches: Vec<_> = labels.0.iter().filter(|(value, _)| value == name).collect();
+                assert_eq!(matches.len(), 1, "each complete library label is present");
+                let bounds = matches[0].1;
+                let mut unconstrained: Element<'_, Message> = text(*name).size(FONT_BODY).into();
+                let mut text_tree = Tree::new(&unconstrained);
+                let full = unconstrained.as_widget_mut().layout(
+                    &mut text_tree,
+                    &renderer,
+                    &layout::Limits::new(Size::ZERO, Size::new(bounds.width + 0.5, 900.0)),
+                );
+                assert!(full.size().height > CONTROL_HEIGHT_SM, "fixture must wrap");
+                assert!(
+                    bounds.height + 0.5 >= full.size().height,
+                    "complete label needs {}px, but row text gets {}px",
+                    full.size().height,
+                    bounds.height
+                );
+                // Containers can share Tree state with their content, so measure
+                // actual pointer hit areas instead of zipping tree/layout nodes.
+                let pointer_at = |y| {
+                    element.as_widget().mouse_interaction(
+                        &tree,
+                        Layout::new(&node),
+                        mouse::Cursor::Available(iced::Point::new(bounds.center().x, y)),
+                        &iced::Rectangle::with_size(size),
+                        &renderer,
+                    ) == mouse::Interaction::Pointer
+                };
+                assert!(pointer_at(bounds.center().y));
+                let mut top = bounds.center().y;
+                while top >= 0.5 && pointer_at(top - 0.5) {
+                    top -= 0.5;
+                }
+                let mut bottom = bounds.center().y;
+                while bottom < size.height && pointer_at(bottom + 0.5) {
+                    bottom += 0.5;
+                }
+                assert!(
+                    top <= bounds.y + 0.5 && bottom >= bounds.y + bounds.height - 0.5,
+                    "the complete label must fit its pointer hit area"
+                );
+                root_bounds.push((top, bottom));
+                for y in [bounds.y + 1.0, bounds.y + bounds.height - 1.0] {
+                    let point = iced::Point::new(bounds.x + bounds.width / 2.0, y);
+                    let mut messages = Vec::new();
+                    for event in [
+                        mouse::Event::ButtonPressed(mouse::Button::Left),
+                        mouse::Event::ButtonReleased(mouse::Button::Left),
+                    ] {
+                        element.as_widget_mut().update(
+                            &mut tree,
+                            &iced::Event::Mouse(event),
+                            Layout::new(&node),
+                            mouse::Cursor::Available(point),
+                            &renderer,
+                            &mut clipboard::Null,
+                            &mut Shell::new(&mut messages),
+                            &iced::Rectangle::with_size(size),
+                        );
+                    }
+                    assert_eq!(messages.len(), 1, "one row handles each label click");
+                    assert!(
+                        matches!(messages[0], Message::SelectRoot(id) if id == index as i64 + 1)
+                    );
+                }
+            }
+            assert!(
+                root_bounds[0].1 < root_bounds[1].0,
+                "adjacent navigation hit areas must not overlap"
+            );
+        }
+    }
     use super::*;
     use crate::views::dialogs::{
         about::view as render_about_dialog, filters::view as render_filter_dialog,

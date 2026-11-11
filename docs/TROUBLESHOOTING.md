@@ -1,5 +1,13 @@
 # Troubleshooting
 
+## Long library names are clipped or extend outside clickable rows
+
+- Symptoms: multi-line library names lose lines or spill beyond their row's hit area.
+- Affected area: expanded sidebar root navigation after centralized-control migration.
+- Confirmed cause: root rows used fixed-height tab triggers (28 px), constraining wrapped text and its clickable area.
+- Resolution: use the sidebar pattern's content-sized `navigation_item`, retaining centralized tab/active styling and existing navigation messages.
+- Prevention: test adjacent long labels with real Iced constrained layout, independently measure complete text height, and click both the first and last lines to verify distinct, non-overlapping hit areas.
+
 ## Make Short indicator is static or long errors crowd the actions
 
 - Symptoms: the loading dots do not animate during ordinary short generation; lengthy ffmpeg stderr crowds or collapses Close/Generate in the result footer.

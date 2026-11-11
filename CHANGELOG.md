@@ -5,6 +5,7 @@ All notable changes to this project are documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- Restored content-sized library navigation rows so long names wrap completely within distinct clickable areas.
 - Gave Make Short its own generation-active indeterminate animation timer and kept long ffmpeg errors in the scrolling dialog body so result actions remain visible.
 - Preserved media scroll position when layout-save notices appear or are dismissed by keeping the shell widget-tree structure stable.
 

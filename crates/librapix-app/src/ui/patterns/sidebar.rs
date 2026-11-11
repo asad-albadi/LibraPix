@@ -1,8 +1,24 @@
-use crate::ui::{styles::container::sidebar_style, tokens::*};
+use crate::ui::{
+    styles::{button::tab_style, container::sidebar_style},
+    tokens::*,
+};
 use iced::{
     Element, Length,
-    widget::{Container, column, container},
+    widget::{Button, Container, button, column, container},
 };
+
+/// Library names may wrap: keep the full label inside a content-sized hit area.
+pub fn navigation_item<'a, Message: Clone + 'a>(
+    content: impl Into<Element<'a, Message>>,
+    on_press: Option<Message>,
+    active: bool,
+) -> Button<'a, Message> {
+    button(content)
+        .on_press_maybe(on_press)
+        .width(Length::Fill)
+        .padding([SPACE_XS as u16, SPACE_SM as u16])
+        .style(move |theme, status| tab_style(theme, status, active))
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SidebarMode {

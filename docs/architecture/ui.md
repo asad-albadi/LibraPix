@@ -46,7 +46,10 @@ Shared visual tokens and widget styles are centralized in `librapix-app/src/ui/`
 - `scrollbar_style` renders thin, rounded, translucent overlay scrollbars (invisible rail, pill scroller that darkens on hover/drag), applied to the gallery, sidebar, details pane, dialog frame, and diagnostics list.
 
 ### Dialogs
-- All modals render through one shared `render_dialog_frame(content, max_width, max_height)`: the glass surface, consistent padding, a styled scrollable, and width/height that scale with the window. The frame hugs its content up to per-dialog caps, then scrolls — so short dialogs stay short and tall ones cap + scroll.
+- `ui/patterns/dialog.rs` accepts a `DialogSpec` with localized title, optional labeled close message, body, optional footer, and size caps. It reserves a stable bounded frame with a fixed header and footer around a scrolling body, using built-in Iced widgets. About is the first migrated dialog; other dialogs retain `render_dialog_frame` until their migration.
+- Backdrop clicks, content-click capture, Escape handling, and dialog lifecycle remain application-owned. About still uses the existing `render_modal_overlay` and `CloseAbout` message.
+- `ui/patterns/field.rs` composes caller-owned controls without changing IDs or message wiring. A validation error replaces help text rather than showing both.
+- `ui/patterns/status.rs` provides neutral, working, success, warning, and error presentation. Working reuses the phase-driven indeterminate indicator; there is no percentage/progress-value input. Callers own localized stage text and timer subscriptions.
 
 ### Layout helpers
 - `section_heading()`: small-caps section label.

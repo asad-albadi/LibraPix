@@ -27,6 +27,7 @@ All notable changes to this project are documented in this file.
 - Added ADR `0022` for the `librapix-video-tools` subsystem and documented Make Short architecture boundaries/config/dependency updates.
 
 ### Added
+- Added shared app-local dialog, field, and status patterns with bounded scrolling, error-over-help precedence, and indeterminate-only working feedback; migrated About while preserving its content and dismissal behavior.
 - Added independently collapsible application panes: a global-actions library rail, a compact labeled Details edge, and overlay layout-save error notices, using the existing persisted pane preferences without changing browsing/background behavior.
 - Added centralized app-local Iced component primitives for controls, cards, badges, loading, empty states, and dismissible notices; view migration remains a separate step.
 - Added backward-compatible independent pane-collapse preferences, app-side persistence transitions, dismissible error-notice state, and localized layout labels; visual pane controls follow separately.

@@ -15,6 +15,7 @@
   - `ui/components` provides message-generic constructors over built-in Iced widgets; styles own variant/status mapping and components own compact layout. Components receive localized text and messages, never application services.
   - No direct storage/indexing logic
   - `views/shell.rs` composes product state into shell regions and existing dialog overlays; `ui/patterns/sidebar.rs` and `details_pane.rs` accept only presentation content and messages. Pane persistence and all background orchestration remain in the app update layer.
+  - `ui/patterns/dialog.rs`, `field.rs`, and `status.rs` centralize bounded modal frames, labeled controls with help/error precedence, and truthful status presentation. Callers retain localization, widget IDs, messages, overlay semantics, and background state.
 - Application orchestration (`librapix-core::app`)
   - Explicit app state and state transitions
   - Route-level coordination

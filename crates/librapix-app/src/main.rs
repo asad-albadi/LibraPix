@@ -4900,19 +4900,7 @@ fn render_settings_dialog(app: &Librapix) -> Element<'_, Message> {
 }
 
 fn render_about_dialog(app: &Librapix) -> Element<'_, Message> {
-    let dialog_content = column![
-        row![
-            text(app.i18n.text(TextKey::AboutDialogTitle))
-                .size(FONT_TITLE)
-                .style(text_primary),
-            Space::new().width(Length::Fill),
-            button(text(app.i18n.text(TextKey::DismissButton)).size(FONT_BODY))
-                .on_press(Message::CloseAbout)
-                .style(subtle_button_style)
-                .padding([SPACE_XS as u16, SPACE_MD as u16]),
-        ]
-        .align_y(iced::Alignment::Center),
-        h_divider(),
+    let body = column![
         row![
             svg(assets::logo_svg())
                 .width(Length::Fixed(44.0))
@@ -4946,7 +4934,16 @@ fn render_about_dialog(app: &Librapix) -> Element<'_, Message> {
     ]
     .spacing(SPACE_LG);
 
-    render_dialog_frame(dialog_content.into(), 460.0, 440.0)
+    render_modal_overlay(ui::patterns::dialog::dialog(
+        ui::patterns::dialog::DialogSpec {
+            title: app.i18n.text(TextKey::AboutDialogTitle),
+            close_message: Some((app.i18n.text(TextKey::DismissButton), Message::CloseAbout)),
+            body: body.into(),
+            footer: None,
+            max_width: 460.0,
+            max_height: 440.0,
+        },
+    ))
 }
 
 fn render_library_dialog(app: &Librapix) -> Element<'_, Message> {
@@ -11957,6 +11954,93 @@ fn map_roots_from_storage(roots: Vec<librapix_storage::SourceRootRecord>) -> Vec
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn about_pattern_preserves_localized_content_and_overlay_actions() {
+        let app = test_app();
+        let texts = pane_texts(render_about_dialog(&app));
+        for key in [
+            TextKey::AboutDialogTitle,
+            TextKey::DismissButton,
+            TextKey::AboutCreatorLabel,
+            TextKey::AboutWeekendProjectNote,
+            TextKey::AboutSecondNote,
+        ] {
+            assert_eq!(
+                texts
+                    .iter()
+                    .filter(|value| *value == app.i18n.text(key))
+                    .count(),
+                1
+            );
+        }
+        assert!(texts.contains(&format!(
+            "{}: {}",
+            app.i18n.text(TextKey::AboutVersionLabel),
+            APP_VERSION
+        )));
+        assert!(texts.contains(&"Libra".to_owned()));
+        assert!(texts.contains(&"Pix".to_owned()));
+
+        let messages = pane_click(render_about_dialog(&app), iced::Point::new(1.0, 1.0));
+        assert!(
+            messages
+                .iter()
+                .any(|m| matches!(m, Message::CloseAllDialogs))
+        );
+        let messages = pane_click(render_about_dialog(&app), iced::Point::new(700.0, 450.0));
+        assert!(
+            messages
+                .iter()
+                .any(|m| matches!(m, Message::ModalContentClicked))
+        );
+        assert!(
+            !messages
+                .iter()
+                .any(|m| matches!(m, Message::CloseAllDialogs))
+        );
+
+        #[derive(Default)]
+        struct DismissBounds(Option<iced::Rectangle>);
+        impl iced_futures::core::widget::Operation for DismissBounds {
+            fn traverse(
+                &mut self,
+                operate: &mut dyn FnMut(&mut dyn iced_futures::core::widget::Operation),
+            ) {
+                operate(self);
+            }
+            fn text(&mut self, _: Option<&Id>, bounds: iced::Rectangle, value: &str) {
+                if value == "Dismiss" {
+                    self.0 = Some(bounds);
+                }
+            }
+        }
+        use iced_futures::core::{Layout, layout, renderer::Headless, widget::Tree};
+        let renderer = iced_futures::futures::executor::block_on(iced::Renderer::new(
+            iced::Font::DEFAULT,
+            iced::Pixels(13.0),
+            Some("tiny-skia"),
+        ))
+        .unwrap();
+        let mut element = render_about_dialog(&app);
+        let mut tree = Tree::new(&element);
+        let node = element.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, Size::new(1400.0, 900.0)),
+        );
+        let mut bounds = DismissBounds::default();
+        element
+            .as_widget_mut()
+            .operate(&mut tree, Layout::new(&node), &renderer, &mut bounds);
+        let messages = pane_click(render_about_dialog(&app), bounds.0.unwrap().center());
+        assert!(messages.iter().any(|m| matches!(m, Message::CloseAbout)));
+        assert!(
+            !messages
+                .iter()
+                .any(|m| matches!(m, Message::CloseAllDialogs))
+        );
+    }
 
     #[test]
     fn pane_rail_exposes_exact_global_action_inventory() {

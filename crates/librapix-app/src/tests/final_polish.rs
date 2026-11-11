@@ -26,6 +26,121 @@ struct Harness<'a> {
     renderer: iced::Renderer,
     size: Size,
 }
+
+fn leaf_bounds(layout: Layout<'_>, bounds: &mut Vec<Rectangle>) {
+    if layout.children().next().is_none() {
+        bounds.push(layout.bounds());
+    } else {
+        for child in layout.children() {
+            leaf_bounds(child, bounds);
+        }
+    }
+}
+
+#[test]
+fn brand_header_preserves_ratio_and_clearspace_in_both_themes() {
+    for theme in [ThemePreference::Light, ThemePreference::Dark] {
+        let mut app = test_app();
+        app.theme_preference = theme;
+        for width in [360.0, 640.0, 900.0, 1400.0] {
+            let harness = Harness::new(views::shell::view(&app), Size::new(width, 900.0));
+            let mut leaves = Vec::new();
+            leaf_bounds(Layout::new(&harness.node), &mut leaves);
+            // The product identity is the first leaf in the shell's header.
+            let brand = leaves[0];
+            assert!(brand.width > 0.0 && brand.height > 0.0);
+            assert!((brand.width / brand.height - 1893.0 / 535.0).abs() < 0.001);
+            assert!(brand.height <= 36.0);
+            if width >= 900.0 {
+                assert!((brand.height - 36.0).abs() < 0.01);
+            }
+            assert!(brand.y >= 8.0, "top clearspace: {brand:?}");
+            assert!(
+                52.0 - brand.y - brand.height >= 8.0,
+                "bottom clearspace: {brand:?}"
+            );
+            assert!((brand.center().y - 26.0).abs() < 0.01);
+            assert!((brand.x - 24.0).abs() < 0.01);
+            assert!(brand.x + brand.width + 8.0 <= width);
+            let neighbor = leaves
+                .iter()
+                .skip(1)
+                .find(|b| b.width > 0.0 && b.height > 0.0)
+                .unwrap();
+            assert!(neighbor.x - brand.x - brand.width >= 8.0 - 0.01);
+        }
+    }
+}
+
+#[test]
+fn brand_component_scales_to_narrow_limits_without_stretching() {
+    use iced::advanced::image::Renderer as _;
+    use ui::components::brand::{BrandPlacement, brand};
+
+    for dark in [false, true] {
+        for (placement, handle, dimensions, max_height) in [
+            (
+                BrandPlacement::Header,
+                assets::wordmark(dark),
+                Size::new(1893, 535),
+                36.0,
+            ),
+            (
+                BrandPlacement::AboutWordmark,
+                assets::wordmark(dark),
+                Size::new(1893, 535),
+                32.0,
+            ),
+            (
+                BrandPlacement::AboutMark,
+                assets::logo(dark),
+                Size::new(554, 833),
+                44.0,
+            ),
+        ] {
+            for width in [24.0, 64.0, 128.0, 360.0] {
+                let harness = Harness::new(brand(dark, placement), Size::new(width, 100.0));
+                assert_eq!(harness.renderer.measure_image(&handle).unwrap(), dimensions);
+                let mut leaves = Vec::new();
+                leaf_bounds(Layout::new(&harness.node), &mut leaves);
+                assert_eq!(leaves.len(), 1);
+                let artwork = leaves[0];
+                let ratio = dimensions.width as f32 / dimensions.height as f32;
+                assert!((artwork.width / artwork.height - ratio).abs() < 0.001);
+                assert!(artwork.width > 0.0 && artwork.width <= width);
+                assert!(artwork.height <= max_height + 0.01);
+                if matches!(placement, BrandPlacement::Header) {
+                    assert!(artwork.y >= 8.0);
+                    assert!(52.0 - artwork.y - artwork.height >= 8.0 - 0.01);
+                    assert!((artwork.center().y - 26.0).abs() < 0.01);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn brand_about_uses_balanced_aspect_preserving_artwork() {
+    for theme in [ThemePreference::Light, ThemePreference::Dark] {
+        let mut app = test_app();
+        app.theme_preference = theme;
+        for width in [360.0, 800.0] {
+            let harness = Harness::new(render_about_dialog(&app), Size::new(width, 600.0));
+            let mut leaves = Vec::new();
+            leaf_bounds(Layout::new(&harness.node), &mut leaves);
+            let wordmark = leaves
+                .iter()
+                .find(|b| (b.height - 32.0).abs() < 0.01 && (b.width - 113.22617).abs() < 0.01)
+                .expect("32px proportional About wordmark");
+            let mark = leaves
+                .iter()
+                .find(|b| (b.height - 44.0).abs() < 0.01 && (b.width - 29.262905).abs() < 0.01)
+                .expect("44px proportional About mark");
+            assert!(wordmark.x >= mark.x + mark.width + 8.0 - 0.01);
+            assert!(wordmark.x + wordmark.width <= width);
+        }
+    }
+}
 impl<'a> Harness<'a> {
     fn new(mut element: Element<'a, Message>, size: Size) -> Self {
         let renderer = iced_futures::futures::executor::block_on(iced::Renderer::new(

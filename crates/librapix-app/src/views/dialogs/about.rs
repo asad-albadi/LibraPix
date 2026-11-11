@@ -1,24 +1,19 @@
 use super::modal_overlay;
+use crate::ui::components::brand::{BrandPlacement, brand};
 use crate::ui::{styles::text::text_secondary, tokens::*};
-use crate::{APP_VERSION, Librapix, Message, assets};
+use crate::{APP_VERSION, Librapix, Message};
 use iced::{
-    ContentFit, Element, Length,
-    widget::{column, image, row, text},
+    Element,
+    widget::{column, row, text},
 };
 use librapix_i18n::TextKey;
 
 pub(crate) fn view(app: &Librapix) -> Element<'_, Message> {
     let body = column![
         row![
-            image(assets::logo(app.is_dark_theme()))
-                .width(Length::Fixed(44.0))
-                .height(Length::Fixed(44.0))
-                .content_fit(ContentFit::Contain),
+            brand(app.is_dark_theme(), BrandPlacement::AboutMark),
             column![
-                image(assets::wordmark(app.is_dark_theme()))
-                    .width(Length::Fixed(180.0))
-                    .height(Length::Fixed(44.0))
-                    .content_fit(ContentFit::Contain),
+                brand(app.is_dark_theme(), BrandPlacement::AboutWordmark),
                 text(format!(
                     "{}: {}",
                     app.i18n.text(TextKey::AboutVersionLabel),

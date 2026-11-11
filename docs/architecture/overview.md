@@ -31,6 +31,10 @@ Librapix is a desktop-first Rust application with strict internal boundaries.
 
 ## Architectural intent
 
+Header and About share an app-local brand component under `ui/components`, with
+asset-derived proportions and explicit placement policy in `docs/branding.md`.
+This remains within ADR 0025's existing presentation boundary.
+
 - Keep Iced-specific types in `librapix-app`.
 - Keep domain models and non-destructive rules in `librapix-core`.
 - Keep user-facing text key-based and locale-resolved in `librapix-i18n`.

@@ -15,8 +15,10 @@ dark surfaces. Both retain the blue accents. Always preserve aspect ratio.
 The tightly cropped symbol is intentionally not square; use `icon-N.png` for
 square window/desktop icons, not the header image.
 
-The approved masters were originally generated as faithful standalone extractions
-from the approved blue INDEX board. They are raster masters, not vector artwork.
+The masters were originally generated as standalone extractions from the approved
+blue INDEX board. They are raster masters, not vector artwork; generation can
+introduce glyph/spacing variation, so exact board fidelity is not established.
+The layout correction preserves these files unchanged; see `docs/branding.md`.
 No generative tool is used in this derivation, and no replacement SVG is invented.
 
 Master SHA-256 checksums:

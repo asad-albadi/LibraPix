@@ -19,6 +19,10 @@ styles and the built-in scrubber slider remain direct composition where a wrappe
 would obscure geometry or add layers. Only proven component variants are retained.
 The remaining orchestration in `main.rs` has not been extracted by this migration.
 
+`ui/components/brand.rs` owns presentation-only header/About artwork placement;
+views supply the resolved dark/light surface flag. Assets remain embedded in
+`assets.rs`; no application, domain, or infrastructure boundary changes.
+
 ## Layer responsibilities
 
 - Bootstrap (`librapix-app`)

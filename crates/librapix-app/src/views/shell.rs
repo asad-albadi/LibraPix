@@ -13,6 +13,7 @@ use super::dialogs;
 
 use crate::ui::components::{
     badge::{BadgeVariant, badge},
+    brand::{BrandPlacement, brand},
     button::{ButtonSize, ButtonVariant, app_button},
     icon_button::icon_button,
     input::app_input,
@@ -44,11 +45,7 @@ pub(crate) fn view(app: &Librapix) -> Element<'_, Message> {
     let _required_rules = non_destructive::required_rules();
 
     // ── Header ──
-    let brand = image(assets::wordmark(app.is_dark_theme()))
-        .width(Length::Fixed(180.0))
-        .height(Length::Fixed(44.0))
-        .content_fit(ContentFit::Contain)
-        .filter_method(FilterMethod::Linear);
+    let brand = brand(app.is_dark_theme(), BrandPlacement::Header);
 
     let settings_btn = app_button(
         text(app.i18n.text(TextKey::SettingsButtonLabel)).size(FONT_BODY),

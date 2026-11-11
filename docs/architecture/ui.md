@@ -38,7 +38,7 @@ direction; ADR 0023's Light/Dark/System policy and ADR 0024's unified Library re
 
 ### Shell regions
 
-- Top header with product identity (brand-blue SVG logo + wordmark), integrated search bar, update-status chip, Settings button, About button, and GitHub link.
+- Top header with theme-aware INDEX PNG wordmark, integrated search bar, update-status chip, Settings button, About button, and GitHub link.
 - Left sidebar with sectioned navigation: a single **Library** entry (the Grid/Timeline split is a segmented toggle in the content header, not separate tabs) plus library roots; operational controls (indexing, ignore rules, diagnostics) live in the Settings dialog.
 - Main media pane for gallery grid, timeline groups, and search result cards.
 - Right details pane for preview, file info, tags, and actions.
@@ -230,6 +230,11 @@ Gallery, timeline, and search views share a unified media-view architecture:
 
 ## Header branding
 
+- `ui/components/brand.rs` owns shared Header/AboutWordmark/AboutMark placement,
+  aspect-derived width, native Shrink height, Contain fitting, and linear filtering.
+  Header artwork is 36px high within 52px with 8px vertical clearspace; About uses
+  a 32px wordmark beside a proportional 44px mark. See `docs/branding.md` for
+  project-specific sizing, research references, and asset-fidelity limitations.
 - The approved INDEX PNG wordmark from `assets/logo/index/` is embedded centrally and displayed with preserved aspect ratio.
 - Dark lettering is used on light surfaces; white lettering is used on dark surfaces. Both retain the blue pixel accents. About also displays the standalone mark.
 - Header includes an About dialog entry point for project/creator context.

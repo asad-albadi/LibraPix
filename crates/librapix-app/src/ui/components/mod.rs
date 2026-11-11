@@ -1,6 +1,7 @@
 //! App-local reusable presentation components.
 
 pub mod badge;
+pub mod brand;
 pub mod button;
 pub mod card;
 pub mod chip;

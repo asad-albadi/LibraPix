@@ -1,5 +1,17 @@
 # Troubleshooting
 
+## Header wordmark feels crowded despite being enlarged
+
+- Symptoms: branding nearly touches the header edges and lacks visual balance.
+- Affected area: header and About presentation.
+- Confirmed cause: duplicated 180x44 image boxes left only 4px vertical room in
+  the 52px header; unrelated width/height constraints obscured artwork proportions.
+- Resolution: shared `ui/components/brand.rs` placement with asset-derived width,
+  36px header artwork and at least 8px top/bottom clearance; proportional About art.
+- Prevention: real-Iced layout tests cover both themes and narrow widths. Keep
+  asset fidelity separate from placement; layout cannot correct generated glyph
+  variation. Do not regenerate or reshape approved artwork without owner approval.
+
 The centralized UI migration's confirmed regressions and resolutions are recorded
 below. ADR 0025 defines the final presentation boundary. Layout/event/render tests
 are prevention evidence, not a claim that all native desktop checks were performed.

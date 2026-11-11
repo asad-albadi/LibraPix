@@ -1,5 +1,8 @@
 //! Deterministic managed tag/rule chip, independent of product state.
-use crate::ui::*;
+use crate::ui::{
+    styles::{button::managed_chip_action_style, container::managed_chip_style},
+    tokens::*,
+};
 use iced::{
     Element, Length,
     widget::{Space, button, column, container, row, text},

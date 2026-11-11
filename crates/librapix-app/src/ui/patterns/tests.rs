@@ -192,7 +192,6 @@ fn all_status_tones_keep_caller_localized_text() {
         StatusTone::Neutral,
         StatusTone::Working,
         StatusTone::Success,
-        StatusTone::Warning,
         StatusTone::Error,
     ] {
         let (texts, _) = inspect(

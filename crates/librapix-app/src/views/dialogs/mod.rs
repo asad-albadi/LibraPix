@@ -8,7 +8,8 @@ pub(crate) mod make_short;
 pub(crate) mod new_media;
 pub(crate) mod settings;
 
-use crate::{Message, ui::*};
+use crate::Message;
+use crate::ui::{styles::container::modal_backdrop_style, tokens::*};
 use iced::{
     Element, Length,
     widget::{container, mouse_area},

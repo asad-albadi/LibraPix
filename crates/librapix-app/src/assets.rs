@@ -12,11 +12,6 @@ pub const REPO_URL: &str = "https://github.com/asad-albadi/LibraPix";
 
 // ── Canonical brand ──
 
-#[allow(dead_code)]
-pub fn logo_icon_64() -> image::Handle {
-    LOGO_ICON_64.clone()
-}
-
 /// Canonical brand logo (blue) as SVG for scalable display (header, about).
 /// Reads on both dark and light surfaces, so it stays consistent across themes.
 pub fn logo_svg() -> svg::Handle {
@@ -87,11 +82,6 @@ pub fn icon_filter(dark: bool) -> image::Handle {
     pick(&ICON_FILTER_W, &ICON_FILTER_B, dark)
 }
 
-#[allow(dead_code)]
-pub fn icon_filter_remove(dark: bool) -> image::Handle {
-    pick(&ICON_FILTER_REMOVE_W, &ICON_FILTER_REMOVE_B, dark)
-}
-
 pub fn icon_index(dark: bool) -> image::Handle {
     pick(&ICON_INDEX_W, &ICON_INDEX_B, dark)
 }
@@ -128,8 +118,6 @@ fn make_svg_handle(bytes: &'static [u8]) -> svg::Handle {
     svg::Handle::from_memory(bytes.to_vec())
 }
 
-static LOGO_ICON_64: LazyLock<image::Handle> =
-    LazyLock::new(|| make_image_handle(include_bytes!("../../../assets/logo/blue/icon-64.png")));
 static LOGO_SVG_BLUE: LazyLock<svg::Handle> =
     LazyLock::new(|| make_svg_handle(include_bytes!("../../../assets/logo/blue/logo-blue.svg")));
 
@@ -164,11 +152,6 @@ icon_pair!(
 icon_pair!(ICON_COPY_FILE_W, ICON_COPY_FILE_B, "copy-file.png");
 icon_pair!(ICON_COPY_PATH_W, ICON_COPY_PATH_B, "copy-path.png");
 icon_pair!(ICON_FILTER_W, ICON_FILTER_B, "filter.png");
-icon_pair!(
-    ICON_FILTER_REMOVE_W,
-    ICON_FILTER_REMOVE_B,
-    "filter-remove.png"
-);
 icon_pair!(ICON_INDEX_W, ICON_INDEX_B, "index.png");
 icon_pair!(ICON_BROWSE_W, ICON_BROWSE_B, "browse.png");
 icon_pair!(ICON_SAVE_W, ICON_SAVE_B, "save.png");

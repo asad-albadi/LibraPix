@@ -1,8 +1,9 @@
 use super::modal_overlay;
 use crate::ui::components::button::{ButtonSize, ButtonVariant, app_button};
 use crate::ui::components::tabs::tab_trigger;
+use crate::ui::components::text::section_heading;
 use crate::ui::patterns::dialog::{DialogSpec, dialog};
-use crate::ui::*;
+use crate::ui::{styles::text::text_tertiary, tokens::*};
 use crate::{FILTER_DIALOG_CHIP_ROW_MAX_WIDTH, FILTER_DIALOG_MAX_WIDTH, Librapix, Message};
 use iced::{
     Element,

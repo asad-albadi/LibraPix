@@ -1,4 +1,6 @@
 //! Selection inspector presentation; actions and persistence remain in update.
+use crate::ui::components::chip::managed_chip;
+use crate::ui::components::text::section_heading;
 use crate::ui::components::{
     button::{ButtonSize, ButtonVariant, app_button},
     card::{CardVariant, card},
@@ -7,10 +9,11 @@ use crate::ui::components::{
     loading::skeleton,
     separator::horizontal,
 };
-use crate::ui::*;
-use crate::{
-    DetailsTagChip, Librapix, Message, assets, render_management_chip, selected_media_is_video,
+use crate::ui::{
+    styles::text::{text_primary, text_secondary, text_tertiary},
+    tokens::*,
 };
+use crate::{DetailsTagChip, Librapix, Message, assets, selected_media_is_video};
 use iced::widget::image::FilterMethod;
 use iced::{
     ContentFit, Element, Length, Size,
@@ -114,7 +117,7 @@ pub(crate) fn view(app: &Librapix) -> Element<'_, Message> {
             let list = inherited_tag_chips
                 .iter()
                 .fold(column![].spacing(SPACE_XS), |col, tag| {
-                    col.push(render_management_chip(
+                    col.push(managed_chip(
                         &tag.name,
                         &tag.name,
                         Some(app.i18n.text(TextKey::InheritedTagLabel).to_owned()),
@@ -135,7 +138,7 @@ pub(crate) fn view(app: &Librapix) -> Element<'_, Message> {
             manual_tag_chips
                 .iter()
                 .fold(column![].spacing(SPACE_XS), |col, tag| {
-                    col.push(render_management_chip(
+                    col.push(managed_chip(
                         &tag.name,
                         &tag.name,
                         Some(tag.kind.as_str().to_owned()),

@@ -1,6 +1,5 @@
 pub mod color;
 pub mod elevation;
-pub mod motion;
 pub mod radius;
 pub mod sizing;
 pub mod spacing;

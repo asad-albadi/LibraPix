@@ -4,7 +4,13 @@ use crate::ui::components::{
     separator::horizontal,
 };
 use crate::ui::patterns::dialog::{DialogSpec, dialog};
-use crate::ui::*;
+use crate::ui::{
+    styles::{
+        container::raised_surface_style,
+        text::{text_primary, text_secondary, text_tertiary},
+    },
+    tokens::*,
+};
 use crate::{Librapix, Message, assets, format, localized_media_kind_label};
 use iced::{
     ContentFit, Element, Length,
@@ -39,7 +45,7 @@ pub(crate) fn view(app: &Librapix) -> Element<'_, Message> {
                 .height(Length::Fixed(NEW_MEDIA_PREVIEW_HEIGHT))
                 .content_fit(ContentFit::Contain),
         )
-        .style(card_style)
+        .style(raised_surface_style)
         .into()
     } else {
         render_new_media_preview_loading_state(app, NEW_MEDIA_PREVIEW_HEIGHT)

@@ -10,6 +10,7 @@ All notable changes to this project are documented in this file.
 - Preserved media scroll position when layout-save notices appear or are dismissed by keeping the shell widget-tree structure stable.
 
 ### Changed
+- Completed app-local product view extraction and removed legacy UI facades, superseded visual helpers, and staged dead-code allowances; retained orchestration, layout caches, and background behavior unchanged.
 - Migrated Library, details, header/navigation, search, managed chips, and runtime feedback to centralized app-local components while preserving media interactions and viewport-bounded layout/cache behavior.
 - Migrated every product dialog into focused app-local view modules using shared dialog frames, fields, buttons, tabs, separators, and status treatments; retained existing actions and background workflows, with one Make Short working line and inline library-path validation.
 - Applied media-first light/dark semantic palettes with quieter surfaces, blue focus/selection, explicit destructive tones, and contrast-tested foregrounds.

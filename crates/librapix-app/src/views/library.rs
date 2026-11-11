@@ -7,10 +7,17 @@ use crate::ui::components::{
     icon_button::icon_button,
     tabs::{tab_list, tab_trigger},
 };
-use crate::ui::{self, *};
+use crate::ui::{
+    styles::{
+        container::{thumb_placeholder_style, thumb_scrim_style},
+        scrollable::scrollbar_style,
+        text::{text_primary, text_secondary, text_tertiary},
+    },
+    tokens::*,
+};
 use crate::{
     BrowseItem, Librapix, MEDIA_SCROLLABLE_ID, MEDIA_SCROLLBAR_SPACING, Message, assets,
-    compute_browse_stats, render_justified_gallery, render_timeline_scrubber, render_timeline_view,
+    compute_browse_stats,
 };
 use iced::widget::image::FilterMethod;
 use iced::{
@@ -41,7 +48,7 @@ pub(crate) fn view(app: &Librapix) -> Element<'_, Message> {
             container(media_scrollable)
                 .width(Length::Fill)
                 .height(Length::Fill),
-            render_timeline_scrubber(app),
+            super::timeline::scrubber(app),
         ]
         .spacing(SPACE_SM)
         .height(Length::Fill)
@@ -178,7 +185,7 @@ pub(crate) fn panels(app: &Librapix) -> (Element<'_, Message>, Element<'_, Messa
 
             column![
                 search_header,
-                render_justified_gallery(
+                super::gallery::view(
                     app,
                     &app.search_items,
                     app.state.selected_media_id,
@@ -202,14 +209,14 @@ pub(crate) fn panels(app: &Librapix) -> (Element<'_, Message>, Element<'_, Messa
         render_empty_state(assets::icon_gallery(app.is_dark_theme()), empty_label)
     } else {
         match app.state.active_route {
-            Route::Gallery => render_justified_gallery(
+            Route::Gallery => super::gallery::view(
                 app,
                 browse_items,
                 app.state.selected_media_id,
                 app.media_scroll_absolute_y,
                 app.media_viewport_height,
             ),
-            Route::Timeline => render_timeline_view(
+            Route::Timeline => super::timeline::view(
                 app,
                 browse_items,
                 app.state.selected_media_id,
@@ -288,7 +295,7 @@ pub(crate) fn media_card(
     let scrim: Element<'_, Message> = container(Space::new())
         .width(Length::Fill)
         .height(Length::Fixed(height))
-        .style(ui::thumb_scrim_style)
+        .style(thumb_scrim_style)
         .into();
 
     let thumb_with_badge: Element<'_, Message> = stack([thumb, scrim, thumb_overlay])

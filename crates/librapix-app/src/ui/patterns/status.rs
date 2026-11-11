@@ -14,7 +14,6 @@ pub enum StatusTone {
     Neutral,
     Working,
     Success,
-    Warning,
     Error,
 }
 
@@ -29,7 +28,6 @@ pub fn status_row<'a, Message: 'a>(
         StatusTone::Working => working_row(stage, phase).into(),
         StatusTone::Neutral => badge(stage, BadgeVariant::Secondary).into(),
         StatusTone::Success => badge(stage, BadgeVariant::Success).into(),
-        StatusTone::Warning => badge(stage, BadgeVariant::Warning).into(),
         StatusTone::Error => badge(stage, BadgeVariant::Destructive).into(),
     };
     container(content)

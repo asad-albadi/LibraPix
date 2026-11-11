@@ -13,9 +13,6 @@ use iced::{
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NoticeTone {
-    Info,
-    Success,
-    Warning,
     Error,
 }
 
@@ -31,9 +28,6 @@ pub fn notice<'a, Message: Clone + 'a>(
     dismiss: Option<(&'a str, Message)>,
 ) -> Container<'a, Message> {
     let variant = match notice.tone {
-        NoticeTone::Info => BadgeVariant::Default,
-        NoticeTone::Success => BadgeVariant::Success,
-        NoticeTone::Warning => BadgeVariant::Warning,
         NoticeTone::Error => BadgeVariant::Destructive,
     };
     let mut header = row![badge(tone_label, variant)]

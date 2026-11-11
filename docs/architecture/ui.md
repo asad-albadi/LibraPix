@@ -4,6 +4,38 @@ Librapix UI uses a themeable, Fluent-inspired design system with an app-shell la
 
 ## App shell baseline
 
+### Presentation module ownership
+
+- `ui/` owns tokens, widget styles, reusable components, and presentation patterns;
+  consumers import the owning module rather than a legacy root-level facade.
+- `views/` owns product composition, including gallery/timeline widget assembly
+  and the timeline scrubber. Layout caches, row-window calculations, diagnostics,
+  anchor generation, subscriptions, and background work remain in `main.rs`.
+- Specialized media styles remain direct calls to `ui/styles`: thumbnail
+  placeholders/scrims preserve image overlays; scrubber panel/chip styles preserve
+  track geometry; modal backdrops preserve dismissal layering; shell header/base
+  styles define app regions; scrollbars and semantic text styles are applied to
+  built-in Iced widgets without wrapping them in another component.
+- Determinate runtime activity styling is retained only for actual item counts,
+  not for indeterminate Make Short generation. `raised_surface_style` preserves
+  the borderless, elevated preview and appearance insets; these are not selectable
+  media cards. `timeline_marker_style` preserves content-sized year labels and
+  their quieter text/pressed feedback without the fixed height of action buttons.
+- Library lifecycle dots/labels retain direct semantic palette colors because
+  their active, unavailable, and deactivated states are product presentation,
+  not generic button variants. The scrubber slider retains Iced's built-in theme
+  styling and exact existing geometry; no custom slider implementation is needed.
+- Unconsumed staged checkbox/select components and styles, placeholder slider/
+  motion modules, unused variants, and disabled-text/asset helpers were removed
+  rather than kept under dead-code allowances. Existing dialogs keep their
+  button/tab-based selections; no widget or action behavior changes.
+- `ui/tokens` intentionally aggregates semantic values; component-level variant
+  exports remain their supported constructor API. Only the obsolete root UI and
+  style facades are removed. `ui/components/text.rs` owns section headings and
+  `ui/components/tooltip.rs` owns contextual help hints.
+
+### Shell regions
+
 - Top header with product identity (brand-blue SVG logo + wordmark), integrated search bar, update-status chip, Settings button, About button, and GitHub link.
 - Left sidebar with sectioned navigation: a single **Library** entry (the Grid/Timeline split is a segmented toggle in the content header, not separate tabs) plus library roots; operational controls (indexing, ignore rules, diagnostics) live in the Settings dialog.
 - Main media pane for gallery grid, timeline groups, and search result cards.
@@ -17,7 +49,7 @@ Shared visual tokens and widget styles are centralized in `librapix-app/src/ui/`
 - `tokens/` owns the existing palette/chip tones, elevation, spacing, typography, sizing, and radii.
 - `styles/` owns the existing Iced button, container, input, scrollbar, and text style functions.
 - `components/` centralizes composed controls, including a single-button media card and message-generic managed chips. `patterns/` centralizes pane, dialog, field, and status composition.
-- `views/library.rs` and `views/details.rs` expose product `view(&Librapix)` interfaces; low-level media layout/cache/scrubber helpers stay in the app. The `ui::*` facade remains for token/style consumers. Superseded divider and control-style helpers were removed as their last call sites migrated.
+- `views/library.rs` and `views/details.rs` expose product `view(&Librapix)` interfaces; `views/gallery.rs` and `views/timeline.rs` own widget assembly and the scrubber. Layout/window/cache helpers stay in the app. Consumers use explicit `ui/tokens`, `ui/styles`, component, and pattern imports; the legacy root facade and superseded helpers are removed.
 - The migration applies the approved media-first component visuals without changing product/background behavior; the approved migration is recorded in `docs/superpowers/plans/2026-11-11-centralized-ui.md`.
 
 ### Color palette / theming
@@ -122,7 +154,7 @@ Shared visual tokens and widget styles are centralized in `librapix-app/src/ui/`
 Gallery, timeline, and search views share a unified media-view architecture:
 
 - **BrowseItem**: common data model with `media_id`, `title`, `media_kind`, `metadata_line`, `thumbnail_path`, `aspect_ratio`, `is_group_header`, and optional `group_image_count`, `group_video_count` for timeline headers.
-- **render_media_card()**: shared card rendering primitive used by all views.
+- **`views::library::media_card()`**: shared card rendering primitive used by Grid, Timeline, and search.
 - **resolve_thumbnail()**: unified thumbnail resolution for images (Lanczos3) and videos (ffmpeg).
 - **populate_media_cache()**: caches read-model data alongside browse items to avoid per-click storage queries.
 - **aspect_ratio_from()**: computes aspect ratio from stored dimensions (defaults to 1.5 for unknown).
@@ -146,7 +178,7 @@ Gallery, timeline, and search views share a unified media-view architecture:
 
 - Timeline renders as date-grouped sections, each with a group header (date label plus image/video count chips) and a justified mini-grid.
 - The mini-grid within each group uses the same justified row algorithm as the gallery.
-- Both gallery and timeline use `render_media_card()` for card rendering.
+- Both gallery and timeline use `views::library::media_card()` for card rendering.
 - Items are selectable with the same card style as gallery cards.
 - Timeline rendering does not apply a hidden hard item cap.
 - Timeline scrubber uses precomputed anchor metadata; it does not inspect rendered rows.

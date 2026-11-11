@@ -4,13 +4,9 @@ use iced::widget::container;
 use iced::{Background, Border, Radians, Theme, gradient};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)] // Variants are staged before their view call sites (Tasks 4-7).
 pub enum BadgeVariant {
-    Default,
     Secondary,
-    Outline,
     Success,
-    Warning,
     Destructive,
 }
 
@@ -24,11 +20,8 @@ pub enum CardVariant {
 pub fn badge_style(theme: &Theme, variant: BadgeVariant) -> container::Style {
     let p = palette(theme);
     let (background, text, border) = match variant {
-        BadgeVariant::Default => (p.accent, iced::Color::WHITE, p.accent),
         BadgeVariant::Secondary => (p.bg_card, p.text_secondary, p.divider),
-        BadgeVariant::Outline => (p.bg_surface, p.text_primary, p.border_strong),
         BadgeVariant::Success => (p.bg_surface, p.success, p.success),
-        BadgeVariant::Warning => (p.bg_surface, p.warning, p.warning),
         BadgeVariant::Destructive => (p.bg_surface, p.destructive_text, p.destructive),
     };
     container::Style {
@@ -117,7 +110,8 @@ pub fn details_pane_style(theme: &Theme) -> container::Style {
     }
 }
 
-pub fn card_style(theme: &Theme) -> container::Style {
+/// Borderless raised insets for the preview and appearance section, not media cards.
+pub fn raised_surface_style(theme: &Theme) -> container::Style {
     container::Style {
         background: Some(Background::Color(palette(theme).bg_surface)),
         border: iced::border::rounded(RADIUS_LG),

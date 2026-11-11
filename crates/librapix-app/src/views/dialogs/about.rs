@@ -1,5 +1,8 @@
 use super::modal_overlay;
-use crate::ui::{self, *};
+use crate::ui::{
+    styles::text::{text_accent, text_primary, text_secondary},
+    tokens::*,
+};
 use crate::{APP_VERSION, Librapix, Message, assets};
 use iced::{
     ContentFit, Element, Length,
@@ -42,8 +45,8 @@ pub(crate) fn view(app: &Librapix) -> Element<'_, Message> {
     ]
     .spacing(SPACE_LG);
 
-    modal_overlay(ui::patterns::dialog::dialog(
-        ui::patterns::dialog::DialogSpec {
+    modal_overlay(crate::ui::patterns::dialog::dialog(
+        crate::ui::patterns::dialog::DialogSpec {
             title: app.i18n.text(TextKey::AboutDialogTitle).into(),
             close_message: Some((app.i18n.text(TextKey::DismissButton), Message::CloseAbout)),
             body: body.into(),

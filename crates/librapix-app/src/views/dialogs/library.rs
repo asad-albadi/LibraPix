@@ -1,13 +1,15 @@
 use super::modal_overlay;
+use crate::ui::components::chip::managed_chip;
 use crate::ui::components::input::app_input;
+use crate::ui::components::text::section_heading;
 use crate::ui::components::{
     button::{ButtonSize, ButtonVariant, app_button},
     separator::horizontal,
 };
 use crate::ui::patterns::dialog::{DialogSpec, dialog};
 use crate::ui::patterns::field::{FieldSpec, field};
-use crate::ui::*;
-use crate::{Librapix, LibraryDialogMode, Message, assets, render_management_chip};
+use crate::ui::{styles::text::text_tertiary, tokens::*};
+use crate::{Librapix, LibraryDialogMode, Message, assets};
 use iced::{
     ContentFit, Element, Length,
     widget::image::FilterMethod,
@@ -55,7 +57,7 @@ pub(crate) fn view(app: &Librapix) -> Element<'_, Message> {
         app.library_dialog_tags
             .iter()
             .fold(column![].spacing(SPACE_XS), |col, (name, kind)| {
-                col.push(render_management_chip(
+                col.push(managed_chip(
                     name,
                     name,
                     Some(kind.as_str().to_owned()),

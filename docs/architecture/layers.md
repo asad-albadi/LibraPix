@@ -9,10 +9,10 @@
   - Startup release-check scheduling (post-first-render task dispatch)
 - Presentation (`librapix-app`)
   - View composition
-  - `views/library.rs` and `views/details.rs` compose centralized controls from app presentation state; low-level justified layout, viewport math, scrubber, and cache ownership remain in existing app helpers.
+  - `views/library.rs` and `views/details.rs` compose centralized controls from app presentation state; `views/gallery.rs` and `views/timeline.rs` assemble viewport-bounded widgets and the scrubber. Justified layout, viewport/window calculations, anchor generation, diagnostics, and cache ownership remain in existing app helpers.
   - Message emission from user actions
   - App-shell composition and design-token usage
-  - App-local `ui/tokens` and `ui/styles` modules, re-exported through the existing `ui` facade without changing dependency direction
+  - App-local `ui/tokens` and `ui/styles` modules, consumed through their owning layers without legacy root UI/style facades or dependency-direction changes
   - `ui/components` provides message-generic constructors over built-in Iced widgets; styles own variant/status mapping and components own compact layout. Components receive localized text and messages, never application services.
   - No direct storage/indexing logic
   - `views/shell.rs` composes product state into shell regions and existing dialog overlays; `ui/patterns/sidebar.rs` and `details_pane.rs` accept only presentation content and messages. Pane persistence and all background orchestration remain in the app update layer.

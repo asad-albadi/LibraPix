@@ -1,14 +1,23 @@
 use super::modal_overlay;
+use crate::ui::components::chip::managed_chip;
 use crate::ui::components::input::app_input;
 use crate::ui::components::tabs::tab_trigger;
+use crate::ui::components::text::section_heading;
 use crate::ui::components::{
     button::{ButtonSize, ButtonVariant, app_button},
     separator::horizontal,
 };
 use crate::ui::patterns::dialog::{DialogSpec, dialog};
 use crate::ui::patterns::field::{FieldSpec, field};
-use crate::ui::*;
-use crate::{Librapix, Message, assets, render_management_chip};
+use crate::ui::{
+    styles::{
+        container::raised_surface_style,
+        scrollable::scrollbar_style,
+        text::{text_secondary, text_tertiary},
+    },
+    tokens::*,
+};
+use crate::{Librapix, Message, assets};
 use iced::{
     ContentFit, Element, Length,
     widget::image::FilterMethod,
@@ -92,7 +101,7 @@ pub(crate) fn view(app: &Librapix) -> Element<'_, Message> {
                 } else {
                     app.i18n.text(TextKey::IgnoreRuleAddButton)
                 };
-                col.push(render_management_chip(
+                col.push(managed_chip(
                     &rule.pattern,
                     &rule.pattern,
                     Some(status.to_owned()),
@@ -287,7 +296,7 @@ pub(crate) fn view(app: &Librapix) -> Element<'_, Message> {
             .spacing(SPACE_2XS),
         )
         .padding(SPACE_2XS as u16)
-        .style(card_style),
+        .style(raised_surface_style),
     ]
     .spacing(SPACE_SM);
 

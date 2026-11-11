@@ -1,12 +1,15 @@
 //! Product shell composition. Update/persistence/background work stay in the app.
-
-use super::dialogs::{
-    about::view as render_about_dialog, filters::view as render_filter_dialog,
-    library::view as render_library_dialog,
-    library_statistics::view as render_library_statistics_dialog,
-    make_short::view as render_make_short_dialog, new_media::view as render_new_media_dialog,
-    settings::view as render_settings_dialog,
+use crate::ui::components::text::section_heading;
+use crate::ui::{
+    styles::{
+        container::{app_bg_style, header_style},
+        scrollable::scrollbar_style,
+        text::{text_accent, text_primary, text_tertiary, text_warning},
+    },
+    tokens::*,
 };
+
+use super::dialogs;
 
 use crate::ui::components::{
     badge::{BadgeVariant, badge},
@@ -23,10 +26,9 @@ use crate::ui::patterns::{
     details_pane::{DetailsPaneMode, details_pane},
     sidebar::{GlobalRailAction, SidebarMode, navigation_item, sidebar},
 };
-use crate::ui::{self, *};
 use crate::{
     ActivityIndicatorMode, Librapix, Message, UpdateCheckState, activity_indicator_mode, assets,
-    display_name_for_root, theme, truncate_for_sidebar, update_chip_text_key,
+    display_name_for_root, theme, update_chip_text_key,
 };
 use iced::widget::image::FilterMethod;
 use iced::widget::progress_bar;
@@ -181,43 +183,43 @@ pub(crate) fn view(app: &Librapix) -> Element<'_, Message> {
     }
     let mut overlay: Element<'_, Message> = shell_layers.into();
     if app.filter_dialog_open {
-        overlay = stack([overlay, render_filter_dialog(app)])
+        overlay = stack([overlay, dialogs::filters::view(app)])
             .width(Length::Fill)
             .height(Length::Fill)
             .into();
     }
     if app.new_media_announcement.is_some() {
-        overlay = stack([overlay, render_new_media_dialog(app)])
+        overlay = stack([overlay, dialogs::new_media::view(app)])
             .width(Length::Fill)
             .height(Length::Fill)
             .into();
     }
     if app.settings_open {
-        overlay = stack([overlay, render_settings_dialog(app)])
+        overlay = stack([overlay, dialogs::settings::view(app)])
             .width(Length::Fill)
             .height(Length::Fill)
             .into();
     }
     if app.about_open {
-        overlay = stack([overlay, render_about_dialog(app)])
+        overlay = stack([overlay, dialogs::about::view(app)])
             .width(Length::Fill)
             .height(Length::Fill)
             .into();
     }
     if app.library_dialog_open {
-        overlay = stack([overlay, render_library_dialog(app)])
+        overlay = stack([overlay, dialogs::library::view(app)])
             .width(Length::Fill)
             .height(Length::Fill)
             .into();
     }
     if app.library_stats_dialog_open {
-        overlay = stack([overlay, render_library_statistics_dialog(app)])
+        overlay = stack([overlay, dialogs::library_statistics::view(app)])
             .width(Length::Fill)
             .height(Length::Fill)
             .into();
     }
     if app.make_short_dialog.open {
-        overlay = stack([overlay, render_make_short_dialog(app)])
+        overlay = stack([overlay, dialogs::make_short::view(app)])
             .width(Length::Fill)
             .height(Length::Fill)
             .into();
@@ -304,7 +306,7 @@ fn render_expanded_sidebar(app: &Librapix) -> Element<'_, Message> {
             .fold(column![].spacing(SPACE_2XS), |col, root| {
                 let is_selected = app.state.selected_root_id == Some(root.id);
                 let label = display_name_for_root(root);
-                let p = ui::palette(&theme(app));
+                let p = palette(&theme(app));
                 let status_color = match root.lifecycle {
                     RootLifecycle::Active => p.success,
                     RootLifecycle::Unavailable => p.warning,
@@ -502,4 +504,13 @@ fn render_update_chip(app: &Librapix) -> iced::widget::Button<'_, Message> {
         ButtonSize::Small,
     )
     .width(Length::Fill)
+}
+
+fn truncate_for_sidebar(value: &str, max_chars: usize) -> (String, bool) {
+    let mut chars = value.chars();
+    let truncated = chars.by_ref().take(max_chars).collect::<String>();
+    if chars.next().is_some() {
+        return (format!("{truncated}..."), true);
+    }
+    (value.to_owned(), false)
 }

@@ -5,14 +5,11 @@ use iced::{Background, Border, Color, Theme};
 use super::container::{CardVariant, card_surface_style};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)] // Variants are staged before their view call sites (Tasks 4-7).
 pub enum ButtonVariant {
     Primary,
     Secondary,
     Outline,
     Ghost,
-    Destructive,
-    Link,
 }
 
 pub fn button_style(
@@ -30,14 +27,6 @@ pub fn button_style(
                 if hovered { p.accent_hover } else { p.accent },
                 Color::WHITE,
             ),
-            ButtonVariant::Destructive => (
-                if hovered {
-                    p.destructive_hover
-                } else {
-                    p.destructive
-                },
-                Color::WHITE,
-            ),
             ButtonVariant::Secondary => {
                 (if hovered { p.bg_hover } else { p.bg_card }, p.text_primary)
             }
@@ -49,7 +38,6 @@ pub fn button_style(
                 },
                 p.text_primary,
             ),
-            ButtonVariant::Link => (Color::TRANSPARENT, p.accent_text),
         }
     };
     button::Style {
@@ -105,7 +93,8 @@ pub fn tab_style(theme: &Theme, status: button::Status, active: bool) -> button:
 
 // ── Button Styles ──
 
-pub fn subtle_button_style(theme: &Theme, status: button::Status) -> button::Style {
+/// Content-sized year labels retain quieter text and distinct pressed feedback.
+pub fn timeline_marker_style(theme: &Theme, status: button::Status) -> button::Style {
     let p = palette(theme);
     let (bg, text_color) = match status {
         button::Status::Active => (Color::TRANSPARENT, p.text_secondary),

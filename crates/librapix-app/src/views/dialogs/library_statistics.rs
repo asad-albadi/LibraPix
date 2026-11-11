@@ -1,7 +1,11 @@
 use super::modal_overlay;
 use crate::ui::components::separator::horizontal;
+use crate::ui::components::text::section_heading;
 use crate::ui::patterns::dialog::{DialogSpec, dialog};
-use crate::ui::*;
+use crate::ui::{
+    styles::text::{text_primary, text_secondary, text_tertiary},
+    tokens::*,
+};
 use crate::{Librapix, Message, display_name_for_root, format};
 use iced::{
     Element, Length,

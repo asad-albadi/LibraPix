@@ -3,18 +3,15 @@
 mod assets;
 mod format;
 mod startup_log;
-mod ui; // App-local tokens and styles, exposed through the existing facade.
+mod ui;
 mod views;
 
 use chrono::Local;
 use iced::keyboard;
 use iced::keyboard::key;
 use iced::time;
-use iced::widget::image::FilterMethod;
-use iced::widget::{
-    Id, Space, button, column, container, image, operation, responsive, row, text, vertical_slider,
-};
-use iced::{ContentFit, Element, Length, Size, Subscription, Task, Theme};
+use iced::widget::{Id, operation};
+use iced::{Subscription, Task, Theme};
 use librapix_config::{
     AppConfig, LocalePreference, ThemePreference, lexical_normalize_path, load_from_path,
     load_or_create, save_to_path,
@@ -57,12 +54,8 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
-use ui::components::chip::managed_chip as render_management_chip;
 use ui::components::notice::{NoticeTone, ShellNotice};
-use ui::*;
-use views::library::media_card as render_media_card;
-#[cfg(test)]
-use views::{details::view as render_details_panel, library::panels as render_media_panel};
+use ui::tokens::*;
 
 fn main() -> iced::Result {
     let _ = startup_log::init_process_logging();
@@ -3281,96 +3274,6 @@ fn log_timeline_window_once(metrics: TimelineRenderWindowMetrics) {
     }
 }
 
-fn render_justified_gallery<'a>(
-    app: &'a Librapix,
-    items: &'a [BrowseItem],
-    selected_id: Option<i64>,
-    viewport_absolute_y: f32,
-    viewport_height: f32,
-) -> Element<'a, Message> {
-    let total_items = items.len();
-    if total_items == 0 {
-        return column![].into();
-    }
-
-    responsive(move |size: Size| {
-        let render_started_at = Instant::now();
-        let layout = gallery_layout_for_width(app, items, size.width);
-        let overscan_px = media_virtual_overscan_px(app.viewport_drag.active);
-        let viewport_height = if viewport_height > 0.0 {
-            viewport_height
-        } else {
-            size.height.clamp(600.0, 900.0)
-        };
-        let window_top = (viewport_absolute_y - overscan_px).max(0.0);
-        let window_bottom = viewport_absolute_y + viewport_height + overscan_px;
-        let mut grid = column![];
-        let mut pending_spacer = 0.0f32;
-        let mut cursor_y = 0.0f32;
-        let mut visible_rows = 0usize;
-
-        for (index, row_layout) in layout.rows.iter().enumerate() {
-            let row_top = cursor_y;
-            let row_bottom = row_top + row_layout.height;
-            let gap_after = if index + 1 < layout.rows.len() {
-                GALLERY_GAP as f32
-            } else {
-                0.0
-            };
-            let segment_height = row_layout.height + gap_after;
-            let intersects_window = row_bottom >= window_top && row_top <= window_bottom;
-
-            if !intersects_window {
-                pending_spacer += segment_height;
-                cursor_y += segment_height;
-                continue;
-            }
-
-            if pending_spacer > 0.0 {
-                grid = grid.push(Space::new().height(Length::Fixed(pending_spacer)));
-                pending_spacer = 0.0;
-            }
-
-            let mut row_widget = row![].spacing(GALLERY_GAP);
-            for item in &items[row_layout.start..row_layout.end] {
-                let portion = (item.aspect_ratio * 1000.0).max(1.0) as u16;
-                let card = render_media_card(
-                    item,
-                    selected_id == Some(item.media_id),
-                    row_layout.height,
-                    app.is_dark_theme(),
-                );
-                row_widget = row_widget.push(container(card).width(Length::FillPortion(portion)));
-            }
-            visible_rows = visible_rows.saturating_add(1);
-            grid = grid.push(row_widget);
-            if gap_after > 0.0 {
-                grid = grid.push(Space::new().height(Length::Fixed(gap_after)));
-            }
-            cursor_y += segment_height;
-        }
-
-        if pending_spacer > 0.0 {
-            grid = grid.push(Space::new().height(Length::Fixed(pending_spacer)));
-        }
-
-        log_large_surface_render_once(SurfaceRenderMetrics {
-            surface: "gallery",
-            total_items,
-            total_rows: layout.rows.len(),
-            visible_rows,
-            viewport_absolute_y,
-            viewport_height,
-            overscan_px,
-            drag_active: app.viewport_drag.active,
-            render_elapsed: render_started_at.elapsed(),
-        });
-
-        grid.into()
-    })
-    .into()
-}
-
 fn compute_browse_stats(items: &[BrowseItem]) -> BrowseStats {
     items.iter().filter(|item| !item.is_group_header).fold(
         BrowseStats::default(),
@@ -3624,291 +3527,6 @@ fn timeline_layout_for_width(
     layout
 }
 
-fn render_timeline_view<'a>(
-    app: &'a Librapix,
-    items: &'a [BrowseItem],
-    selected_id: Option<i64>,
-    viewport_absolute_y: f32,
-    viewport_height: f32,
-) -> Element<'a, Message> {
-    responsive(move |size: Size| {
-        let render_started_at = Instant::now();
-        let layout = timeline_layout_for_width(app, items, size.width);
-        let overscan_px = media_virtual_overscan_px(app.viewport_drag.active);
-        let viewport_height = if viewport_height > 0.0 {
-            viewport_height
-        } else {
-            size.height.clamp(600.0, 900.0)
-        };
-        let window_top = (viewport_absolute_y - overscan_px).max(0.0);
-        let window_bottom = viewport_absolute_y + viewport_height + overscan_px;
-        let mut sections = column![];
-        let mut pending_spacer = 0.0f32;
-        let mut cursor_y = 0.0f32;
-        let mut visible_groups = 0usize;
-        let mut visible_rows = 0usize;
-        let mut global_row_index = 0usize;
-        let mut first_visible_row = None;
-        let mut last_visible_row = None;
-        let mut top_spacer_height = 0.0f32;
-        let mut bottom_spacer_height = 0.0f32;
-
-        for (section_index, section_layout) in layout.sections.iter().enumerate() {
-            let header_item = &items[section_layout.header_index];
-            let row_layouts = &section_layout.row_layouts;
-            let section_gap = if section_index + 1 < layout.sections.len() {
-                SPACE_MD as f32
-            } else {
-                0.0
-            };
-            let section_height = section_layout.section_height;
-            let section_top = cursor_y;
-            let section_bottom = section_top + section_height;
-            let intersects_window = section_bottom >= window_top && section_top <= window_bottom;
-
-            if !intersects_window {
-                pending_spacer += section_height + section_gap;
-                if visible_rows == 0 {
-                    top_spacer_height += section_height + section_gap;
-                } else {
-                    bottom_spacer_height += section_height + section_gap;
-                }
-                global_row_index += row_layouts.len();
-                cursor_y += section_height + section_gap;
-                continue;
-            }
-
-            if pending_spacer > 0.0 {
-                sections = sections.push(Space::new().height(Length::Fixed(pending_spacer)));
-                pending_spacer = 0.0;
-            }
-
-            visible_groups = visible_groups.saturating_add(1);
-            let count_chips: Element<'_, Message> = if let (Some(img), Some(vid)) =
-                (header_item.group_image_count, header_item.group_video_count)
-            {
-                row![
-                    image(assets::icon_type_image(app.is_dark_theme()))
-                        .width(Length::Fixed(ICON_XS))
-                        .height(Length::Fixed(ICON_XS))
-                        .content_fit(ContentFit::Contain)
-                        .filter_method(FilterMethod::Linear),
-                    text(format!("{img}"))
-                        .size(FONT_CAPTION)
-                        .style(text_secondary),
-                    image(assets::icon_type_video(app.is_dark_theme()))
-                        .width(Length::Fixed(ICON_XS))
-                        .height(Length::Fixed(ICON_XS))
-                        .content_fit(ContentFit::Contain)
-                        .filter_method(FilterMethod::Linear),
-                    text(format!("{vid}"))
-                        .size(FONT_CAPTION)
-                        .style(text_secondary),
-                ]
-                .spacing(SPACE_SM)
-                .align_y(iced::Alignment::Center)
-                .into()
-            } else {
-                column![].into()
-            };
-            let group_header = container(
-                row![
-                    text(header_item.title.clone())
-                        .size(FONT_SUBTITLE)
-                        .style(text_primary),
-                    Space::new().width(Length::Fill),
-                    count_chips,
-                ]
-                .spacing(SPACE_SM)
-                .align_y(iced::Alignment::Center),
-            )
-            .padding([SPACE_SM as u16, 0]);
-            let body_spacing = if row_layouts.is_empty() {
-                0.0
-            } else {
-                SPACE_XS as f32
-            };
-            let rows_top = section_top + TIMELINE_GROUP_HEADER_HEIGHT + body_spacing;
-            let row_window = compute_visible_row_window(
-                row_layouts,
-                rows_top,
-                window_top,
-                window_bottom,
-                GALLERY_GAP as f32,
-            );
-            let header_bottom = section_top + TIMELINE_GROUP_HEADER_HEIGHT;
-            let header_visible = header_bottom >= window_top && section_top <= window_bottom;
-            let mut section_pending_spacer = 0.0f32;
-
-            if header_visible {
-                sections = sections.push(group_header);
-            } else {
-                section_pending_spacer += TIMELINE_GROUP_HEADER_HEIGHT;
-            }
-
-            section_pending_spacer += body_spacing + row_window.top_spacer;
-
-            if row_window.visible_rows > 0 {
-                if first_visible_row.is_none() {
-                    first_visible_row = Some(global_row_index + row_window.start_row);
-                }
-                last_visible_row = Some(global_row_index + row_window.end_row - 1);
-            }
-
-            if section_pending_spacer > 0.0 {
-                sections =
-                    sections.push(Space::new().height(Length::Fixed(section_pending_spacer)));
-            }
-
-            for (index, layout) in row_layouts
-                .iter()
-                .enumerate()
-                .skip(row_window.start_row)
-                .take(row_window.visible_rows)
-            {
-                let mut row_widget = row![].spacing(GALLERY_GAP);
-                for item in &items[section_layout.media_start + layout.start
-                    ..section_layout.media_start + layout.end]
-                {
-                    let portion = (item.aspect_ratio * 1000.0).max(1.0) as u16;
-                    let card = render_media_card(
-                        item,
-                        selected_id == Some(item.media_id),
-                        layout.height,
-                        app.is_dark_theme(),
-                    );
-                    row_widget =
-                        row_widget.push(container(card).width(Length::FillPortion(portion)));
-                }
-                visible_rows = visible_rows.saturating_add(1);
-                sections = sections.push(row_widget);
-                if index + 1 < row_window.end_row {
-                    sections =
-                        sections.push(Space::new().height(Length::Fixed(GALLERY_GAP as f32)));
-                }
-            }
-
-            let trailing_spacer = row_window.bottom_spacer + section_gap;
-            if trailing_spacer > 0.0 {
-                sections = sections.push(Space::new().height(Length::Fixed(trailing_spacer)));
-            }
-            if visible_rows == 0 {
-                top_spacer_height += section_pending_spacer + trailing_spacer;
-            } else {
-                bottom_spacer_height += trailing_spacer;
-            }
-            global_row_index += row_layouts.len();
-            cursor_y += section_height + section_gap;
-        }
-
-        if pending_spacer > 0.0 {
-            sections = sections.push(Space::new().height(Length::Fixed(pending_spacer)));
-        }
-
-        log_large_surface_render_once(SurfaceRenderMetrics {
-            surface: "timeline",
-            total_items: layout.total_items,
-            total_rows: layout.total_rows,
-            visible_rows,
-            viewport_absolute_y,
-            viewport_height,
-            overscan_px,
-            drag_active: app.viewport_drag.active,
-            render_elapsed: render_started_at.elapsed(),
-        });
-        log_timeline_window_once(TimelineRenderWindowMetrics {
-            total_items: layout.total_items,
-            total_groups: layout.total_groups,
-            total_rows: layout.total_rows,
-            visible_groups,
-            visible_rows,
-            first_visible_row,
-            last_visible_row,
-            top_spacer: top_spacer_height,
-            bottom_spacer: bottom_spacer_height,
-            viewport_absolute_y,
-            viewport_height,
-            overscan_px,
-            drag_active: app.viewport_drag.active,
-        });
-
-        sections.into()
-    })
-    .into()
-}
-
-fn render_timeline_scrubber(app: &Librapix) -> Element<'_, Message> {
-    if app.timeline_anchors.is_empty() {
-        return container(column![])
-            .width(Length::Fixed(SCRUBBER_PANEL_WIDTH))
-            .height(Length::Fill)
-            .into();
-    }
-
-    let slider_value = (1.0 - app.timeline_scrub_value).clamp(0.0, 1.0);
-    let slider = vertical_slider(0.0..=1.0, slider_value, |value| {
-        Message::TimelineScrubChanged(1.0 - value)
-    })
-    .on_release(Message::TimelineScrubReleased)
-    .step(0.001)
-    .width(12.0)
-    .height(Length::Fill);
-
-    let active_anchor = app
-        .timeline_scrub_anchor_index
-        .and_then(|index| app.timeline_anchors.get(index));
-    let chip_label = active_anchor
-        .map(|anchor| format!("{} ({})", anchor.label, anchor.item_count))
-        .unwrap_or_default();
-    let chip_position = app.timeline_scrub_value.clamp(0.0, 1.0);
-
-    let chip_track_content: Element<'_, Message> = if app.timeline_scrubbing {
-        let top = ((chip_position * 1000.0).round() as u16).min(1000);
-        let bottom = 1000u16.saturating_sub(top);
-        column![
-            Space::new().height(Length::FillPortion(top.max(1))),
-            container(text(chip_label).size(FONT_CAPTION).style(text_primary))
-                .padding([SPACE_2XS as u16, SPACE_SM as u16])
-                .style(scrubber_chip_style),
-            Space::new().height(Length::FillPortion(bottom.max(1))),
-        ]
-        .height(Length::Fill)
-        .into()
-    } else {
-        Space::new().height(Length::Fill).into()
-    };
-    let chip_track = container(chip_track_content)
-        .width(Length::Fixed(SCRUBBER_CHIP_TRACK_WIDTH))
-        .height(Length::Fill);
-
-    let year_markers = timeline_year_markers(&app.timeline_anchors);
-    let marker_track = render_timeline_year_marker_track(&year_markers);
-    let scrub_controls = row![
-        marker_track,
-        row![chip_track, slider]
-            .spacing(SPACE_XS)
-            .height(Length::Fill),
-    ]
-    .spacing(SPACE_SM)
-    .height(Length::Fill);
-
-    container(column![scrub_controls].height(Length::Fill))
-        .width(Length::Fixed(SCRUBBER_PANEL_WIDTH))
-        .height(Length::Fill)
-        .padding([SPACE_SM as u16, SPACE_XS as u16])
-        .style(scrubber_panel_style)
-        .into()
-}
-
-fn truncate_for_sidebar(value: &str, max_chars: usize) -> (String, bool) {
-    let mut chars = value.chars();
-    let truncated = chars.by_ref().take(max_chars).collect::<String>();
-    if chars.next().is_some() {
-        return (format!("{truncated}..."), true);
-    }
-    (value.to_owned(), false)
-}
-
 fn activity_indicator_mode(progress: &ActivityProgressState) -> ActivityIndicatorMode {
     if !progress.busy {
         return ActivityIndicatorMode::Idle;
@@ -3927,38 +3545,6 @@ struct TimelineYearMarker {
     label: String,
     group_index: usize,
     normalized_position: f32,
-}
-
-fn render_timeline_year_marker_track(markers: &[TimelineYearMarker]) -> Element<'static, Message> {
-    if markers.is_empty() {
-        return Space::new().width(Length::Fixed(0.0)).into();
-    }
-
-    let mut track = column![].height(Length::Fill);
-    let mut previous_position = 0.0f32;
-
-    for marker in markers {
-        let current = marker.normalized_position.clamp(0.0, 1.0);
-        let spacer = ((current - previous_position).max(0.0) * 1000.0).round() as u16;
-        if spacer > 0 {
-            track = track.push(Space::new().height(Length::FillPortion(spacer)));
-        }
-
-        track = track.push(
-            button(text(marker.label.clone()).size(FONT_CAPTION))
-                .on_press(Message::JumpToTimelineAnchor(marker.group_index))
-                .style(subtle_button_style)
-                .padding([SPACE_2XS as u16, SPACE_XS as u16]),
-        );
-        previous_position = current;
-    }
-
-    let trailing = ((1.0 - previous_position).max(0.0) * 1000.0).round() as u16;
-    if trailing > 0 {
-        track = track.push(Space::new().height(Length::FillPortion(trailing)));
-    }
-
-    track.into()
 }
 
 fn timeline_year_markers(anchors: &[TimelineAnchor]) -> Vec<TimelineYearMarker> {
@@ -9754,6 +9340,33 @@ fn map_roots_from_storage(roots: Vec<librapix_storage::SourceRootRecord>) -> Vec
 #[cfg(test)]
 mod tests {
     #[test]
+    fn presentation_scrubber_keeps_year_actions_and_drag_label() {
+        let mut app = test_app();
+        assert!(pane_texts(views::timeline::scrubber(&app)).is_empty());
+        app.timeline_anchors = vec![
+            anchor(0, Some(2026), "2026-03-01", 0.0),
+            anchor(4, Some(2025), "2025-12-01", 0.5),
+        ];
+        for (label, index) in [("2026", 0), ("2025", 4)] {
+            assert!(matches!(
+                dialog_click_label(views::timeline::scrubber(&app), label).as_slice(),
+                [Message::JumpToTimelineAnchor(actual)] if *actual == index
+            ));
+        }
+        assert!(
+            !pane_texts(views::timeline::scrubber(&app))
+                .iter()
+                .any(|s| s.contains("2025-12-01"))
+        );
+        app.timeline_scrubbing = true;
+        app.timeline_scrub_value = 0.5;
+        app.timeline_scrub_anchor_index = Some(1);
+        assert!(
+            pane_texts(views::timeline::scrubber(&app)).contains(&"2025-12-01 (10)".to_owned())
+        );
+    }
+
+    #[test]
     fn presentation_centralized_card_mapping_retains_selection_outline() {
         use ui::components::card::CardVariant;
         for theme in [Theme::Light, Theme::Dark] {
@@ -9771,7 +9384,7 @@ mod tests {
                 selected.border.width, 2.0,
                 "preserve the existing two-pixel media selection outline"
             );
-            assert_eq!(selected.border.color, ui::palette(&theme).focus_ring);
+            assert_eq!(selected.border.color, palette(&theme).focus_ring);
             assert_ne!(selected.background, unselected.background);
         }
     }
@@ -9783,11 +9396,11 @@ mod tests {
             (Route::Timeline, TextKey::EmptyTimelineLabel),
         ] {
             app.state.active_route = route;
-            let (_, body) = render_media_panel(&app);
+            let (_, body) = views::library::panels(&app);
             assert!(pane_texts(body).contains(&app.i18n.text(key).to_owned()));
         }
         app.state.search_query = "missing".into();
-        let (_, body) = render_media_panel(&app);
+        let (_, body) = views::library::panels(&app);
         assert!(
             pane_texts(body).contains(&app.i18n.text(TextKey::EmptySearchResultsLabel).to_owned())
         );
@@ -9796,22 +9409,22 @@ mod tests {
     #[test]
     fn presentation_tabs_preserve_routes_and_active_appearance() {
         let mut app = test_app();
-        let (header, _) = render_media_panel(&app);
+        let (header, _) = views::library::panels(&app);
         assert!(
             dialog_click_label(header, app.i18n.text(TextKey::TimelineTab))
                 .iter()
                 .any(|m| matches!(m, Message::OpenTimeline))
         );
-        let (header, _) = render_media_panel(&app);
+        let (header, _) = views::library::panels(&app);
         let grid = dialog_frame_pixels(header, Theme::Light);
         app.state.active_route = Route::Timeline;
-        let (header, _) = render_media_panel(&app);
+        let (header, _) = views::library::panels(&app);
         assert!(
             dialog_click_label(header, app.i18n.text(TextKey::GalleryTab))
                 .iter()
                 .any(|m| matches!(m, Message::OpenGallery))
         );
-        let (header, _) = render_media_panel(&app);
+        let (header, _) = views::library::panels(&app);
         assert_ne!(grid, dialog_frame_pixels(header, Theme::Light));
     }
 
@@ -9819,11 +9432,11 @@ mod tests {
     fn presentation_card_keeps_selection_check_and_select_message() {
         let item = browse_item(42);
         for selected in [false, true] {
-            let texts = pane_texts(render_media_card(&item, selected, 100.0, false));
+            let texts = pane_texts(views::library::media_card(&item, selected, 100.0, false));
             assert_eq!(texts.iter().any(|s| s == "\u{2713}"), selected);
             assert!(
                 pane_click(
-                    render_media_card(&item, selected, 100.0, false),
+                    views::library::media_card(&item, selected, 100.0, false),
                     iced::Point::new(700.0, 50.0)
                 )
                 .iter()
@@ -9831,8 +9444,14 @@ mod tests {
             );
         }
         assert_ne!(
-            dialog_frame_pixels(render_media_card(&item, false, 100.0, false), Theme::Light),
-            dialog_frame_pixels(render_media_card(&item, true, 100.0, false), Theme::Light)
+            dialog_frame_pixels(
+                views::library::media_card(&item, false, 100.0, false),
+                Theme::Light
+            ),
+            dialog_frame_pixels(
+                views::library::media_card(&item, true, 100.0, false),
+                Theme::Light
+            )
         );
     }
 
@@ -9854,7 +9473,7 @@ mod tests {
         );
         for kind in ["video", "image"] {
             app.media_cache.get_mut(&7).unwrap().media_kind = kind.into();
-            let texts = pane_texts(render_details_panel(&app));
+            let texts = pane_texts(views::details::view(&app));
             assert_eq!(
                 texts
                     .iter()
@@ -9871,7 +9490,7 @@ mod tests {
                 (TextKey::DetailsCopyPathButton, Message::CopySelectedPath),
             ] {
                 assert!(
-                    dialog_click_label(render_details_panel(&app), app.i18n.text(key))
+                    dialog_click_label(views::details::view(&app), app.i18n.text(key))
                         .iter()
                         .any(|m| std::mem::discriminant(m) == std::mem::discriminant(&expected))
                 );
@@ -9897,7 +9516,7 @@ mod tests {
             app.state.active_route = route;
             for y in [0.0, 50_000.0, 150_000.0] {
                 app.media_scroll_absolute_y = y;
-                let (_, body) = render_media_panel(&app);
+                let (_, body) = views::library::panels(&app);
                 let texts = pane_texts(body);
                 let cards = texts.iter().filter(|s| s.as_str() == "Image").count();
                 let expected_cards = match (route, y as u32) {
@@ -9950,7 +9569,7 @@ mod tests {
                 inherited: false,
             },
         ];
-        let texts = pane_texts(render_details_panel(&app));
+        let texts = pane_texts(views::details::view(&app));
         for label in [
             "Dimensions: 1920 x 1080",
             "Size: 42 MB",
@@ -9962,21 +9581,21 @@ mod tests {
         }
         assert!(
             dialog_click_label(
-                render_details_panel(&app),
+                views::details::view(&app),
                 app.i18n.text(TextKey::RootEditButton)
             )
             .iter()
             .any(|m| matches!(m, Message::DetailsStartEditTag(name) if name == "manual-tag"))
         );
         assert!(
-            dialog_click_label(render_details_panel(&app), "x")
+            dialog_click_label(views::details::view(&app), "x")
                 .iter()
                 .any(|m| matches!(m, Message::DetachTagByName(name) if name == "manual-tag"))
         );
         app.details_editing_tag = Some("manual-tag".into());
         assert!(
             dialog_click_label(
-                render_details_panel(&app),
+                views::details::view(&app),
                 app.i18n.text(TextKey::LibrarySaveButton)
             )
             .iter()
@@ -9984,7 +9603,7 @@ mod tests {
         );
         assert!(
             dialog_click_label(
-                render_details_panel(&app),
+                views::details::view(&app),
                 app.i18n.text(TextKey::DismissButton)
             )
             .iter()
@@ -10166,6 +9785,10 @@ mod tests {
         library_statistics::view as render_library_statistics_dialog,
         make_short::view as render_make_short_dialog, new_media::view as render_new_media_dialog,
         settings::view as render_settings_dialog,
+    };
+    use iced::{
+        Element, Size,
+        widget::{button, text},
     };
 
     #[test]
@@ -10747,7 +10370,7 @@ mod tests {
             mouse::Cursor::Unavailable,
             &viewport,
         );
-        renderer.screenshot(Size::new(1400, 900), 1.0, ui::palette(&theme).bg_base)
+        renderer.screenshot(Size::new(1400, 900), 1.0, palette(&theme).bg_base)
     }
 
     #[test]

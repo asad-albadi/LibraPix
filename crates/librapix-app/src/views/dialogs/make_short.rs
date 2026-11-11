@@ -1,17 +1,21 @@
 use super::modal_overlay;
+use crate::ui::components::text::section_heading;
 use crate::ui::components::{
     button::{ButtonSize, ButtonVariant, app_button},
     input::app_input,
     separator::horizontal,
     tabs::tab_trigger,
-    tooltip::app_tooltip,
+    tooltip::help_hint,
 };
 use crate::ui::patterns::{
     dialog::{DialogSpec, dialog},
     field::{FieldSpec, field},
     status::{StatusTone, status_row},
 };
-use crate::ui::*;
+use crate::ui::{
+    styles::text::{text_error, text_secondary, text_tertiary},
+    tokens::*,
+};
 use crate::{Librapix, MakeShortRunState, Message, assets, make_short_has_smooth_warning};
 use iced::{
     ContentFit, Element, Length,
@@ -31,7 +35,7 @@ pub(crate) fn view(app: &Librapix) -> Element<'_, Message> {
                 (!is_running).then_some(Message::MakeShortToggleEffect(effect)),
                 state.effects.contains(&effect)
             ),
-            help(app.i18n.text(help_key)),
+            help_hint(app.i18n.text(help_key)),
         ]
         .spacing(SPACE_XS)
     };
@@ -70,7 +74,7 @@ pub(crate) fn view(app: &Librapix) -> Element<'_, Message> {
     let warning: Element<'_, Message> = if make_short_has_smooth_warning(state) {
         text(app.i18n.text(TextKey::MakeShortSmoothWarning))
             .size(FONT_CAPTION)
-            .style(crate::ui::styles::text::text_error)
+            .style(text_error)
             .into()
     } else {
         Space::new().into()
@@ -154,7 +158,7 @@ pub(crate) fn view(app: &Librapix) -> Element<'_, Message> {
             ButtonVariant::Ghost,
             ButtonSize::Small
         ),
-        help(app.i18n.text(TextKey::MakeShortHelpOutput)),
+        help_hint(app.i18n.text(TextKey::MakeShortHelpOutput)),
     ]
     .spacing(SPACE_SM)
     .align_y(iced::Alignment::Center);
@@ -189,7 +193,7 @@ pub(crate) fn view(app: &Librapix) -> Element<'_, Message> {
                 crop_chip(CropPosition::Center, "center"),
                 crop_chip(CropPosition::Left, "left"),
                 crop_chip(CropPosition::Right, "right"),
-                help(app.i18n.text(TextKey::MakeShortHelpCrop))
+                help_hint(app.i18n.text(TextKey::MakeShortHelpCrop))
             ]
             .spacing(SPACE_SM)
             .align_y(iced::Alignment::Center)
@@ -206,7 +210,7 @@ pub(crate) fn view(app: &Librapix) -> Element<'_, Message> {
                 (!is_running).then_some(Message::MakeShortSetAddFade(!state.add_fade)),
                 state.add_fade
             ),
-            help(app.i18n.text(TextKey::MakeShortHelpFade)),
+            help_hint(app.i18n.text(TextKey::MakeShortHelpFade)),
         ]
         .spacing(SPACE_SM)
         .align_y(iced::Alignment::Center),
@@ -217,7 +221,7 @@ pub(crate) fn view(app: &Librapix) -> Element<'_, Message> {
                 app_input("1.0", &state.speed_input, false)
                     .on_input(Message::MakeShortSpeedChanged)
                     .width(80),
-                help(app.i18n.text(TextKey::MakeShortHelpSpeed))
+                help_hint(app.i18n.text(TextKey::MakeShortHelpSpeed))
             ]
             .spacing(SPACE_SM)
             .align_y(iced::Alignment::Center)
@@ -231,7 +235,7 @@ pub(crate) fn view(app: &Librapix) -> Element<'_, Message> {
                 app_input("18", &state.crf_input, false)
                     .on_input(Message::MakeShortCrfChanged)
                     .width(80),
-                help(app.i18n.text(TextKey::MakeShortHelpCrf))
+                help_hint(app.i18n.text(TextKey::MakeShortHelpCrf))
             ]
             .spacing(SPACE_SM)
             .align_y(iced::Alignment::Center)
@@ -245,7 +249,7 @@ pub(crate) fn view(app: &Librapix) -> Element<'_, Message> {
                 preset_chip(Preset::Fast, "fast"),
                 preset_chip(Preset::Medium, "medium"),
                 preset_chip(Preset::Slow, "slow"),
-                help(app.i18n.text(TextKey::MakeShortHelpPreset))
+                help_hint(app.i18n.text(TextKey::MakeShortHelpPreset))
             ]
             .spacing(SPACE_SM)
             .align_y(iced::Alignment::Center)
@@ -270,8 +274,4 @@ pub(crate) fn view(app: &Librapix) -> Element<'_, Message> {
         max_width: 620.0,
         max_height: 780.0,
     }))
-}
-
-fn help(label: &str) -> Element<'_, Message> {
-    app_tooltip(text("(?)").size(FONT_CAPTION).style(text_tertiary), label).into()
 }

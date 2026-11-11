@@ -4,6 +4,9 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Docs
+- Reworked the README into a product-first presentation with centered INDEX branding, badges, quick links, a screenshot hero, feature cards, release-download guidance, and expandable developer details.
+
 ## [0.7.0] - 2026-11-11
 
 ### Added

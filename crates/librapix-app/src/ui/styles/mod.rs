@@ -10,6 +10,5 @@ pub mod text;
 
 pub use button::*;
 pub use container::*;
-pub use input::*;
 pub use scrollable::*;
 pub use text::*;

@@ -105,22 +105,6 @@ pub fn tab_style(theme: &Theme, status: button::Status, active: bool) -> button:
 
 // ── Button Styles ──
 
-pub fn primary_button_style(theme: &Theme, status: button::Status) -> button::Style {
-    let p = palette(theme);
-    let (bg, text_color) = match status {
-        button::Status::Active => (p.accent, Color::WHITE),
-        button::Status::Hovered => (p.accent_hover, Color::WHITE),
-        button::Status::Pressed => (p.accent_subtle, Color::WHITE),
-        button::Status::Disabled => (p.bg_card, p.text_disabled),
-    };
-    button::Style {
-        background: Some(Background::Color(bg)),
-        text_color,
-        border: iced::border::rounded(RADIUS_MD),
-        ..button::Style::default()
-    }
-}
-
 pub fn subtle_button_style(theme: &Theme, status: button::Status) -> button::Style {
     let p = palette(theme);
     let (bg, text_color) = match status {
@@ -134,63 +118,6 @@ pub fn subtle_button_style(theme: &Theme, status: button::Status) -> button::Sty
         text_color,
         border: iced::border::rounded(RADIUS_MD),
         ..button::Style::default()
-    }
-}
-
-pub fn action_button_style(theme: &Theme, status: button::Status) -> button::Style {
-    let p = palette(theme);
-    let (bg, text_color) = match status {
-        button::Status::Active => (p.bg_card, p.text_primary),
-        button::Status::Hovered => (p.bg_hover, p.text_primary),
-        button::Status::Pressed => (p.bg_surface, p.text_primary),
-        button::Status::Disabled => (p.bg_surface, p.text_disabled),
-    };
-    button::Style {
-        background: Some(Background::Color(bg)),
-        text_color,
-        border: iced::border::rounded(RADIUS_MD),
-        ..button::Style::default()
-    }
-}
-
-pub fn nav_button_style(active: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
-    move |theme, status| {
-        let p = palette(theme);
-        let (bg, text_color) = if active {
-            (p.bg_surface, p.text_primary)
-        } else {
-            match status {
-                button::Status::Hovered => (p.bg_hover, p.text_primary),
-                _ => (Color::TRANSPARENT, p.text_secondary),
-            }
-        };
-        button::Style {
-            background: Some(Background::Color(bg)),
-            text_color,
-            border: iced::border::rounded(RADIUS_MD),
-            ..button::Style::default()
-        }
-    }
-}
-
-/// Segmented control button (Grid | Timeline toggle in the Library header).
-pub fn segment_button_style(active: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
-    move |theme, status| {
-        let p = palette(theme);
-        let (bg, text_color) = if active {
-            (p.accent, Color::WHITE)
-        } else {
-            match status {
-                button::Status::Hovered => (p.bg_hover, p.text_primary),
-                _ => (Color::TRANSPARENT, p.text_secondary),
-            }
-        };
-        button::Style {
-            background: Some(Background::Color(bg)),
-            text_color,
-            border: iced::border::rounded(RADIUS_MD),
-            ..button::Style::default()
-        }
     }
 }
 
@@ -222,32 +149,6 @@ pub fn managed_chip_action_style(
                 },
                 radius: RADIUS_PILL.into(),
             },
-            ..button::Style::default()
-        }
-    }
-}
-
-pub fn card_button_style(selected: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
-    move |theme, status| {
-        let p = palette(theme);
-        // (background, border color, border width, shadow)
-        let (bg, border_color, border_width, shadow) = if selected {
-            (p.bg_selected, p.accent, 2.0, elevation_med(theme))
-        } else {
-            match status {
-                button::Status::Hovered => (p.bg_hover, p.focus_ring, 1.0, elevation_med(theme)),
-                _ => (p.bg_surface, Color::TRANSPARENT, 0.0, elevation_low(theme)),
-            }
-        };
-        button::Style {
-            background: Some(Background::Color(bg)),
-            text_color: p.text_primary,
-            border: Border {
-                color: border_color,
-                width: border_width,
-                radius: RADIUS_LG.into(),
-            },
-            shadow,
             ..button::Style::default()
         }
     }

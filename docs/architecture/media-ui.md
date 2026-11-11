@@ -17,6 +17,20 @@ All browsing views consume `BrowseItem` which carries:
 
 ## Shared primitives
 
+Library composition lives in `views/library.rs` (`view(&Librapix)`), including
+the existing media scrollable and its viewport messages. Details composition
+lives in `views/details.rs` (`view(&Librapix)`). Both emit the existing messages;
+selection, double-click handling, tags, OS actions, and background work remain in
+application orchestration. Header/navigation use shared controls; managed chips
+are message-generic components shared by dialogs and details.
+
+Media cards use the single-button `interactive_card` component without adding
+widget layers. Selection retains its two-pixel outline and checkmark. Justified
+layout, width-keyed caches, viewport/overscan math, timeline section geometry,
+scrubber, and render-window logging remain in their existing app helpers.
+Runtime activity retains real item counts when available and a non-percentage
+working treatment otherwise; components do not own subscriptions or queues.
+
 The application shell is composed in `views/shell.rs`. Its independently
 collapsible panes use app-local presentation patterns: the left rail contains
 only Library, Add Library, Refresh, and Expand, with localized tooltips. Dynamic
@@ -35,9 +49,9 @@ the notice layer preserves Iced's persistent media scroll state.
 The app-local `ui/components` vocabulary contains buttons/icon buttons, badges,
 cards, inputs, selects, checkboxes, tabs, separators, tooltips, loading, empty
 states, and notices. It uses Iced 0.14 built-ins and closure styling only. These
-constructors are consumed by the shell pane controls and notices; remaining
-view migrations are staged separately. Media-first palettes keep the gallery canvas below raised controls,
-retain blue selection/focus, and use quiet one-pixel component borders.
+constructors are consumed by the shell, library, details, and dialogs. Media-first
+palettes keep the gallery canvas below raised controls and retain blue
+selection/focus with quiet borders (two pixels for media selection).
 
 Loading primitives accept an externally driven animation phase, not a percentage:
 three fixed-size dots cycle emphasis without resizing; the working row displays
@@ -47,7 +61,7 @@ and summary plus an optional labeled dismiss action, so feedback is not color-on
 Inputs and checkboxes retain Iced builder access for IDs, messages, and disabled
 state. No component reads or changes source media.
 
-- `render_media_card(item, selected, height)`: renders a single media card at a given row height.
+- `views::library::media_card(item, selected, height, dark)`: renders a single media card at a given row height.
   - includes top-right media-kind badge icon.
   - includes padded metadata row below the thumbnail.
 - `resolve_thumbnail(thumbnails_dir, row, max_edge)`: returns a thumbnail path for images (Lanczos3) or videos (ffmpeg), or None.

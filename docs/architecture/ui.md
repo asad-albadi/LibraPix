@@ -16,8 +16,9 @@ Shared visual tokens and widget styles are centralized in `librapix-app/src/ui/`
 
 - `tokens/` owns the existing palette/chip tones, elevation, spacing, typography, sizing, and radii.
 - `styles/` owns the existing Iced button, container, input, scrollbar, and text style functions.
-- `mod.rs` preserves the existing `ui::*` facade and layout helpers so view call sites remain unchanged during extraction. Reserved modules contain no new tokens or widget behavior until a real call site needs them.
-- This structural extraction preserves all concrete values, themes, visuals, and product behavior; the approved migration is recorded in `docs/superpowers/plans/2026-11-11-centralized-ui.md`.
+- `components/` centralizes composed controls, including a single-button media card and message-generic managed chips. `patterns/` centralizes pane, dialog, field, and status composition.
+- `views/library.rs` and `views/details.rs` expose product `view(&Librapix)` interfaces; low-level media layout/cache/scrubber helpers stay in the app. The `ui::*` facade remains for token/style consumers. Superseded divider and control-style helpers were removed as their last call sites migrated.
+- The migration applies the approved media-first component visuals without changing product/background behavior; the approved migration is recorded in `docs/superpowers/plans/2026-11-11-centralized-ui.md`.
 
 ### Color palette / theming
 - Semantic `Palette` struct with two `static` instances, `DARK` and `LIGHT`; `palette(&Theme)` selects one via `theme.extended_palette().is_dark`.

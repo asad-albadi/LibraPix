@@ -9,6 +9,7 @@
   - Startup release-check scheduling (post-first-render task dispatch)
 - Presentation (`librapix-app`)
   - View composition
+  - `views/library.rs` and `views/details.rs` compose centralized controls from app presentation state; low-level justified layout, viewport math, scrubber, and cache ownership remain in existing app helpers.
   - Message emission from user actions
   - App-shell composition and design-token usage
   - App-local `ui/tokens` and `ui/styles` modules, re-exported through the existing `ui` facade without changing dependency direction

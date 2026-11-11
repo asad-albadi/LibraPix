@@ -12,8 +12,7 @@ use iced::keyboard::key;
 use iced::time;
 use iced::widget::image::FilterMethod;
 use iced::widget::{
-    Id, Space, button, column, container, image, operation, progress_bar, responsive, row, stack,
-    text, text_input, tooltip, vertical_slider,
+    Id, Space, button, column, container, image, operation, responsive, row, text, vertical_slider,
 };
 use iced::{ContentFit, Element, Length, Size, Subscription, Task, Theme};
 use librapix_config::{
@@ -58,8 +57,12 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
+use ui::components::chip::managed_chip as render_management_chip;
 use ui::components::notice::{NoticeTone, ShellNotice};
 use ui::*;
+use views::library::media_card as render_media_card;
+#[cfg(test)]
+use views::{details::view as render_details_panel, library::panels as render_media_panel};
 
 fn main() -> iced::Result {
     let _ = startup_log::init_process_logging();
@@ -2999,177 +3002,6 @@ fn update_check_status_label(state: &UpdateCheckState) -> String {
     }
 }
 
-fn render_media_panel(app: &Librapix) -> (Element<'_, Message>, Element<'_, Message>) {
-    let is_grid = matches!(app.state.active_route, Route::Gallery);
-    let run_msg = match app.state.active_route {
-        Route::Gallery => Message::RunGalleryProjection,
-        Route::Timeline => Message::RunTimelineProjection,
-    };
-    // One canonical projection pass feeds both: the flat grid renders the
-    // header-stripped `gallery_items`, the timeline renders the grouped feed.
-    let browse_items = match app.state.active_route {
-        Route::Gallery => &app.gallery_items,
-        Route::Timeline => &app.timeline_items,
-    };
-    let stats_source = if app.state.search_query.trim().is_empty() {
-        browse_items
-    } else {
-        &app.search_items
-    };
-    let stats = compute_browse_stats(stats_source);
-
-    // Segmented Grid | Timeline toggle (Google/Windows Photos style).
-    let dark = app.is_dark_theme();
-    let segment_label = |handle, label: &str, active: bool, msg: Message| {
-        button(
-            row![
-                image(handle)
-                    .width(Length::Fixed(ICON_SM))
-                    .height(Length::Fixed(ICON_SM))
-                    .content_fit(ContentFit::Contain)
-                    .filter_method(FilterMethod::Linear),
-                text(label.to_owned()).size(FONT_BODY),
-            ]
-            .spacing(SPACE_XS)
-            .align_y(iced::Alignment::Center),
-        )
-        .on_press(msg)
-        .style(segment_button_style(active))
-        .padding([SPACE_XS as u16, SPACE_MD as u16])
-    };
-    let view_toggle = container(
-        row![
-            segment_label(
-                assets::icon_gallery(dark),
-                app.i18n.text(TextKey::GalleryTab),
-                is_grid,
-                Message::OpenGallery,
-            ),
-            segment_label(
-                assets::icon_timeline(dark),
-                app.i18n.text(TextKey::TimelineTab),
-                !is_grid,
-                Message::OpenTimeline,
-            ),
-        ]
-        .spacing(SPACE_2XS),
-    )
-    .padding(SPACE_2XS as u16)
-    .style(card_style);
-
-    let content_header = row![
-        text(app.i18n.text(TextKey::LibraryTab))
-            .size(FONT_TITLE)
-            .style(text_primary),
-        view_toggle,
-        Space::new().width(Length::Fill),
-        button(
-            image(assets::icon_refresh(app.is_dark_theme()))
-                .width(Length::Fixed(ICON_MD))
-                .height(Length::Fixed(ICON_MD))
-                .content_fit(ContentFit::Contain)
-                .filter_method(FilterMethod::Linear),
-        )
-        .on_press(run_msg)
-        .style(subtle_button_style)
-        .padding([SPACE_XS as u16, SPACE_XS as u16]),
-        button(
-            image(assets::icon_filter(app.is_dark_theme()))
-                .width(Length::Fixed(ICON_MD))
-                .height(Length::Fixed(ICON_MD))
-                .content_fit(ContentFit::Contain)
-                .filter_method(FilterMethod::Linear),
-        )
-        .on_press(Message::ToggleFilterDialog)
-        .style(subtle_button_style)
-        .padding([SPACE_XS as u16, SPACE_XS as u16]),
-        text(format!(
-            "{}: {} \u{00B7} {}: {} \u{00B7} {}: {}",
-            app.i18n.text(TextKey::StatsTotalLabel),
-            stats.shown_items,
-            app.i18n.text(TextKey::StatsImagesLabel),
-            stats.image_count,
-            app.i18n.text(TextKey::StatsVideosLabel),
-            stats.video_count
-        ))
-        .size(FONT_BODY)
-        .style(text_secondary),
-    ]
-    .spacing(SPACE_SM)
-    .align_y(iced::Alignment::Center);
-
-    let header: Element<'_, Message> = content_header.into();
-
-    let search_section: Element<'_, Message> = if !app.state.search_query.trim().is_empty() {
-        if app.search_items.is_empty() {
-            render_empty_state(
-                assets::icon_search(app.is_dark_theme()),
-                app.i18n.text(TextKey::EmptySearchResultsLabel).to_owned(),
-            )
-        } else {
-            let search_header = row![
-                text(app.i18n.text(TextKey::SearchResultLabel))
-                    .size(FONT_SUBTITLE)
-                    .style(text_primary),
-                text(format!("({})", app.search_items.len()))
-                    .size(FONT_BODY)
-                    .style(text_secondary),
-            ]
-            .spacing(SPACE_SM);
-
-            column![
-                search_header,
-                render_justified_gallery(
-                    app,
-                    &app.search_items,
-                    app.state.selected_media_id,
-                    app.media_scroll_absolute_y,
-                    app.media_viewport_height,
-                ),
-            ]
-            .spacing(SPACE_SM)
-            .into()
-        }
-    } else {
-        column![].into()
-    };
-
-    let empty_label = match app.state.active_route {
-        Route::Gallery => app.i18n.text(TextKey::EmptyGalleryLabel),
-        Route::Timeline => app.i18n.text(TextKey::EmptyTimelineLabel),
-    };
-
-    let browse_content: Element<'_, Message> = if browse_items.is_empty() {
-        render_empty_state(
-            assets::icon_gallery(app.is_dark_theme()),
-            empty_label.to_owned(),
-        )
-    } else {
-        match app.state.active_route {
-            Route::Gallery => render_justified_gallery(
-                app,
-                browse_items,
-                app.state.selected_media_id,
-                app.media_scroll_absolute_y,
-                app.media_viewport_height,
-            ),
-            Route::Timeline => render_timeline_view(
-                app,
-                browse_items,
-                app.state.selected_media_id,
-                app.media_scroll_absolute_y,
-                app.media_viewport_height,
-            ),
-        }
-    };
-
-    let scrollable_content: Element<'_, Message> = column![search_section, browse_content]
-        .spacing(SPACE_LG)
-        .into();
-
-    (header, scrollable_content)
-}
-
 #[derive(Debug, Clone, Copy)]
 struct JustifiedRowLayout {
     start: usize,
@@ -3536,124 +3368,6 @@ fn render_justified_gallery<'a>(
 
         grid.into()
     })
-    .into()
-}
-
-fn render_media_card(
-    item: &BrowseItem,
-    selected: bool,
-    height: f32,
-    dark: bool,
-) -> Element<'_, Message> {
-    let thumb: Element<'_, Message> = if let Some(path) = &item.thumbnail_path {
-        image(image::Handle::from_path(path))
-            .width(Length::Fill)
-            .height(Length::Fixed(height))
-            .content_fit(ContentFit::Cover)
-            .into()
-    } else {
-        container(
-            column![
-                Space::new().height(Length::Fill),
-                text(item.title.clone())
-                    .size(FONT_CAPTION)
-                    .style(text_tertiary),
-            ]
-            .padding(SPACE_XS as u16),
-        )
-        .width(Length::Fill)
-        .height(Length::Fixed(height))
-        .style(thumb_placeholder_style)
-        .into()
-    };
-
-    let kind_icon_handle = if item.media_kind.eq_ignore_ascii_case("video") {
-        assets::icon_type_video(dark)
-    } else {
-        assets::icon_type_image(dark)
-    };
-    let kind_badge = image(kind_icon_handle)
-        .width(Length::Fixed(ICON_SM))
-        .height(Length::Fixed(ICON_SM))
-        .content_fit(ContentFit::Contain)
-        .filter_method(FilterMethod::Linear);
-
-    let selection_badge: Element<'_, Message> = if selected {
-        container(
-            text("\u{2713}")
-                .size(FONT_CAPTION)
-                .color(iced::Color::WHITE),
-        )
-        .padding([SPACE_2XS as u16, SPACE_XS as u16])
-        .style(ui::check_badge_style)
-        .into()
-    } else {
-        Space::new().width(Length::Shrink).into()
-    };
-
-    let thumb_overlay: Element<'_, Message> = container(
-        row![
-            selection_badge,
-            Space::new().width(Length::Fill),
-            kind_badge
-        ]
-        .align_y(iced::Alignment::Start),
-    )
-    .width(Length::Fill)
-    .height(Length::Fixed(height))
-    .padding([SPACE_XS as u16, SPACE_XS as u16])
-    .into();
-
-    // Top scrim keeps the badges legible over bright images.
-    let scrim: Element<'_, Message> = container(Space::new())
-        .width(Length::Fill)
-        .height(Length::Fixed(height))
-        .style(ui::thumb_scrim_style)
-        .into();
-
-    let thumb_with_badge: Element<'_, Message> = stack([thumb, scrim, thumb_overlay])
-        .width(Length::Fill)
-        .height(Length::Fixed(height))
-        .clip(true)
-        .into();
-
-    let card_content = column![
-        thumb_with_badge,
-        container(
-            text(item.metadata_line.clone())
-                .size(FONT_CAPTION)
-                .style(text_secondary)
-        )
-        .padding([SPACE_XS as u16, SPACE_SM as u16]),
-    ];
-
-    button(card_content)
-        .width(Length::Fill)
-        .on_press(Message::SelectMedia(item.media_id))
-        .style(card_button_style(selected))
-        .padding(0)
-        .into()
-}
-
-/// Centered empty/placeholder state: a muted icon over a short message, on the
-/// soft `empty_state_style` surface. Used for empty gallery/timeline + search.
-fn render_empty_state(icon: image::Handle, message: String) -> Element<'static, Message> {
-    container(
-        column![
-            image(icon)
-                .width(Length::Fixed(ICON_XL))
-                .height(Length::Fixed(ICON_XL))
-                .content_fit(ContentFit::Contain)
-                .filter_method(FilterMethod::Linear),
-            text(message).size(FONT_SUBTITLE).style(text_secondary),
-        ]
-        .spacing(SPACE_MD)
-        .align_x(iced::Alignment::Center),
-    )
-    .padding(SPACE_2XL as u16)
-    .width(Length::Fill)
-    .center_x(Length::Fill)
-    .style(empty_state_style)
     .into()
 }
 
@@ -4184,196 +3898,6 @@ fn render_timeline_scrubber(app: &Librapix) -> Element<'_, Message> {
         .padding([SPACE_SM as u16, SPACE_XS as u16])
         .style(scrubber_panel_style)
         .into()
-}
-
-fn render_management_chip(
-    label: impl Into<String>,
-    tone_key: &str,
-    status_label: Option<String>,
-    toggle: Option<(String, Message)>,
-    edit: Option<(String, Message)>,
-    remove: Option<Message>,
-    dark: bool,
-) -> Element<'static, Message> {
-    let label = label.into();
-    let tone = chip_tone_for_key(tone_key, dark);
-    let mut controls = row![].spacing(SPACE_2XS).align_y(iced::Alignment::Center);
-    if let Some((toggle_label, msg)) = toggle {
-        controls = controls.push(
-            button(text(toggle_label).size(FONT_CAPTION))
-                .on_press(msg)
-                .style(managed_chip_action_style(tone, false))
-                .padding([SPACE_2XS as u16, SPACE_XS as u16]),
-        );
-    }
-    if let Some((edit_label, msg)) = edit {
-        controls = controls.push(
-            button(text(edit_label).size(FONT_CAPTION))
-                .on_press(msg)
-                .style(managed_chip_action_style(tone, false))
-                .padding([SPACE_2XS as u16, SPACE_XS as u16]),
-        );
-    }
-    if let Some(msg) = remove {
-        controls = controls.push(
-            button(text("x").size(FONT_CAPTION))
-                .on_press(msg)
-                .style(managed_chip_action_style(tone, true))
-                .padding([SPACE_2XS as u16, SPACE_XS as u16]),
-        );
-    }
-    let status: Element<'static, Message> = if let Some(value) = status_label {
-        text(value)
-            .size(FONT_CAPTION)
-            .color(tone.accent_text)
-            .into()
-    } else {
-        Space::new().width(Length::Shrink).into()
-    };
-    container(
-        row![
-            column![text(label).size(FONT_BODY).color(tone.text), status,].spacing(SPACE_2XS),
-            Space::new().width(Length::Fill),
-            controls,
-        ]
-        .spacing(SPACE_SM)
-        .align_y(iced::Alignment::Center),
-    )
-    .width(Length::Fill)
-    .padding([SPACE_XS as u16, SPACE_SM as u16])
-    .style(managed_chip_style(tone))
-    .into()
-}
-
-fn render_activity_status(app: &Librapix) -> Element<'_, Message> {
-    let progress = &app.activity_progress;
-    let indicator_mode = activity_indicator_mode(progress);
-    let progress_line = match indicator_mode {
-        ActivityIndicatorMode::Determinate { total, done } => format!(
-            "{} {} / {}",
-            app.i18n.text(TextKey::ProgressItemsLabel),
-            done,
-            total
-        ),
-        ActivityIndicatorMode::Indeterminate => {
-            format!("{} --", app.i18n.text(TextKey::ProgressItemsLabel))
-        }
-        ActivityIndicatorMode::Idle => {
-            format!("{} 0 / 0", app.i18n.text(TextKey::ProgressItemsLabel))
-        }
-    };
-    let queue_line = format!(
-        "{} {}",
-        app.i18n.text(TextKey::ProgressQueueLabel),
-        progress.queue_depth
-    );
-    let roots_line = progress.roots_total.map(|total| {
-        format!(
-            "{} {} / {}",
-            app.i18n.text(TextKey::ProgressRootsLabel),
-            progress.roots_done.min(total),
-            total
-        )
-    });
-
-    if matches!(indicator_mode, ActivityIndicatorMode::Idle) {
-        return container(
-            row![
-                text("\u{25CF}").size(FONT_CAPTION).style(text_success),
-                text(app.activity_status.clone())
-                    .size(FONT_CAPTION)
-                    .style(text_secondary),
-            ]
-            .spacing(SPACE_XS)
-            .align_y(iced::Alignment::Center),
-        )
-        .width(Length::Fill)
-        .into();
-    }
-
-    let indicator: Element<'_, Message> = match indicator_mode {
-        ActivityIndicatorMode::Determinate { total, done } => {
-            let capped_total = total.max(1) as f32;
-            let done = done.min(total) as f32;
-            container(progress_bar(0.0..=capped_total, done))
-                .height(Length::Fixed(4.0))
-                .into()
-        }
-        ActivityIndicatorMode::Indeterminate => row![
-            text("\u{25CF}").size(FONT_CAPTION).style(text_accent),
-            text(app.i18n.text(TextKey::ActivityWorkingLabel))
-                .size(FONT_CAPTION)
-                .style(text_secondary),
-        ]
-        .spacing(SPACE_XS)
-        .align_y(iced::Alignment::Center)
-        .into(),
-        ActivityIndicatorMode::Idle => Space::new().into(),
-    };
-
-    let mut metrics = vec![progress_line, queue_line];
-    if let Some(roots_line) = roots_line {
-        metrics.push(roots_line);
-    }
-    let metrics_line = metrics.join(" | ");
-
-    let mut lines = column![
-        text(progress.stage_text.clone())
-            .size(FONT_BODY)
-            .style(text_primary),
-        indicator,
-        text(metrics_line).size(FONT_CAPTION).style(text_tertiary),
-    ]
-    .spacing(SPACE_2XS);
-    if !progress.detail_text.trim().is_empty() {
-        lines = lines.push(
-            text(progress.detail_text.clone())
-                .size(FONT_CAPTION)
-                .style(text_tertiary),
-        );
-    }
-    if let Some(error) = progress.last_error.as_ref() {
-        let error_line = format!("{}: {}", app.i18n.text(TextKey::ProgressErrorLabel), error);
-        let (error_compact, error_truncated) = truncate_for_sidebar(&error_line, 120);
-        let error_text = text(error_compact)
-            .size(FONT_CAPTION)
-            .style(text_warning)
-            .width(Length::Fill);
-        let error_widget: Element<'_, Message> = if error_truncated {
-            tooltip(
-                error_text,
-                container(text(error_line).size(FONT_CAPTION).style(text_primary))
-                    .padding([SPACE_XS as u16, SPACE_SM as u16])
-                    .style(card_style),
-                tooltip::Position::Top,
-            )
-            .into()
-        } else {
-            error_text.into()
-        };
-        lines = lines.push(error_widget);
-    }
-
-    container(lines).width(Length::Fill).into()
-}
-
-fn render_update_chip(app: &Librapix) -> iced::widget::Button<'_, Message> {
-    let mut update_chip = button(
-        text(app.i18n.text(update_chip_text_key(&app.update_check_state))).size(FONT_CAPTION),
-    )
-    .width(Length::Fill)
-    .padding([SPACE_XS as u16, SPACE_MD as u16]);
-    if !matches!(app.update_check_state, UpdateCheckState::Checking) {
-        update_chip = update_chip.on_press(Message::UpdateChipPressed);
-    }
-    match &app.update_check_state {
-        UpdateCheckState::UpdateAvailable { .. } => update_chip.style(primary_button_style),
-        UpdateCheckState::Checking => update_chip.style(action_button_style),
-        UpdateCheckState::UpToDate => update_chip.style(action_button_style),
-        UpdateCheckState::Unknown | UpdateCheckState::Failed => {
-            update_chip.style(subtle_button_style)
-        }
-    }
 }
 
 fn truncate_for_sidebar(value: &str, max_chars: usize) -> (String, bool) {
@@ -5024,309 +4548,6 @@ fn scrub_value_to_anchor_index(anchors: &[TimelineAnchor], normalized: f32) -> O
     }
 
     Some(best_index)
-}
-
-fn render_details_panel(app: &Librapix) -> Element<'_, Message> {
-    if app.state.selected_media_id.is_none() {
-        return container(
-            column![
-                text(app.i18n.text(TextKey::SelectPhotoTitle))
-                    .size(FONT_SUBTITLE)
-                    .style(text_secondary),
-                text(app.i18n.text(TextKey::SelectPhotoSubtitle))
-                    .size(FONT_BODY)
-                    .style(text_tertiary),
-            ]
-            .spacing(SPACE_SM)
-            .padding(SPACE_2XL as u16),
-        )
-        .width(Length::Fill)
-        .style(empty_state_style)
-        .into();
-    }
-
-    let preview: Element<'_, Message> = if let Some(path) = &app.details_preview_path {
-        container(
-            image(image::Handle::from_path(path))
-                .width(Length::Fill)
-                .content_fit(ContentFit::Contain),
-        )
-        .width(Length::Fill)
-        .style(card_style)
-        .into()
-    } else {
-        container(text(""))
-            .width(Length::Fill)
-            .height(Length::Fixed(160.0))
-            .style(thumb_placeholder_style)
-            .into()
-    };
-
-    let metadata = if app.details_lines.is_empty() {
-        column![
-            text(app.i18n.text(TextKey::DetailsNoSelectionLabel))
-                .size(FONT_BODY)
-                .style(text_tertiary)
-        ]
-    } else {
-        app.details_lines
-            .iter()
-            .fold(column![].spacing(SPACE_XS), |col, line| {
-                col.push(text(line.clone()).size(FONT_BODY).style(text_secondary))
-            })
-    };
-
-    let details_tag_input_actions: Element<'_, Message> = if app.details_editing_tag.is_some() {
-        row![
-            button(text(app.i18n.text(TextKey::LibrarySaveButton)).size(FONT_BODY))
-                .on_press(Message::DetailsApplyTagEdit)
-                .style(primary_button_style)
-                .padding([SPACE_XS as u16, SPACE_MD as u16]),
-            button(text(app.i18n.text(TextKey::DismissButton)).size(FONT_BODY))
-                .on_press(Message::DetailsCancelTagEdit)
-                .style(subtle_button_style)
-                .padding([SPACE_XS as u16, SPACE_MD as u16]),
-        ]
-        .spacing(SPACE_XS)
-        .into()
-    } else {
-        row![
-            button(text(app.i18n.text(TextKey::DetailsAttachTagButton)).size(FONT_BODY))
-                .on_press(Message::AttachAppTag)
-                .style(action_button_style)
-                .padding([SPACE_XS as u16, SPACE_MD as u16]),
-            button(text(app.i18n.text(TextKey::DetailsAttachGameTagButton)).size(FONT_BODY))
-                .on_press(Message::AttachGameTag)
-                .style(action_button_style)
-                .padding([SPACE_XS as u16, SPACE_MD as u16]),
-        ]
-        .spacing(SPACE_XS)
-        .into()
-    };
-
-    let inherited_tag_chips: Vec<&DetailsTagChip> = app
-        .details_tags
-        .iter()
-        .filter(|tag| tag.inherited)
-        .collect();
-    let manual_tag_chips: Vec<&DetailsTagChip> = app
-        .details_tags
-        .iter()
-        .filter(|tag| !tag.inherited)
-        .collect();
-    let details_tag_list: Element<'_, Message> = if app.details_tags.is_empty() {
-        text(app.i18n.text(TextKey::FilterNoTagsLabel))
-            .size(FONT_CAPTION)
-            .style(text_tertiary)
-            .into()
-    } else {
-        let inherited_section: Element<'_, Message> = if inherited_tag_chips.is_empty() {
-            Space::new().height(Length::Shrink).into()
-        } else {
-            let list = inherited_tag_chips
-                .iter()
-                .fold(column![].spacing(SPACE_XS), |col, tag| {
-                    col.push(render_management_chip(
-                        &tag.name,
-                        &tag.name,
-                        Some(app.i18n.text(TextKey::InheritedTagLabel).to_owned()),
-                        None,
-                        None,
-                        Some(Message::DetachTagByName(tag.name.clone())),
-                        app.is_dark_theme(),
-                    ))
-                });
-            column![
-                section_heading(app.i18n.text(TextKey::InheritedTagLabel)),
-                list,
-            ]
-            .spacing(SPACE_XS)
-            .into()
-        };
-        let manual_section =
-            manual_tag_chips
-                .iter()
-                .fold(column![].spacing(SPACE_XS), |col, tag| {
-                    col.push(render_management_chip(
-                        &tag.name,
-                        &tag.name,
-                        Some(tag.kind.as_str().to_owned()),
-                        None,
-                        Some((
-                            app.i18n.text(TextKey::RootEditButton).to_owned(),
-                            Message::DetailsStartEditTag(tag.name.clone()),
-                        )),
-                        Some(Message::DetachTagByName(tag.name.clone())),
-                        app.is_dark_theme(),
-                    ))
-                });
-        column![inherited_section, manual_section]
-            .spacing(SPACE_SM)
-            .into()
-    };
-
-    column![
-        preview,
-        text(app.details_title.clone())
-            .size(FONT_SUBTITLE)
-            .style(text_primary),
-        h_divider(),
-        column![
-            section_heading(app.i18n.text(TextKey::FileInfoLabel)),
-            metadata,
-        ]
-        .spacing(SPACE_SM),
-        h_divider(),
-        column![
-            section_heading(app.i18n.text(TextKey::DetailsTagsSectionLabel)),
-            text_input(
-                app.i18n.text(TextKey::DetailsTagInputLabel),
-                &app.details_tag_input
-            )
-            .on_input(Message::DetailsTagInputChanged)
-            .on_submit(if app.details_editing_tag.is_some() {
-                Message::DetailsApplyTagEdit
-            } else {
-                Message::AttachAppTag
-            })
-            .style(field_input_style),
-            details_tag_input_actions,
-            details_tag_list,
-        ]
-        .spacing(SPACE_SM),
-        h_divider(),
-        column![
-            section_heading(app.i18n.text(TextKey::DetailsActionsSectionLabel)),
-            render_details_actions(app),
-            text(app.i18n.text(TextKey::DetailsCopyShortcutHint))
-                .size(FONT_CAPTION)
-                .style(text_tertiary),
-        ]
-        .spacing(SPACE_SM),
-        text(app.details_action_status.clone())
-            .size(FONT_CAPTION)
-            .style(text_tertiary),
-        text(app.i18n.text(TextKey::NonDestructiveNotice))
-            .size(FONT_CAPTION)
-            .style(text_tertiary),
-    ]
-    .spacing(SPACE_LG)
-    .into()
-}
-
-fn render_details_actions(app: &Librapix) -> Element<'_, Message> {
-    let show_make_short = selected_media_is_video(app);
-    responsive(move |size: Size| {
-        let open = button(
-            row![
-                image(assets::icon_open(app.is_dark_theme()))
-                    .width(Length::Fixed(ICON_SM))
-                    .height(Length::Fixed(ICON_SM))
-                    .content_fit(ContentFit::Contain)
-                    .filter_method(FilterMethod::Linear),
-                text(app.i18n.text(TextKey::DetailsOpenFileButton)).size(FONT_BODY),
-            ]
-            .spacing(SPACE_SM)
-            .align_y(iced::Alignment::Center),
-        )
-        .on_press(Message::OpenSelectedFile)
-        .width(Length::Fill)
-        .style(action_button_style)
-        .padding([SPACE_XS as u16, SPACE_MD as u16]);
-        let open_folder = button(
-            row![
-                image(assets::icon_show_in_folder(app.is_dark_theme()))
-                    .width(Length::Fixed(ICON_SM))
-                    .height(Length::Fixed(ICON_SM))
-                    .content_fit(ContentFit::Contain)
-                    .filter_method(FilterMethod::Linear),
-                text(app.i18n.text(TextKey::DetailsOpenFolderButton)).size(FONT_BODY),
-            ]
-            .spacing(SPACE_SM)
-            .align_y(iced::Alignment::Center),
-        )
-        .on_press(Message::OpenSelectedFolder)
-        .width(Length::Fill)
-        .style(action_button_style)
-        .padding([SPACE_XS as u16, SPACE_MD as u16]);
-        let copy_file = button(
-            row![
-                image(assets::icon_copy_file(app.is_dark_theme()))
-                    .width(Length::Fixed(ICON_SM))
-                    .height(Length::Fixed(ICON_SM))
-                    .content_fit(ContentFit::Contain)
-                    .filter_method(FilterMethod::Linear),
-                text(app.i18n.text(TextKey::DetailsCopyFileButton)).size(FONT_BODY),
-            ]
-            .spacing(SPACE_SM)
-            .align_y(iced::Alignment::Center),
-        )
-        .on_press(Message::CopySelectedFile)
-        .width(Length::Fill)
-        .style(action_button_style)
-        .padding([SPACE_XS as u16, SPACE_MD as u16]);
-        let copy_path = button(
-            row![
-                image(assets::icon_copy_path(app.is_dark_theme()))
-                    .width(Length::Fixed(ICON_SM))
-                    .height(Length::Fixed(ICON_SM))
-                    .content_fit(ContentFit::Contain)
-                    .filter_method(FilterMethod::Linear),
-                text(app.i18n.text(TextKey::DetailsCopyPathButton)).size(FONT_BODY),
-            ]
-            .spacing(SPACE_SM)
-            .align_y(iced::Alignment::Center),
-        )
-        .on_press(Message::CopySelectedPath)
-        .width(Length::Fill)
-        .style(action_button_style)
-        .padding([SPACE_XS as u16, SPACE_MD as u16]);
-        let make_short = button(
-            row![
-                image(assets::icon_youtube(app.is_dark_theme()))
-                    .width(Length::Fixed(ICON_SM))
-                    .height(Length::Fixed(ICON_SM))
-                    .content_fit(ContentFit::Contain)
-                    .filter_method(FilterMethod::Linear),
-                text(app.i18n.text(TextKey::DetailsMakeShortButton)).size(FONT_BODY),
-            ]
-            .spacing(SPACE_SM)
-            .align_y(iced::Alignment::Center),
-        )
-        .on_press(Message::OpenMakeShortDialog)
-        .width(Length::Fill)
-        .style(primary_button_style)
-        .padding([SPACE_XS as u16, SPACE_MD as u16]);
-
-        if size.width < 220.0 {
-            let mut col = column![open, open_folder, copy_file, copy_path].spacing(SPACE_XS);
-            if show_make_short {
-                col = col.push(make_short);
-            }
-            col.into()
-        } else if size.width < 420.0 {
-            let mut col = column![
-                row![open, open_folder].spacing(SPACE_XS),
-                row![copy_file, copy_path].spacing(SPACE_XS),
-            ]
-            .spacing(SPACE_XS);
-            if show_make_short {
-                col = col.push(make_short);
-            }
-            col.into()
-        } else {
-            if show_make_short {
-                row![open, open_folder, copy_file, copy_path, make_short]
-                    .spacing(SPACE_XS)
-                    .into()
-            } else {
-                row![open, open_folder, copy_file, copy_path]
-                    .spacing(SPACE_XS)
-                    .into()
-            }
-        }
-    })
-    .into()
 }
 
 fn make_short_has_smooth_warning(state: &MakeShortDialogState) -> bool {
@@ -10532,6 +9753,285 @@ fn map_roots_from_storage(roots: Vec<librapix_storage::SourceRootRecord>) -> Vec
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn presentation_centralized_card_mapping_retains_selection_outline() {
+        use ui::components::card::CardVariant;
+        for theme in [Theme::Light, Theme::Dark] {
+            let selected = ui::styles::button::card_action_style(
+                &theme,
+                button::Status::Active,
+                CardVariant::Selected,
+            );
+            let unselected = ui::styles::button::card_action_style(
+                &theme,
+                button::Status::Active,
+                CardVariant::Interactive,
+            );
+            assert_eq!(
+                selected.border.width, 2.0,
+                "preserve the existing two-pixel media selection outline"
+            );
+            assert_eq!(selected.border.color, ui::palette(&theme).focus_ring);
+            assert_ne!(selected.background, unselected.background);
+        }
+    }
+    #[test]
+    fn presentation_empty_states_follow_route_and_search() {
+        let mut app = test_app();
+        for (route, key) in [
+            (Route::Gallery, TextKey::EmptyGalleryLabel),
+            (Route::Timeline, TextKey::EmptyTimelineLabel),
+        ] {
+            app.state.active_route = route;
+            let (_, body) = render_media_panel(&app);
+            assert!(pane_texts(body).contains(&app.i18n.text(key).to_owned()));
+        }
+        app.state.search_query = "missing".into();
+        let (_, body) = render_media_panel(&app);
+        assert!(
+            pane_texts(body).contains(&app.i18n.text(TextKey::EmptySearchResultsLabel).to_owned())
+        );
+    }
+
+    #[test]
+    fn presentation_tabs_preserve_routes_and_active_appearance() {
+        let mut app = test_app();
+        let (header, _) = render_media_panel(&app);
+        assert!(
+            dialog_click_label(header, app.i18n.text(TextKey::TimelineTab))
+                .iter()
+                .any(|m| matches!(m, Message::OpenTimeline))
+        );
+        let (header, _) = render_media_panel(&app);
+        let grid = dialog_frame_pixels(header, Theme::Light);
+        app.state.active_route = Route::Timeline;
+        let (header, _) = render_media_panel(&app);
+        assert!(
+            dialog_click_label(header, app.i18n.text(TextKey::GalleryTab))
+                .iter()
+                .any(|m| matches!(m, Message::OpenGallery))
+        );
+        let (header, _) = render_media_panel(&app);
+        assert_ne!(grid, dialog_frame_pixels(header, Theme::Light));
+    }
+
+    #[test]
+    fn presentation_card_keeps_selection_check_and_select_message() {
+        let item = browse_item(42);
+        for selected in [false, true] {
+            let texts = pane_texts(render_media_card(&item, selected, 100.0, false));
+            assert_eq!(texts.iter().any(|s| s == "\u{2713}"), selected);
+            assert!(
+                pane_click(
+                    render_media_card(&item, selected, 100.0, false),
+                    iced::Point::new(700.0, 50.0)
+                )
+                .iter()
+                .any(|m| matches!(m, Message::SelectMedia(42)))
+            );
+        }
+        assert_ne!(
+            dialog_frame_pixels(render_media_card(&item, false, 100.0, false), Theme::Light),
+            dialog_frame_pixels(render_media_card(&item, true, 100.0, false), Theme::Light)
+        );
+    }
+
+    #[test]
+    fn presentation_details_keep_video_only_short_and_os_actions() {
+        let mut app = test_app();
+        app.state.set_selected_media(Some(7));
+        app.media_cache.insert(
+            7,
+            CachedDetails {
+                absolute_path: PathBuf::from("/tmp/clip.mp4"),
+                media_kind: "video".into(),
+                file_size_bytes: 1,
+                modified_unix_seconds: None,
+                width_px: None,
+                height_px: None,
+                detail_thumbnail_path: None,
+            },
+        );
+        for kind in ["video", "image"] {
+            app.media_cache.get_mut(&7).unwrap().media_kind = kind.into();
+            let texts = pane_texts(render_details_panel(&app));
+            assert_eq!(
+                texts
+                    .iter()
+                    .any(|s| s == app.i18n.text(TextKey::DetailsMakeShortButton)),
+                kind == "video"
+            );
+            for (key, expected) in [
+                (TextKey::DetailsOpenFileButton, Message::OpenSelectedFile),
+                (
+                    TextKey::DetailsOpenFolderButton,
+                    Message::OpenSelectedFolder,
+                ),
+                (TextKey::DetailsCopyFileButton, Message::CopySelectedFile),
+                (TextKey::DetailsCopyPathButton, Message::CopySelectedPath),
+            ] {
+                assert!(
+                    dialog_click_label(render_details_panel(&app), app.i18n.text(key))
+                        .iter()
+                        .any(|m| std::mem::discriminant(m) == std::mem::discriminant(&expected))
+                );
+            }
+            assert!(texts.contains(&app.i18n.text(TextKey::DetailsCopyShortcutHint).to_owned()));
+        }
+    }
+
+    #[test]
+    fn presentation_large_render_windows_remain_bounded() {
+        if std::env::var_os("LIBRAPIX_LOG_DIR").is_some() {
+            let _ = startup_log::init_process_logging();
+        }
+        let mut app = test_app();
+        app.gallery_items = (1..=12_000).map(browse_item).collect();
+        let mut header = browse_item(0);
+        header.is_group_header = true;
+        header.title = "Large date bucket".into();
+        app.timeline_items.push(header);
+        app.timeline_items.extend(app.gallery_items.iter().cloned());
+        app.media_viewport_height = 600.0;
+        for route in [Route::Gallery, Route::Timeline] {
+            app.state.active_route = route;
+            for y in [0.0, 50_000.0, 150_000.0] {
+                app.media_scroll_absolute_y = y;
+                let (_, body) = render_media_panel(&app);
+                let texts = pane_texts(body);
+                let cards = texts.iter().filter(|s| s.as_str() == "Image").count();
+                let expected_cards = match (route, y as u32) {
+                    (_, 0) => 50,
+                    (Route::Timeline, 150_000) => 80,
+                    _ => 85,
+                };
+                assert_eq!(cards, expected_cards);
+                eprintln!(
+                    "presentation-window route={route:?} y={y} cards={cards} text_nodes={}",
+                    texts.len()
+                );
+                assert!(
+                    texts.len() < 200,
+                    "viewport must not compose the whole library"
+                );
+            }
+        }
+        let layouts = vec![
+            JustifiedRowLayout {
+                start: 0,
+                end: 3,
+                height: 200.0
+            };
+            10_000
+        ];
+        let window = compute_visible_row_window(&layouts, 0.0, 50_000.0, 51_000.0, 4.0);
+        assert_eq!(
+            (window.start_row, window.end_row, window.visible_rows),
+            (245, 251, 6)
+        );
+        assert_eq!(window.top_spacer, 49_980.0);
+    }
+
+    #[test]
+    fn presentation_details_preserve_metadata_tags_editing_and_status() {
+        let mut app = test_app();
+        app.state.set_selected_media(Some(7));
+        app.details_lines = vec!["Dimensions: 1920 x 1080".into(), "Size: 42 MB".into()];
+        app.details_action_status = "Copied path".into();
+        app.details_tags = vec![
+            DetailsTagChip {
+                name: "inherited-tag".into(),
+                kind: TagKind::App,
+                inherited: true,
+            },
+            DetailsTagChip {
+                name: "manual-tag".into(),
+                kind: TagKind::App,
+                inherited: false,
+            },
+        ];
+        let texts = pane_texts(render_details_panel(&app));
+        for label in [
+            "Dimensions: 1920 x 1080",
+            "Size: 42 MB",
+            "inherited-tag",
+            "manual-tag",
+            "Copied path",
+        ] {
+            assert!(texts.iter().any(|s| s == label));
+        }
+        assert!(
+            dialog_click_label(
+                render_details_panel(&app),
+                app.i18n.text(TextKey::RootEditButton)
+            )
+            .iter()
+            .any(|m| matches!(m, Message::DetailsStartEditTag(name) if name == "manual-tag"))
+        );
+        assert!(
+            dialog_click_label(render_details_panel(&app), "x")
+                .iter()
+                .any(|m| matches!(m, Message::DetachTagByName(name) if name == "manual-tag"))
+        );
+        app.details_editing_tag = Some("manual-tag".into());
+        assert!(
+            dialog_click_label(
+                render_details_panel(&app),
+                app.i18n.text(TextKey::LibrarySaveButton)
+            )
+            .iter()
+            .any(|m| matches!(m, Message::DetailsApplyTagEdit))
+        );
+        assert!(
+            dialog_click_label(
+                render_details_panel(&app),
+                app.i18n.text(TextKey::DismissButton)
+            )
+            .iter()
+            .any(|m| matches!(m, Message::DetailsCancelTagEdit))
+        );
+    }
+
+    #[test]
+    fn presentation_shell_preserves_activity_metrics_and_navigation() {
+        let mut app = test_app();
+        app.activity_progress.busy = true;
+        app.activity_progress.stage_text = "Generating thumbnails".into();
+        app.activity_progress.items_total = Some(20);
+        app.activity_progress.items_done = 7;
+        app.activity_progress.queue_depth = 13;
+        app.activity_progress.detail_text = "Current batch".into();
+        app.activity_progress.last_error = Some("Source unavailable".into());
+        let texts = pane_texts(views::shell::view(&app));
+        for label in [
+            "Generating thumbnails",
+            "Items 7 / 20 | Queue 13",
+            "Current batch",
+            "Last error: Source unavailable",
+        ] {
+            assert!(texts.iter().any(|s| s == label), "missing {label}");
+        }
+        for (key, expected) in [
+            (TextKey::SettingsButtonLabel, Message::OpenSettings),
+            (TextKey::AboutButtonLabel, Message::OpenAbout),
+            (
+                TextKey::LibraryAddButtonLabel,
+                Message::OpenAddLibraryDialog,
+            ),
+        ] {
+            assert!(
+                dialog_click_label(views::shell::view(&app), app.i18n.text(key))
+                    .iter()
+                    .any(|m| std::mem::discriminant(m) == std::mem::discriminant(&expected))
+            );
+        }
+        app.activity_progress.items_total = None;
+        assert!(
+            pane_texts(views::shell::view(&app))
+                .iter()
+                .any(|s| s == app.i18n.text(TextKey::ActivityWorkingLabel))
+        );
+    }
     use super::*;
     use crate::views::dialogs::{
         about::view as render_about_dialog, filters::view as render_filter_dialog,

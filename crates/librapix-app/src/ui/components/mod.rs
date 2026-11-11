@@ -4,6 +4,7 @@ pub mod badge;
 pub mod button;
 pub mod card;
 pub mod checkbox;
+pub mod chip;
 pub mod empty_state;
 pub mod icon_button;
 pub mod input;

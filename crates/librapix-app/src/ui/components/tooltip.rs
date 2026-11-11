@@ -3,14 +3,15 @@ use iced::{
     Element,
     widget::{Tooltip, text, tooltip},
 };
+use std::borrow::Cow;
 
 pub fn app_tooltip<'a, Message: 'a>(
     content: impl Into<Element<'a, Message>>,
-    label: &'a str,
+    label: impl Into<Cow<'a, str>>,
 ) -> Tooltip<'a, Message> {
     tooltip(
         content,
-        text(label).size(FONT_CAPTION),
+        text(label.into()).size(FONT_CAPTION),
         tooltip::Position::Bottom,
     )
     .gap(SPACE_XS as f32)

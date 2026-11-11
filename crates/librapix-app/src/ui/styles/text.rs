@@ -34,12 +34,6 @@ pub fn text_accent(theme: &Theme) -> text::Style {
     }
 }
 
-pub fn text_success(theme: &Theme) -> text::Style {
-    text::Style {
-        color: Some(palette(theme).success),
-    }
-}
-
 pub fn text_warning(theme: &Theme) -> text::Style {
     text::Style {
         color: Some(palette(theme).warning),

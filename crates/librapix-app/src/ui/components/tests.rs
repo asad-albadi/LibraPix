@@ -122,7 +122,7 @@ fn selected_cards_and_hovered_cards_keep_a_visible_selection_edge() {
         ] {
             let style = styles::button::card_action_style(&theme, status, CardVariant::Selected);
             assert_eq!(style.border.color, p.focus_ring);
-            assert_eq!(style.border.width, 1.0);
+            assert_eq!(style.border.width, 2.0);
             assert_eq!(style.background, Some(Background::Color(p.bg_selected)));
         }
         let hovered = styles::button::card_action_style(

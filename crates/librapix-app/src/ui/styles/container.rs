@@ -58,7 +58,7 @@ pub fn card_surface_style(theme: &Theme, variant: CardVariant) -> container::Sty
         text_color: Some(p.text_primary),
         border: Border {
             color: if selected { p.focus_ring } else { p.divider },
-            width: 1.0,
+            width: if selected { 2.0 } else { 1.0 },
             radius: RADIUS_LG.into(),
         },
         ..container::Style::default()
@@ -142,14 +142,6 @@ pub fn preview_loading_block_style(theme: &Theme) -> container::Style {
     }
 }
 
-pub fn empty_state_style(theme: &Theme) -> container::Style {
-    container::Style {
-        background: Some(Background::Color(palette(theme).bg_surface)),
-        border: iced::border::rounded(RADIUS_LG),
-        ..container::Style::default()
-    }
-}
-
 pub fn scrubber_panel_style(theme: &Theme) -> container::Style {
     let p = palette(theme);
     container::Style {
@@ -213,13 +205,6 @@ pub fn modal_dialog_style(theme: &Theme) -> container::Style {
             radius: RADIUS_LG.into(),
         },
         shadow: elevation_high(theme),
-        ..container::Style::default()
-    }
-}
-
-pub fn divider_line_style(theme: &Theme) -> container::Style {
-    container::Style {
-        background: Some(Background::Color(palette(theme).divider)),
         ..container::Style::default()
     }
 }

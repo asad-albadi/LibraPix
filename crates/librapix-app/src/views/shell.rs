@@ -8,21 +8,29 @@ use super::dialogs::{
     settings::view as render_settings_dialog,
 };
 
-use crate::ui::components::{button::ButtonVariant, icon_button::icon_button, notice::notice};
+use crate::ui::components::{
+    badge::{BadgeVariant, badge},
+    button::{ButtonSize, ButtonVariant, app_button},
+    icon_button::icon_button,
+    input::app_input,
+    notice::notice,
+    separator::{horizontal, vertical},
+    tabs::tab_trigger,
+    tooltip::app_tooltip,
+};
+use crate::ui::patterns::status::{StatusTone, status_row};
 use crate::ui::patterns::{
     details_pane::{DetailsPaneMode, details_pane},
     sidebar::{GlobalRailAction, SidebarMode, sidebar},
 };
 use crate::ui::{self, *};
 use crate::{
-    Librapix, MEDIA_SCROLLABLE_ID, MEDIA_SCROLLBAR_SPACING, Message, assets, display_name_for_root,
-    render_activity_status, render_details_panel, render_media_panel, render_timeline_scrubber,
-    render_update_chip, theme,
+    ActivityIndicatorMode, Librapix, Message, UpdateCheckState, activity_indicator_mode, assets,
+    display_name_for_root, theme, truncate_for_sidebar, update_chip_text_key,
 };
 use iced::widget::image::FilterMethod;
-use iced::widget::{
-    Id, Space, button, column, container, image, row, scrollable, stack, svg, text, text_input,
-};
+use iced::widget::progress_bar;
+use iced::widget::{Space, column, container, image, row, scrollable, stack, svg, text};
 use iced::{ContentFit, Element, Length};
 use librapix_core::{
     app::{RootLifecycle, Route},
@@ -49,25 +57,30 @@ pub(crate) fn view(app: &Librapix) -> Element<'_, Message> {
     .spacing(SPACE_SM)
     .align_y(iced::Alignment::Center);
 
-    let settings_btn = button(text(app.i18n.text(TextKey::SettingsButtonLabel)).size(FONT_BODY))
-        .on_press(Message::OpenSettings)
-        .style(subtle_button_style)
-        .padding([SPACE_XS as u16, SPACE_MD as u16]);
-    let about_btn = button(text(app.i18n.text(TextKey::AboutButtonLabel)).size(FONT_BODY))
-        .on_press(Message::OpenAbout)
-        .style(subtle_button_style)
-        .padding([SPACE_XS as u16, SPACE_MD as u16]);
+    let settings_btn = app_button(
+        text(app.i18n.text(TextKey::SettingsButtonLabel)).size(FONT_BODY),
+        Some(Message::OpenSettings),
+        ButtonVariant::Ghost,
+        ButtonSize::Default,
+    );
+    let about_btn = app_button(
+        text(app.i18n.text(TextKey::AboutButtonLabel)).size(FONT_BODY),
+        Some(Message::OpenAbout),
+        ButtonVariant::Ghost,
+        ButtonSize::Default,
+    );
 
-    let github_btn = button(
+    let github_btn = icon_button(
         image(assets::icon_github(app.is_dark_theme()))
             .width(Length::Fixed(ICON_LG))
             .height(Length::Fixed(ICON_LG))
             .content_fit(ContentFit::Contain)
-            .filter_method(FilterMethod::Linear),
-    )
-    .on_press(Message::OpenGitHub)
-    .style(subtle_button_style)
-    .padding([SPACE_XS as u16, SPACE_XS as u16]);
+            .filter_method(FilterMethod::Linear)
+            .into(),
+        app.i18n.text(TextKey::GitHubButtonLabel),
+        Some(Message::OpenGitHub),
+        ButtonVariant::Ghost,
+    );
 
     let header = container(
         row![
@@ -79,14 +92,14 @@ pub(crate) fn view(app: &Librapix) -> Element<'_, Message> {
                     .height(Length::Fixed(ICON_MD))
                     .content_fit(ContentFit::Contain)
                     .filter_method(FilterMethod::Linear),
-                text_input(
+                app_input(
                     app.i18n.text(TextKey::SearchInputLabel),
-                    &app.state.search_query
+                    &app.state.search_query,
+                    false
                 )
                 .on_input(Message::SearchQueryChanged)
                 .on_submit(Message::RunSearchQuery)
-                .width(Length::Fixed(380.0))
-                .style(search_input_style),
+                .width(Length::Fixed(380.0)),
             ]
             .spacing(SPACE_SM)
             .align_y(iced::Alignment::Center),
@@ -116,38 +129,6 @@ pub(crate) fn view(app: &Librapix) -> Element<'_, Message> {
         |action| rail_action(app, action),
     );
 
-    // ── Media pane ──
-    let (media_header, media_scrollable_content) = render_media_panel(app);
-    let base_media_scrollable = scrollable(media_scrollable_content)
-        .id(Id::new(MEDIA_SCROLLABLE_ID))
-        .style(scrollbar_style)
-        .direction(scrollable::Direction::Vertical(
-            scrollable::Scrollbar::default().spacing(MEDIA_SCROLLBAR_SPACING),
-        ))
-        .on_scroll(|viewport| Message::MediaViewportChanged {
-            absolute_y: viewport.absolute_offset().y,
-            max_y: (viewport.content_bounds().height - viewport.bounds().height).max(0.0),
-            viewport_height: viewport.bounds().height.max(0.0),
-        })
-        .height(Length::Fill);
-    let media_scrollable: Element<'_, Message> = base_media_scrollable.into();
-    let media_body: Element<'_, Message> = if matches!(app.state.active_route, Route::Timeline) {
-        row![
-            container(media_scrollable)
-                .width(Length::Fill)
-                .height(Length::Fill),
-            render_timeline_scrubber(app),
-        ]
-        .spacing(SPACE_SM)
-        .height(Length::Fill)
-        .into()
-    } else {
-        container(media_scrollable)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
-    };
-
     // ── Details pane ──
     let details_mode = DetailsPaneMode::from_collapsed(app.details_sidebar_collapsed);
     let details = details_pane(
@@ -159,17 +140,17 @@ pub(crate) fn view(app: &Librapix) -> Element<'_, Message> {
             TextKey::CollapseDetails
         }),
         Message::ToggleDetailsSidebar,
-        || render_details_panel(app),
+        || super::details::view(app),
     );
 
     // ── Body ──
     let body = row![
         sidebar,
-        ui::v_divider(),
-        container(column![media_header, media_body,].spacing(SPACE_SM),)
+        vertical(),
+        container(super::library::view(app))
             .padding([SPACE_LG as u16, SPACE_XL as u16])
             .width(Length::Fill),
-        ui::v_divider(),
+        vertical(),
         details,
     ]
     .height(Length::Fill);
@@ -292,7 +273,7 @@ fn render_expanded_sidebar(app: &Librapix) -> Element<'_, Message> {
     // toggle in the content header, so the sidebar carries a single entry.
     let nav_section = column![
         section_heading(app.i18n.text(TextKey::BrowseSectionLabel)),
-        button(
+        tab_trigger(
             row![
                 image(assets::icon_gallery(app.is_dark_theme()))
                     .width(Length::Fixed(ICON_MD))
@@ -303,11 +284,10 @@ fn render_expanded_sidebar(app: &Librapix) -> Element<'_, Message> {
             ]
             .spacing(SPACE_SM)
             .align_y(iced::Alignment::Center),
+            Some(Message::OpenGallery),
+            is_gallery || is_timeline
         )
-        .width(Length::Fill)
-        .on_press(Message::OpenGallery)
-        .style(nav_button_style(is_gallery || is_timeline))
-        .padding([SPACE_SM as u16, SPACE_MD as u16]),
+        .width(Length::Fill),
     ]
     .spacing(SPACE_XS);
 
@@ -332,7 +312,7 @@ fn render_expanded_sidebar(app: &Librapix) -> Element<'_, Message> {
                 };
                 col.push(
                     row![
-                        button(
+                        tab_trigger(
                             row![
                                 text("\u{25CF}").size(FONT_CAPTION).color(status_color),
                                 text(label).size(FONT_BODY).color(if is_selected {
@@ -343,19 +323,22 @@ fn render_expanded_sidebar(app: &Librapix) -> Element<'_, Message> {
                             ]
                             .spacing(SPACE_SM)
                             .align_y(iced::Alignment::Center),
+                            Some(Message::SelectRoot(root.id)),
+                            is_selected
                         )
-                        .width(Length::Fill)
-                        .on_press(Message::SelectRoot(root.id))
-                        .style(nav_button_style(is_selected))
-                        .padding([SPACE_XS as u16, SPACE_SM as u16]),
-                        button(text(app.i18n.text(TextKey::RootEditButton)).size(FONT_CAPTION))
-                            .on_press(Message::OpenEditLibraryDialog(root.id))
-                            .style(subtle_button_style)
-                            .padding([SPACE_2XS as u16, SPACE_SM as u16]),
-                        button(text(app.i18n.text(TextKey::RootStatsButton)).size(FONT_CAPTION))
-                            .on_press(Message::OpenLibraryStatisticsDialog(root.id))
-                            .style(subtle_button_style)
-                            .padding([SPACE_2XS as u16, SPACE_SM as u16]),
+                        .width(Length::Fill),
+                        app_button(
+                            text(app.i18n.text(TextKey::RootEditButton)).size(FONT_CAPTION),
+                            Some(Message::OpenEditLibraryDialog(root.id)),
+                            ButtonVariant::Ghost,
+                            ButtonSize::Small
+                        ),
+                        app_button(
+                            text(app.i18n.text(TextKey::RootStatsButton)).size(FONT_CAPTION),
+                            Some(Message::OpenLibraryStatisticsDialog(root.id)),
+                            ButtonVariant::Ghost,
+                            ButtonSize::Small
+                        ),
                     ]
                     .spacing(SPACE_XS)
                     .align_y(iced::Alignment::Center),
@@ -367,14 +350,18 @@ fn render_expanded_sidebar(app: &Librapix) -> Element<'_, Message> {
         section_heading(app.i18n.text(TextKey::LibrarySectionLabel)),
         roots_list,
         row![
-            button(text(app.i18n.text(TextKey::LibraryAddButtonLabel)).size(FONT_BODY))
-                .on_press(Message::OpenAddLibraryDialog)
-                .style(action_button_style)
-                .padding([SPACE_XS as u16, SPACE_MD as u16]),
-            button(text(app.i18n.text(TextKey::RootRefreshButton)).size(FONT_BODY))
-                .on_press(Message::RefreshRoots)
-                .style(subtle_button_style)
-                .padding([SPACE_XS as u16, SPACE_MD as u16]),
+            app_button(
+                text(app.i18n.text(TextKey::LibraryAddButtonLabel)).size(FONT_BODY),
+                Some(Message::OpenAddLibraryDialog),
+                ButtonVariant::Secondary,
+                ButtonSize::Default
+            ),
+            app_button(
+                text(app.i18n.text(TextKey::RootRefreshButton)).size(FONT_BODY),
+                Some(Message::RefreshRoots),
+                ButtonVariant::Ghost,
+                ButtonSize::Default
+            ),
         ]
         .spacing(SPACE_XS),
         text(app.root_status.clone())
@@ -384,7 +371,7 @@ fn render_expanded_sidebar(app: &Librapix) -> Element<'_, Message> {
     .spacing(SPACE_SM);
 
     let sidebar_content = scrollable(
-        column![nav_section, h_divider(), library_section]
+        column![nav_section, horizontal(), library_section]
             .spacing(SPACE_LG)
             .padding(SPACE_LG as u16),
     )
@@ -401,10 +388,119 @@ fn render_expanded_sidebar(app: &Librapix) -> Element<'_, Message> {
     .width(Length::Fill)
     .padding([SPACE_SM as u16, SPACE_MD as u16]);
     container(
-        column![sidebar_content, h_divider(), sidebar_status]
+        column![sidebar_content, horizontal(), sidebar_status]
             .height(Length::Fill)
             .spacing(SPACE_XS),
     )
     .width(Length::Fill)
     .into()
+}
+
+fn render_activity_status(app: &Librapix) -> Element<'_, Message> {
+    let progress = &app.activity_progress;
+    let indicator_mode = activity_indicator_mode(progress);
+    let progress_line = match indicator_mode {
+        ActivityIndicatorMode::Determinate { total, done } => format!(
+            "{} {} / {}",
+            app.i18n.text(TextKey::ProgressItemsLabel),
+            done,
+            total
+        ),
+        ActivityIndicatorMode::Indeterminate => {
+            format!("{} --", app.i18n.text(TextKey::ProgressItemsLabel))
+        }
+        ActivityIndicatorMode::Idle => {
+            format!("{} 0 / 0", app.i18n.text(TextKey::ProgressItemsLabel))
+        }
+    };
+    let queue_line = format!(
+        "{} {}",
+        app.i18n.text(TextKey::ProgressQueueLabel),
+        progress.queue_depth
+    );
+    let roots_line = progress.roots_total.map(|total| {
+        format!(
+            "{} {} / {}",
+            app.i18n.text(TextKey::ProgressRootsLabel),
+            progress.roots_done.min(total),
+            total
+        )
+    });
+
+    if matches!(indicator_mode, ActivityIndicatorMode::Idle) {
+        return status_row(&app.activity_status, StatusTone::Success, 0);
+    }
+
+    let indicator: Element<'_, Message> = match indicator_mode {
+        ActivityIndicatorMode::Determinate { total, done } => {
+            let capped_total = total.max(1) as f32;
+            let done = done.min(total) as f32;
+            container(
+                progress_bar(0.0..=capped_total, done)
+                    .style(crate::ui::styles::progress::activity_progress_style),
+            )
+            .height(Length::Fixed(4.0))
+            .into()
+        }
+        ActivityIndicatorMode::Indeterminate => badge(
+            app.i18n.text(TextKey::ActivityWorkingLabel),
+            BadgeVariant::Secondary,
+        )
+        .into(),
+        ActivityIndicatorMode::Idle => Space::new().into(),
+    };
+
+    let mut metrics = vec![progress_line, queue_line];
+    if let Some(roots_line) = roots_line {
+        metrics.push(roots_line);
+    }
+    let metrics_line = metrics.join(" | ");
+
+    let mut lines = column![
+        text(progress.stage_text.clone())
+            .size(FONT_BODY)
+            .style(text_primary),
+        indicator,
+        text(metrics_line).size(FONT_CAPTION).style(text_tertiary),
+    ]
+    .spacing(SPACE_2XS);
+    if !progress.detail_text.trim().is_empty() {
+        lines = lines.push(
+            text(progress.detail_text.clone())
+                .size(FONT_CAPTION)
+                .style(text_tertiary),
+        );
+    }
+    if let Some(error) = progress.last_error.as_ref() {
+        let error_line = format!("{}: {}", app.i18n.text(TextKey::ProgressErrorLabel), error);
+        let (error_compact, error_truncated) = truncate_for_sidebar(&error_line, 120);
+        let error_text = text(error_compact)
+            .size(FONT_CAPTION)
+            .style(text_warning)
+            .width(Length::Fill);
+        let error_widget: Element<'_, Message> = if error_truncated {
+            app_tooltip(error_text, error_line).into()
+        } else {
+            error_text.into()
+        };
+        lines = lines.push(error_widget);
+    }
+
+    container(lines).width(Length::Fill).into()
+}
+
+fn render_update_chip(app: &Librapix) -> iced::widget::Button<'_, Message> {
+    let variant = match app.update_check_state {
+        UpdateCheckState::UpdateAvailable { .. } => ButtonVariant::Primary,
+        UpdateCheckState::Checking | UpdateCheckState::UpToDate => ButtonVariant::Secondary,
+        UpdateCheckState::Unknown | UpdateCheckState::Failed => ButtonVariant::Ghost,
+    };
+    app_button(
+        text(app.i18n.text(update_chip_text_key(&app.update_check_state))).size(FONT_CAPTION),
+        (!matches!(app.update_check_state, UpdateCheckState::Checking))
+            .then_some(Message::UpdateChipPressed),
+        variant,
+        ButtonSize::Small,
+    )
+    .width(Length::Fill)
 }

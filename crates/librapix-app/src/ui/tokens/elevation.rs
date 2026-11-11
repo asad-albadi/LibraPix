@@ -34,15 +34,6 @@ pub fn elevation_low(theme: &Theme) -> Shadow {
     }
 }
 
-/// Hovered card / raised control.
-pub fn elevation_med(theme: &Theme) -> Shadow {
-    Shadow {
-        color: shadow_color(theme, 0.40),
-        offset: Vector::new(0.0, 3.0),
-        blur_radius: 12.0,
-    }
-}
-
 /// Modal dialogs.
 pub fn elevation_high(theme: &Theme) -> Shadow {
     Shadow {

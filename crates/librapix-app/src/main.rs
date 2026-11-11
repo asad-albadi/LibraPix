@@ -12,8 +12,8 @@ use iced::keyboard::key;
 use iced::time;
 use iced::widget::image::FilterMethod;
 use iced::widget::{
-    Id, Space, button, column, container, image, mouse_area, operation, progress_bar, responsive,
-    row, scrollable, stack, svg, text, text_input, tooltip, vertical_slider,
+    Id, Space, button, column, container, image, operation, progress_bar, responsive, row, stack,
+    text, text_input, tooltip, vertical_slider,
 };
 use iced::{ContentFit, Element, Length, Size, Subscription, Task, Theme};
 use librapix_config::{
@@ -1007,7 +1007,6 @@ const MAX_DIAGNOSTICS_EVENTS: usize = 100;
 const MEDIA_SCROLLABLE_ID: &str = "media-pane-scrollable";
 const SCRUBBER_YEAR_MARKER_LIMIT: usize = 10;
 const MEDIA_SCROLLBAR_SPACING: f32 = SPACE_XS as f32;
-const PANEL_SCROLLBAR_SPACING: f32 = SPACE_XS as f32;
 const SCRUBBER_PANEL_WIDTH: f32 = 168.0;
 const SCRUBBER_CHIP_TRACK_WIDTH: f32 = 96.0;
 const FILTER_DIALOG_MAX_WIDTH: f32 = 480.0;
@@ -4158,253 +4157,6 @@ fn render_timeline_scrubber(app: &Librapix) -> Element<'_, Message> {
         .into()
 }
 
-#[derive(Debug, Clone)]
-struct FilterChipSpec {
-    label: String,
-    on_press: Message,
-    active: bool,
-}
-
-fn estimate_filter_chip_width(label: &str) -> f32 {
-    // Approximate text + horizontal button chrome for wrapping decisions.
-    // Keep this estimate slightly conservative, but not so high that rows
-    // break too early and leave obvious right-side whitespace.
-    let glyph_width = 6.4;
-    let text_width = label.chars().count() as f32 * glyph_width;
-    let horizontal_padding = (SPACE_MD * 2) as f32;
-    let estimated = text_width + horizontal_padding + 8.0;
-    estimated.max(56.0)
-}
-
-fn render_wrapped_filter_chips(chips: Vec<FilterChipSpec>) -> Element<'static, Message> {
-    let mut rows: Vec<Vec<FilterChipSpec>> = Vec::new();
-    let mut current_row: Vec<FilterChipSpec> = Vec::new();
-    let mut current_row_width = 0.0_f32;
-
-    for chip in chips {
-        let chip_width = estimate_filter_chip_width(&chip.label);
-        let spacing = if current_row.is_empty() {
-            0.0
-        } else {
-            SPACE_SM as f32
-        };
-        let would_overflow = !current_row.is_empty()
-            && (current_row_width + spacing + chip_width) > FILTER_DIALOG_CHIP_ROW_MAX_WIDTH;
-
-        if would_overflow {
-            rows.push(current_row);
-            current_row = Vec::new();
-            current_row_width = 0.0;
-        }
-
-        if !current_row.is_empty() {
-            current_row_width += SPACE_SM as f32;
-        }
-        current_row_width += chip_width;
-        current_row.push(chip);
-    }
-
-    if !current_row.is_empty() {
-        rows.push(current_row);
-    }
-
-    let mut wrapped_rows = column![].spacing(SPACE_SM);
-    for row_chips in rows {
-        let mut chip_row = row![].spacing(SPACE_SM).align_y(iced::Alignment::Center);
-        for chip in row_chips {
-            chip_row = chip_row.push(
-                button(text(chip.label).size(FONT_BODY))
-                    .on_press(chip.on_press)
-                    .style(filter_chip_style(chip.active))
-                    .padding([SPACE_XS as u16, SPACE_MD as u16]),
-            );
-        }
-        wrapped_rows = wrapped_rows.push(chip_row);
-    }
-
-    wrapped_rows.into()
-}
-
-fn render_filter_dialog(app: &Librapix) -> Element<'_, Message> {
-    let type_chips = render_wrapped_filter_chips(vec![
-        FilterChipSpec {
-            label: app.i18n.text(TextKey::FilterAllLabel).to_owned(),
-            on_press: Message::SetFilterMediaKind(None),
-            active: app.filter_media_kind.is_none(),
-        },
-        FilterChipSpec {
-            label: app.i18n.text(TextKey::FilterImagesLabel).to_owned(),
-            on_press: Message::SetFilterMediaKind(Some("image".to_owned())),
-            active: app.filter_media_kind.as_deref() == Some("image"),
-        },
-        FilterChipSpec {
-            label: app.i18n.text(TextKey::FilterVideosLabel).to_owned(),
-            on_press: Message::SetFilterMediaKind(Some("video".to_owned())),
-            active: app.filter_media_kind.as_deref() == Some("video"),
-        },
-    ]);
-
-    let ext_list: &[&str] = match app.filter_media_kind.as_deref() {
-        Some("image") => &["png", "jpg", "gif", "webp"],
-        Some("video") => &["mp4", "mov", "mkv", "webm", "avi"],
-        _ => &["png", "jpg", "gif", "webp", "mp4", "mov", "mkv", "webm"],
-    };
-    let mut ext_chips = vec![FilterChipSpec {
-        label: app.i18n.text(TextKey::FilterAllLabel).to_owned(),
-        on_press: Message::SetFilterExtension(None),
-        active: app.filter_extension.is_none(),
-    }];
-    for ext in ext_list {
-        let is_active = app.filter_extension.as_deref() == Some(ext);
-        ext_chips.push(FilterChipSpec {
-            label: ext.to_uppercase(),
-            on_press: Message::SetFilterExtension(Some((*ext).to_owned())),
-            active: is_active,
-        });
-    }
-    let ext_chips = render_wrapped_filter_chips(ext_chips);
-
-    let mut library_chip_specs = vec![FilterChipSpec {
-        label: app.i18n.text(TextKey::FilterAllLabel).to_owned(),
-        on_press: Message::SetFilterLibrary(None),
-        active: app.filter_source_root_id.is_none(),
-    }];
-
-    for root in &app.state.library_roots {
-        let label = root
-            .display_name
-            .clone()
-            .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| {
-                root.normalized_path
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| root.normalized_path.display().to_string())
-            });
-        let is_active = app.filter_source_root_id == Some(root.id);
-        library_chip_specs.push(FilterChipSpec {
-            label,
-            on_press: Message::SetFilterLibrary(Some(root.id)),
-            active: is_active,
-        });
-    }
-
-    let mut tag_chip_specs = vec![FilterChipSpec {
-        label: app.i18n.text(TextKey::FilterAllLabel).to_owned(),
-        on_press: Message::SetFilterTag(None),
-        active: app.filter_tag.is_none(),
-    }];
-
-    for tag in &app.available_filter_tags {
-        let active = app
-            .filter_tag
-            .as_ref()
-            .is_some_and(|selected| selected == tag);
-        tag_chip_specs.push(FilterChipSpec {
-            label: tag.clone(),
-            on_press: Message::SetFilterTag(Some(tag.clone())),
-            active,
-        });
-    }
-
-    let tag_section: Element<'_, Message> = if app.available_filter_tags.is_empty() {
-        text(app.i18n.text(TextKey::FilterNoTagsLabel))
-            .size(FONT_BODY)
-            .style(text_tertiary)
-            .into()
-    } else {
-        render_wrapped_filter_chips(tag_chip_specs)
-    };
-
-    let library_section: Element<'_, Message> = if app.state.library_roots.len() > 1 {
-        column![
-            section_heading(app.i18n.text(TextKey::FilterLibraryLabel)),
-            render_wrapped_filter_chips(library_chip_specs),
-        ]
-        .spacing(SPACE_SM)
-        .into()
-    } else {
-        column![].into()
-    };
-
-    let dialog_content = column![
-        text(app.i18n.text(TextKey::FiltersButtonLabel))
-            .size(FONT_TITLE)
-            .style(text_primary),
-        h_divider(),
-        column![
-            section_heading(app.i18n.text(TextKey::FilterTypeLabel)),
-            type_chips,
-        ]
-        .spacing(SPACE_SM),
-        column![
-            section_heading(app.i18n.text(TextKey::FilterExtensionLabel)),
-            ext_chips,
-        ]
-        .spacing(SPACE_SM),
-        library_section,
-        column![
-            section_heading(app.i18n.text(TextKey::FilterTagsLabel)),
-            tag_section,
-        ]
-        .spacing(SPACE_SM),
-        button(text(app.i18n.text(TextKey::DismissButton)).size(FONT_BODY))
-            .on_press(Message::ToggleFilterDialog)
-            .style(primary_button_style)
-            .padding([SPACE_SM as u16, SPACE_MD as u16]),
-    ]
-    .spacing(SPACE_LG);
-
-    render_dialog_frame(dialog_content.into(), FILTER_DIALOG_MAX_WIDTH, 620.0)
-}
-
-/// Shared dialog frame so every modal looks and feels the same: the glass
-/// surface, consistent padding, a vertical scrollable, and width/height that
-/// scale with the window up to the given caps. Callers just build their content
-/// column (title row + body) and pass sane caps.
-fn render_dialog_frame(
-    content: Element<'_, Message>,
-    max_width: f32,
-    max_height: f32,
-) -> Element<'_, Message> {
-    // Hug the content (Shrink) up to the caps; the scrollable only kicks in when
-    // a dialog's content is taller than `max_height`, so short dialogs stay short
-    // and tall ones cap + scroll.
-    let dialog = container(
-        scrollable(content)
-            .style(scrollbar_style)
-            .direction(scrollable::Direction::Vertical(
-                scrollable::Scrollbar::default().spacing(PANEL_SCROLLBAR_SPACING),
-            ))
-            .height(Length::Shrink)
-            .width(Length::Fill),
-    )
-    .width(Length::Fill)
-    .max_width(max_width)
-    .max_height(max_height)
-    .padding(SPACE_LG as u16)
-    .style(modal_dialog_style);
-
-    render_modal_overlay(dialog.into())
-}
-
-fn render_modal_overlay(dialog: Element<'_, Message>) -> Element<'_, Message> {
-    let dialog_surface = mouse_area(dialog).on_press(Message::ModalContentClicked);
-    let centered_dialog = container(dialog_surface)
-        .center_x(Length::Fill)
-        .center_y(Length::Fill);
-
-    mouse_area(
-        container(centered_dialog)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .padding([SPACE_2XL as u16, SPACE_XL as u16])
-            .style(modal_backdrop_style),
-    )
-    .on_press(Message::CloseAllDialogs)
-    .into()
-}
-
 fn render_management_chip(
     label: impl Into<String>,
     tone_key: &str,
@@ -4615,905 +4367,6 @@ fn activity_indicator_mode(progress: &ActivityProgressState) -> ActivityIndicato
         };
     }
     ActivityIndicatorMode::Indeterminate
-}
-
-fn render_settings_dialog(app: &Librapix) -> Element<'_, Message> {
-    let indexing_section = column![
-        section_heading(app.i18n.text(TextKey::IndexingSectionLabel)),
-        button(
-            row![
-                image(assets::icon_index(app.is_dark_theme()))
-                    .width(Length::Fixed(ICON_MD))
-                    .height(Length::Fixed(ICON_MD))
-                    .content_fit(ContentFit::Contain)
-                    .filter_method(FilterMethod::Linear),
-                text(app.i18n.text(TextKey::IndexRunButton)).size(FONT_BODY),
-            ]
-            .spacing(SPACE_SM)
-            .align_y(iced::Alignment::Center),
-        )
-        .on_press(Message::RunIndexing)
-        .style(primary_button_style)
-        .width(Length::Fill)
-        .padding([SPACE_SM as u16, SPACE_MD as u16]),
-        text(app.indexing_status.clone())
-            .size(FONT_CAPTION)
-            .style(text_tertiary),
-        text(app.thumbnail_status.clone())
-            .size(FONT_CAPTION)
-            .style(text_tertiary),
-    ]
-    .spacing(SPACE_SM);
-
-    let ignore_input_actions: Element<'_, Message> = if app.ignore_rule_editing_id.is_some() {
-        row![
-            button(text(app.i18n.text(TextKey::LibrarySaveButton)).size(FONT_CAPTION))
-                .on_press(Message::IgnoreRuleApplyEdit)
-                .style(primary_button_style)
-                .padding([SPACE_2XS as u16, SPACE_SM as u16]),
-            button(text(app.i18n.text(TextKey::DismissButton)).size(FONT_CAPTION))
-                .on_press(Message::IgnoreRuleCancelEdit)
-                .style(subtle_button_style)
-                .padding([SPACE_2XS as u16, SPACE_SM as u16]),
-        ]
-        .spacing(SPACE_XS)
-        .into()
-    } else {
-        row![
-            button(text(app.i18n.text(TextKey::IgnoreRuleAddButton)).size(FONT_CAPTION))
-                .on_press(Message::IgnoreRuleAdd)
-                .style(subtle_button_style)
-                .padding([SPACE_2XS as u16, SPACE_SM as u16]),
-        ]
-        .spacing(SPACE_XS)
-        .into()
-    };
-
-    let ignore_chip_list: Element<'_, Message> = if app.ignore_rules.is_empty() {
-        text(app.i18n.text(TextKey::FilterNoTagsLabel))
-            .size(FONT_CAPTION)
-            .style(text_tertiary)
-            .into()
-    } else {
-        app.ignore_rules
-            .iter()
-            .fold(column![].spacing(SPACE_XS), |col, rule| {
-                let status = if rule.is_enabled {
-                    app.i18n.text(TextKey::IgnoreRuleEnabled)
-                } else {
-                    app.i18n.text(TextKey::IgnoreRuleDisabled)
-                };
-                let toggle_label = if rule.is_enabled {
-                    app.i18n.text(TextKey::IgnoreRuleDisableButton)
-                } else {
-                    app.i18n.text(TextKey::IgnoreRuleAddButton)
-                };
-                col.push(render_management_chip(
-                    &rule.pattern,
-                    &rule.pattern,
-                    Some(status.to_owned()),
-                    Some((
-                        toggle_label.to_owned(),
-                        Message::IgnoreRuleToggleEnabled(rule.id),
-                    )),
-                    Some((
-                        app.i18n.text(TextKey::RootEditButton).to_owned(),
-                        Message::IgnoreRuleStartEdit(rule.id),
-                    )),
-                    Some(Message::IgnoreRuleRemove(rule.id)),
-                    app.is_dark_theme(),
-                ))
-            })
-            .into()
-    };
-
-    let ignore_section = column![
-        section_heading(app.i18n.text(TextKey::IgnoreRuleInputLabel)),
-        text_input("*.tmp, **/cache/**", &app.ignore_rule_input)
-            .on_input(Message::IgnoreRuleInputChanged)
-            .on_submit(if app.ignore_rule_editing_id.is_some() {
-                Message::IgnoreRuleApplyEdit
-            } else {
-                Message::IgnoreRuleAdd
-            })
-            .style(field_input_style),
-        ignore_input_actions,
-        ignore_chip_list,
-        h_divider(),
-        row![
-            text(app.i18n.text(TextKey::MinFileSizeLabel))
-                .size(FONT_CAPTION)
-                .style(text_secondary),
-            text_input(
-                app.i18n.text(TextKey::MinFileSizeKbSuffix),
-                &app.min_file_size_input
-            )
-            .on_input(Message::MinFileSizeInputChanged)
-            .on_submit(Message::ApplyMinFileSize)
-            .width(Length::Fixed(60.0))
-            .style(field_input_style),
-            text(app.i18n.text(TextKey::MinFileSizeKbSuffix))
-                .size(FONT_CAPTION)
-                .style(text_tertiary),
-            button(text(app.i18n.text(TextKey::ApplyLabel)).size(FONT_CAPTION))
-                .on_press(Message::ApplyMinFileSize)
-                .style(subtle_button_style)
-                .padding([SPACE_2XS as u16, SPACE_SM as u16]),
-        ]
-        .spacing(SPACE_XS)
-        .align_y(iced::Alignment::Center),
-        h_divider(),
-        row![
-            text(app.i18n.text(TextKey::DefaultShortsOutputDirLabel))
-                .size(FONT_CAPTION)
-                .style(text_secondary),
-            text_input(
-                app.i18n.text(TextKey::DefaultShortsOutputDirPlaceholder),
-                &app.shorts_output_dir_input
-            )
-            .on_input(Message::ShortsOutputDirInputChanged)
-            .style(field_input_style)
-            .width(Length::Fill),
-            button(
-                row![
-                    image(assets::icon_browse(app.is_dark_theme()))
-                        .width(Length::Fixed(ICON_XS))
-                        .height(Length::Fixed(ICON_XS))
-                        .content_fit(ContentFit::Contain)
-                        .filter_method(FilterMethod::Linear),
-                    text(app.i18n.text(TextKey::BrowseFolderButton)).size(FONT_CAPTION),
-                ]
-                .spacing(SPACE_XS)
-                .align_y(iced::Alignment::Center),
-            )
-            .on_press(Message::ShortsOutputDirBrowse)
-            .style(subtle_button_style)
-            .padding([SPACE_2XS as u16, SPACE_SM as u16]),
-            button(
-                row![
-                    image(assets::icon_save(app.is_dark_theme()))
-                        .width(Length::Fixed(ICON_XS))
-                        .height(Length::Fixed(ICON_XS))
-                        .content_fit(ContentFit::Contain)
-                        .filter_method(FilterMethod::Linear),
-                    text(app.i18n.text(TextKey::LibrarySaveButton)).size(FONT_CAPTION),
-                ]
-                .spacing(SPACE_XS)
-                .align_y(iced::Alignment::Center),
-            )
-            .on_press(Message::SaveShortsOutputDirSetting)
-            .style(subtle_button_style)
-            .padding([SPACE_2XS as u16, SPACE_SM as u16]),
-        ]
-        .spacing(SPACE_XS)
-        .align_y(iced::Alignment::Center),
-    ]
-    .spacing(SPACE_SM);
-
-    let diagnostics_section = {
-        let state_lines = if app.diagnostics_lines.is_empty() {
-            column![
-                text("Click Refresh to load state.")
-                    .size(FONT_CAPTION)
-                    .style(text_tertiary)
-            ]
-        } else {
-            app.diagnostics_lines
-                .iter()
-                .fold(column![].spacing(SPACE_2XS), |col, line| {
-                    col.push(
-                        text(line.as_str())
-                            .size(FONT_CAPTION)
-                            .style(text_tertiary)
-                            .font(iced::Font::MONOSPACE),
-                    )
-                })
-        };
-        let event_lines = if app.diagnostics_events.is_empty() {
-            column![
-                text("(no events yet)")
-                    .size(FONT_CAPTION)
-                    .style(text_tertiary)
-            ]
-        } else {
-            app.diagnostics_events
-                .iter()
-                .rev()
-                .fold(column![].spacing(SPACE_2XS), |col, line| {
-                    col.push(
-                        text(line.as_str())
-                            .size(FONT_CAPTION)
-                            .style(text_tertiary)
-                            .font(iced::Font::MONOSPACE),
-                    )
-                })
-        };
-        column![
-            row![
-                section_heading(app.i18n.text(TextKey::DiagnosticsSectionLabel)),
-                Space::new().width(Length::Fill),
-                button(text(app.i18n.text(TextKey::RefreshButton)).size(FONT_CAPTION))
-                    .on_press(Message::RefreshDiagnostics)
-                    .style(subtle_button_style)
-                    .padding([SPACE_2XS as u16, SPACE_XS as u16]),
-            ]
-            .align_y(iced::Alignment::Center),
-            text("Events (newest first)")
-                .size(FONT_CAPTION)
-                .style(text_secondary),
-            scrollable(event_lines)
-                .style(scrollbar_style)
-                .height(Length::Fixed(120.0)),
-            text("State").size(FONT_CAPTION).style(text_secondary),
-            state_lines,
-        ]
-        .spacing(SPACE_SM)
-    };
-
-    let theme_segment = |label: &str, pref: ThemePreference| {
-        let active = app.theme_preference == pref;
-        button(text(label.to_owned()).size(FONT_BODY))
-            .on_press(Message::SetThemePreference(pref))
-            .style(segment_button_style(active))
-            .padding([SPACE_XS as u16, SPACE_MD as u16])
-    };
-    let appearance_section = column![
-        section_heading(app.i18n.text(TextKey::AppearanceSectionLabel)),
-        container(
-            row![
-                theme_segment(app.i18n.text(TextKey::ThemeSystem), ThemePreference::System),
-                theme_segment(app.i18n.text(TextKey::ThemeLight), ThemePreference::Light),
-                theme_segment(app.i18n.text(TextKey::ThemeDark), ThemePreference::Dark),
-            ]
-            .spacing(SPACE_2XS),
-        )
-        .padding(SPACE_2XS as u16)
-        .style(card_style),
-    ]
-    .spacing(SPACE_SM);
-
-    let dialog_content = column![
-        row![
-            text(app.i18n.text(TextKey::SettingsDialogTitle))
-                .size(FONT_TITLE)
-                .style(text_primary),
-            Space::new().width(Length::Fill),
-            button(text(app.i18n.text(TextKey::DismissButton)).size(FONT_BODY))
-                .on_press(Message::CloseSettings)
-                .style(subtle_button_style)
-                .padding([SPACE_XS as u16, SPACE_MD as u16]),
-        ]
-        .align_y(iced::Alignment::Center),
-        h_divider(),
-        appearance_section,
-        h_divider(),
-        indexing_section,
-        h_divider(),
-        ignore_section,
-        h_divider(),
-        diagnostics_section,
-        h_divider(),
-    ]
-    .spacing(SPACE_LG);
-
-    render_dialog_frame(dialog_content.into(), 680.0, 820.0)
-}
-
-fn render_about_dialog(app: &Librapix) -> Element<'_, Message> {
-    let body = column![
-        row![
-            svg(assets::logo_svg())
-                .width(Length::Fixed(44.0))
-                .height(Length::Fixed(44.0))
-                .content_fit(ContentFit::Contain),
-            row![
-                text("Libra").size(FONT_SUBTITLE).style(text_primary),
-                text("Pix").size(FONT_SUBTITLE).style(text_accent),
-            ]
-            .spacing(0)
-            .align_y(iced::Alignment::Center),
-        ]
-        .spacing(SPACE_SM)
-        .align_y(iced::Alignment::Center),
-        text(format!(
-            "{}: {}",
-            app.i18n.text(TextKey::AboutVersionLabel),
-            APP_VERSION
-        ))
-        .size(FONT_BODY)
-        .style(text_secondary),
-        text(app.i18n.text(TextKey::AboutCreatorLabel))
-            .size(FONT_BODY)
-            .style(text_secondary),
-        text(app.i18n.text(TextKey::AboutWeekendProjectNote))
-            .size(FONT_BODY)
-            .style(text_secondary),
-        text(app.i18n.text(TextKey::AboutSecondNote))
-            .size(FONT_BODY)
-            .style(text_secondary),
-    ]
-    .spacing(SPACE_LG);
-
-    render_modal_overlay(ui::patterns::dialog::dialog(
-        ui::patterns::dialog::DialogSpec {
-            title: app.i18n.text(TextKey::AboutDialogTitle),
-            close_message: Some((app.i18n.text(TextKey::DismissButton), Message::CloseAbout)),
-            body: body.into(),
-            footer: None,
-            max_width: 460.0,
-            max_height: 440.0,
-        },
-    ))
-}
-
-fn render_library_dialog(app: &Librapix) -> Element<'_, Message> {
-    let (title, is_add_mode, edit_root_id) = match app.library_dialog_mode {
-        LibraryDialogMode::Add => (app.i18n.text(TextKey::LibraryDialogAddTitle), true, None),
-        LibraryDialogMode::Edit(root_id) => (
-            app.i18n.text(TextKey::LibraryDialogEditTitle),
-            false,
-            Some(root_id),
-        ),
-    };
-
-    let path_toggle_label = if app.library_dialog_manual_path_open {
-        app.i18n.text(TextKey::HidePathFieldLabel)
-    } else {
-        app.i18n.text(TextKey::ShowPathFieldLabel)
-    };
-
-    let path_field: Element<'_, Message> = if app.library_dialog_manual_path_open {
-        text_input(
-            app.i18n.text(TextKey::FolderPathPlaceholder),
-            &app.library_dialog_path_input,
-        )
-        .on_input(Message::LibraryDialogPathInputChanged)
-        .style(field_input_style)
-        .into()
-    } else {
-        column![].into()
-    };
-
-    let tags_list: Element<'_, Message> = if app.library_dialog_tags.is_empty() {
-        text(app.i18n.text(TextKey::FilterNoTagsLabel))
-            .size(FONT_CAPTION)
-            .style(text_tertiary)
-            .into()
-    } else {
-        app.library_dialog_tags
-            .iter()
-            .fold(column![].spacing(SPACE_XS), |col, (name, kind)| {
-                col.push(render_management_chip(
-                    name,
-                    name,
-                    Some(kind.as_str().to_owned()),
-                    None,
-                    Some((
-                        app.i18n.text(TextKey::RootEditButton).to_owned(),
-                        Message::LibraryDialogStartEditTag(name.clone()),
-                    )),
-                    Some(Message::LibraryDialogRemoveTag(name.clone())),
-                    app.is_dark_theme(),
-                ))
-            })
-            .into()
-    };
-
-    let library_tag_actions: Element<'_, Message> = if app.library_dialog_editing_tag.is_some() {
-        row![
-            button(text(app.i18n.text(TextKey::LibrarySaveButton)).size(FONT_CAPTION))
-                .on_press(Message::LibraryDialogApplyTagEdit)
-                .style(primary_button_style)
-                .padding([SPACE_2XS as u16, SPACE_SM as u16]),
-            button(text(app.i18n.text(TextKey::DismissButton)).size(FONT_CAPTION))
-                .on_press(Message::LibraryDialogCancelTagEdit)
-                .style(subtle_button_style)
-                .padding([SPACE_2XS as u16, SPACE_SM as u16]),
-        ]
-        .spacing(SPACE_XS)
-        .into()
-    } else {
-        row![
-            button(text(app.i18n.text(TextKey::RootTagAddButton)).size(FONT_CAPTION))
-                .on_press(Message::LibraryDialogAddAppTag)
-                .style(subtle_button_style)
-                .padding([SPACE_2XS as u16, SPACE_SM as u16]),
-            button(text(app.i18n.text(TextKey::RootTagGameButton)).size(FONT_CAPTION))
-                .on_press(Message::LibraryDialogAddGameTag)
-                .style(subtle_button_style)
-                .padding([SPACE_2XS as u16, SPACE_SM as u16]),
-        ]
-        .spacing(SPACE_XS)
-        .into()
-    };
-
-    let lifecycle_actions: Element<'_, Message> = if edit_root_id.is_some() {
-        column![
-            h_divider(),
-            row![
-                button(text(app.i18n.text(TextKey::RootDeactivateButton)).size(FONT_CAPTION))
-                    .on_press(Message::DeactivateRoot)
-                    .style(subtle_button_style)
-                    .padding([SPACE_2XS as u16, SPACE_SM as u16]),
-                button(text(app.i18n.text(TextKey::RootReactivateButton)).size(FONT_CAPTION))
-                    .on_press(Message::ReactivateRoot)
-                    .style(subtle_button_style)
-                    .padding([SPACE_2XS as u16, SPACE_SM as u16]),
-                button(text(app.i18n.text(TextKey::RootRemoveButton)).size(FONT_CAPTION))
-                    .on_press(Message::RemoveRoot)
-                    .style(subtle_button_style)
-                    .padding([SPACE_2XS as u16, SPACE_SM as u16]),
-            ]
-            .spacing(SPACE_XS),
-        ]
-        .into()
-    } else {
-        column![].into()
-    };
-
-    let add_another_button: Element<'_, Message> = if is_add_mode {
-        button(
-            row![
-                image(assets::icon_save(app.is_dark_theme()))
-                    .width(Length::Fixed(ICON_SM))
-                    .height(Length::Fixed(ICON_SM))
-                    .content_fit(ContentFit::Contain)
-                    .filter_method(FilterMethod::Linear),
-                text(app.i18n.text(TextKey::LibrarySaveAndAddAnotherButton)).size(FONT_BODY),
-            ]
-            .spacing(SPACE_SM)
-            .align_y(iced::Alignment::Center),
-        )
-        .on_press(Message::SaveLibraryAndAddAnother)
-        .style(action_button_style)
-        .padding([SPACE_SM as u16, SPACE_MD as u16])
-        .into()
-    } else {
-        column![].into()
-    };
-
-    let dialog_content = column![
-        row![
-            text(title).size(FONT_TITLE).style(text_primary),
-            Space::new().width(Length::Fill),
-            button(text(app.i18n.text(TextKey::DismissButton)).size(FONT_BODY))
-                .on_press(Message::CloseLibraryDialog)
-                .style(subtle_button_style)
-                .padding([SPACE_XS as u16, SPACE_MD as u16]),
-        ]
-        .align_y(iced::Alignment::Center),
-        h_divider(),
-        column![
-            section_heading(app.i18n.text(TextKey::LibraryPathLabel)),
-            row![
-                button(
-                    row![
-                        image(assets::icon_browse(app.is_dark_theme()))
-                            .width(Length::Fixed(ICON_SM))
-                            .height(Length::Fixed(ICON_SM))
-                            .content_fit(ContentFit::Contain)
-                            .filter_method(FilterMethod::Linear),
-                        text(app.i18n.text(TextKey::BrowseFolderButton)).size(FONT_BODY),
-                    ]
-                    .spacing(SPACE_SM)
-                    .align_y(iced::Alignment::Center),
-                )
-                .on_press(Message::LibraryDialogBrowseFolder)
-                .style(primary_button_style)
-                .padding([SPACE_XS as u16, SPACE_MD as u16]),
-                button(text(path_toggle_label).size(FONT_CAPTION))
-                    .on_press(Message::ToggleLibraryDialogManualPath)
-                    .style(subtle_button_style)
-                    .padding([SPACE_2XS as u16, SPACE_SM as u16]),
-            ]
-            .spacing(SPACE_XS),
-            path_field,
-            text(app.library_dialog_path_input.as_str())
-                .size(FONT_CAPTION)
-                .style(text_tertiary),
-        ]
-        .spacing(SPACE_SM),
-        h_divider(),
-        column![
-            section_heading(app.i18n.text(TextKey::LibraryDisplayNameLabel)),
-            text_input(
-                app.i18n.text(TextKey::DisplayNamePlaceholder),
-                &app.library_dialog_display_name_input,
-            )
-            .on_input(Message::LibraryDialogDisplayNameChanged)
-            .style(field_input_style),
-        ]
-        .spacing(SPACE_SM),
-        h_divider(),
-        column![
-            section_heading(app.i18n.text(TextKey::LibraryTagsLabel)),
-            text_input(
-                app.i18n.text(TextKey::RootTagInputPlaceholder),
-                &app.library_dialog_tag_input,
-            )
-            .on_input(Message::LibraryDialogTagInputChanged)
-            .on_submit(if app.library_dialog_editing_tag.is_some() {
-                Message::LibraryDialogApplyTagEdit
-            } else {
-                Message::LibraryDialogAddAppTag
-            })
-            .style(field_input_style),
-            library_tag_actions,
-            tags_list,
-        ]
-        .spacing(SPACE_SM),
-        lifecycle_actions,
-        h_divider(),
-        row![
-            button(
-                row![
-                    image(assets::icon_save(app.is_dark_theme()))
-                        .width(Length::Fixed(ICON_SM))
-                        .height(Length::Fixed(ICON_SM))
-                        .content_fit(ContentFit::Contain)
-                        .filter_method(FilterMethod::Linear),
-                    text(app.i18n.text(TextKey::LibrarySaveButton)).size(FONT_BODY),
-                ]
-                .spacing(SPACE_SM)
-                .align_y(iced::Alignment::Center),
-            )
-            .on_press(Message::SaveLibraryDialog)
-            .style(primary_button_style)
-            .padding([SPACE_SM as u16, SPACE_MD as u16]),
-            add_another_button,
-        ]
-        .spacing(SPACE_XS),
-    ]
-    .spacing(SPACE_LG);
-
-    render_dialog_frame(dialog_content.into(), 560.0, 680.0)
-}
-
-fn render_library_statistics_dialog(app: &Librapix) -> Element<'_, Message> {
-    let root = app.library_stats_root_id.and_then(|root_id| {
-        app.state
-            .library_roots
-            .iter()
-            .find(|root| root.id == root_id)
-    });
-
-    let title_suffix = root
-        .map(display_name_for_root)
-        .unwrap_or_else(|| app.i18n.text(TextKey::LibrarySectionLabel).to_owned());
-    let dialog_title = format!(
-        "{}: {title_suffix}",
-        app.i18n.text(TextKey::LibraryStatsDialogTitle)
-    );
-
-    let path_line: Element<'_, Message> = if let Some(root) = root {
-        text(root.normalized_path.display().to_string())
-            .size(FONT_CAPTION)
-            .style(text_tertiary)
-            .into()
-    } else {
-        column![].into()
-    };
-
-    let stats_body: Element<'_, Message> = if let Some(stats) = &app.library_stats_record {
-        column![
-            section_heading(app.i18n.text(TextKey::LibraryStatsSummarySectionLabel)),
-            render_stats_row(
-                app.i18n.text(TextKey::LibraryStatsTotalSizeLabel),
-                format::format_file_size(stats.total_size_bytes),
-            ),
-            render_stats_row(
-                app.i18n.text(TextKey::LibraryStatsTotalMediaLabel),
-                stats.total_media_count.to_string(),
-            ),
-            render_stats_row(
-                app.i18n.text(TextKey::LibraryStatsTotalImagesLabel),
-                stats.total_images_count.to_string(),
-            ),
-            render_stats_row(
-                app.i18n.text(TextKey::LibraryStatsTotalVideosLabel),
-                stats.total_videos_count.to_string(),
-            ),
-            render_stats_row(
-                app.i18n.text(TextKey::LibraryStatsImageSizeLabel),
-                format::format_file_size(stats.total_image_size_bytes),
-            ),
-            render_stats_row(
-                app.i18n.text(TextKey::LibraryStatsVideoSizeLabel),
-                format::format_file_size(stats.total_video_size_bytes),
-            ),
-            h_divider(),
-            section_heading(app.i18n.text(TextKey::LibraryStatsIndexingSectionLabel)),
-            render_stats_row(
-                app.i18n.text(TextKey::LibraryStatsMissingLabel),
-                stats.missing_count.to_string(),
-            ),
-            render_stats_row(
-                app.i18n.text(TextKey::LibraryStatsLastIndexedLabel),
-                format::format_timestamp(stats.last_indexed_unix_seconds),
-            ),
-            render_stats_row(
-                app.i18n.text(TextKey::LibraryStatsOldestFileLabel),
-                format::format_timestamp(stats.oldest_modified_unix_seconds),
-            ),
-            render_stats_row(
-                app.i18n.text(TextKey::LibraryStatsNewestFileLabel),
-                format::format_timestamp(stats.newest_modified_unix_seconds),
-            ),
-        ]
-        .spacing(SPACE_SM)
-        .into()
-    } else {
-        text(app.i18n.text(TextKey::LibraryStatsNotAvailableLabel))
-            .size(FONT_BODY)
-            .style(text_secondary)
-            .into()
-    };
-
-    let dialog_content = column![
-        row![
-            text(dialog_title).size(FONT_TITLE).style(text_primary),
-            Space::new().width(Length::Fill),
-            button(text(app.i18n.text(TextKey::DismissButton)).size(FONT_BODY))
-                .on_press(Message::CloseLibraryStatisticsDialog)
-                .style(subtle_button_style)
-                .padding([SPACE_XS as u16, SPACE_MD as u16]),
-        ]
-        .align_y(iced::Alignment::Center),
-        path_line,
-        h_divider(),
-        stats_body,
-    ]
-    .spacing(SPACE_LG);
-
-    render_dialog_frame(dialog_content.into(), 560.0, 640.0)
-}
-
-fn render_stats_row<'a>(label: &'a str, value: String) -> Element<'a, Message> {
-    row![
-        text(label).size(FONT_BODY).style(text_secondary),
-        Space::new().width(Length::Fill),
-        text(value).size(FONT_BODY).style(text_primary),
-    ]
-    .align_y(iced::Alignment::Center)
-    .into()
-}
-
-fn render_new_media_dialog(app: &Librapix) -> Element<'_, Message> {
-    let Some(announcement) = &app.new_media_announcement else {
-        return column![].into();
-    };
-    const NEW_MEDIA_PREVIEW_HEIGHT: f32 = 220.0;
-
-    let more_line: Element<'_, Message> = if announcement.additional_count > 0 {
-        text(format!(
-            "{} {}",
-            announcement.additional_count,
-            app.i18n.text(TextKey::NewFileAnnouncementMoreLabel)
-        ))
-        .size(FONT_CAPTION)
-        .style(text_tertiary)
-        .into()
-    } else {
-        column![].into()
-    };
-
-    let preview: Element<'_, Message> = if let Some(path) = &announcement.preview_path {
-        container(
-            image(image::Handle::from_path(path))
-                .width(Length::Fill)
-                .height(Length::Fixed(NEW_MEDIA_PREVIEW_HEIGHT))
-                .content_fit(ContentFit::Contain),
-        )
-        .style(card_style)
-        .into()
-    } else {
-        render_new_media_preview_loading_state(app, NEW_MEDIA_PREVIEW_HEIGHT)
-    };
-
-    let metadata_lines = column![
-        text(format!(
-            "{}: {}",
-            app.i18n.text(TextKey::DetailsKindLabel),
-            localized_media_kind_label(app.i18n, &announcement.media_kind),
-        ))
-        .size(FONT_CAPTION)
-        .style(text_secondary),
-        text(format!(
-            "{}: {}",
-            app.i18n.text(TextKey::DetailsSizeLabel),
-            format::format_file_size(announcement.file_size_bytes)
-        ))
-        .size(FONT_CAPTION)
-        .style(text_secondary),
-        text(format!(
-            "{}: {}",
-            app.i18n.text(TextKey::DetailsModifiedLabel),
-            format::format_timestamp(announcement.modified_unix_seconds)
-        ))
-        .size(FONT_CAPTION)
-        .style(text_secondary),
-        text(format!(
-            "{}: {}",
-            app.i18n.text(TextKey::DetailsDimensionsLabel),
-            format::format_dimensions(announcement.width_px, announcement.height_px),
-        ))
-        .size(FONT_CAPTION)
-        .style(text_secondary),
-        text(format!(
-            "{}: {}",
-            app.i18n.text(TextKey::DetailsPathLabel),
-            announcement.absolute_path.display()
-        ))
-        .size(FONT_CAPTION)
-        .style(text_tertiary),
-    ]
-    .spacing(SPACE_2XS);
-
-    let primary_padding = [SPACE_XS as u16, SPACE_MD as u16];
-    let subtle_padding = [SPACE_XS as u16, SPACE_MD as u16];
-    let actions = row![
-        button(
-            row![
-                image(assets::icon_gallery(app.is_dark_theme()))
-                    .width(Length::Fixed(ICON_SM))
-                    .height(Length::Fixed(ICON_SM))
-                    .content_fit(ContentFit::Contain)
-                    .filter_method(FilterMethod::Linear),
-                text(app.i18n.text(TextKey::MediaSelectButton)).size(FONT_BODY),
-            ]
-            .spacing(SPACE_SM)
-            .align_y(iced::Alignment::Center),
-        )
-        .on_press(Message::SelectMedia(announcement.media_id))
-        .width(Length::Fill)
-        .style(subtle_button_style)
-        .padding(subtle_padding),
-        button(
-            row![
-                image(assets::icon_open(app.is_dark_theme()))
-                    .width(Length::Fixed(ICON_SM))
-                    .height(Length::Fixed(ICON_SM))
-                    .content_fit(ContentFit::Contain)
-                    .filter_method(FilterMethod::Linear),
-                text(app.i18n.text(TextKey::DetailsOpenFileButton)).size(FONT_BODY),
-            ]
-            .spacing(SPACE_SM)
-            .align_y(iced::Alignment::Center),
-        )
-        .on_press(Message::OpenMediaById(announcement.media_id))
-        .width(Length::Fill)
-        .style(action_button_style)
-        .padding(primary_padding),
-        button(
-            row![
-                image(assets::icon_copy_file(app.is_dark_theme()))
-                    .width(Length::Fixed(ICON_SM))
-                    .height(Length::Fixed(ICON_SM))
-                    .content_fit(ContentFit::Contain)
-                    .filter_method(FilterMethod::Linear),
-                text(app.i18n.text(TextKey::DetailsCopyFileButton)).size(FONT_BODY),
-            ]
-            .spacing(SPACE_SM)
-            .align_y(iced::Alignment::Center),
-        )
-        .on_press(Message::CopyMediaFileById(announcement.media_id))
-        .width(Length::Fill)
-        .style(action_button_style)
-        .padding(primary_padding),
-        button(text(app.i18n.text(TextKey::DismissButton)).size(FONT_BODY))
-            .on_press(Message::DismissNewMediaAnnouncement)
-            .width(Length::Fill)
-            .style(subtle_button_style)
-            .padding(subtle_padding),
-    ]
-    .spacing(SPACE_XS);
-
-    let dialog_content = column![
-        text(app.i18n.text(TextKey::NewFileAnnouncementTitle))
-            .size(FONT_CAPTION)
-            .style(text_accent),
-        text(announcement.title.as_str())
-            .size(FONT_SUBTITLE)
-            .style(text_primary),
-        text(announcement.metadata_line.as_str())
-            .size(FONT_CAPTION)
-            .style(text_secondary),
-        more_line,
-        h_divider(),
-        preview,
-        metadata_lines,
-        actions,
-    ]
-    .spacing(SPACE_SM);
-
-    render_dialog_frame(dialog_content.into(), 640.0, 680.0)
-}
-
-fn render_new_media_preview_loading_state(app: &Librapix, height: f32) -> Element<'_, Message> {
-    let placeholder = container(
-        column![
-            container(Space::new())
-                .width(Length::Fill)
-                .height(Length::FillPortion(5))
-                .style(preview_loading_block_style),
-            row![
-                container(Space::new())
-                    .width(Length::FillPortion(3))
-                    .height(Length::Fixed(8.0))
-                    .style(preview_loading_block_style),
-                Space::new().width(Length::Fixed(SPACE_SM as f32)),
-                container(Space::new())
-                    .width(Length::FillPortion(2))
-                    .height(Length::Fixed(8.0))
-                    .style(preview_loading_block_style),
-            ]
-            .height(Length::FillPortion(1)),
-        ]
-        .spacing(SPACE_SM)
-        .height(Length::Fill),
-    )
-    .padding(SPACE_MD as u16)
-    .width(Length::Fill)
-    .height(Length::Fixed(height))
-    .style(thumb_placeholder_style);
-
-    let loading_indicator = container(
-        column![
-            row![
-                text(
-                    app.i18n
-                        .text(TextKey::NewFileAnnouncementPreparingPreviewLabel)
-                )
-                .size(FONT_CAPTION)
-                .style(text_secondary),
-                text(new_media_preview_loading_indicator(
-                    app.new_media_preview_loading_phase,
-                ))
-                .size(FONT_CAPTION)
-                .style(text_accent),
-            ]
-            .spacing(SPACE_XS)
-            .align_y(iced::Alignment::Center),
-            text(new_media_preview_loading_pulse(
-                app.new_media_preview_loading_phase,
-            ))
-            .size(FONT_CAPTION)
-            .style(text_tertiary),
-        ]
-        .spacing(SPACE_XS)
-        .align_x(iced::Alignment::Center),
-    )
-    .center_x(Length::Fill)
-    .center_y(Length::Fill)
-    .width(Length::Fill)
-    .height(Length::Fixed(height));
-
-    stack([placeholder.into(), loading_indicator.into()])
-        .width(Length::Fill)
-        .height(Length::Fixed(height))
-        .into()
-}
-
-fn new_media_preview_loading_indicator(phase: usize) -> &'static str {
-    match phase % 6 {
-        0 => "·  ",
-        1 => "·· ",
-        2 => "···",
-        3 => " ··",
-        4 => "  ·",
-        _ => " · ",
-    }
-}
-
-fn new_media_preview_loading_pulse(phase: usize) -> &'static str {
-    match phase % 6 {
-        0 => "○ ● ○",
-        1 => "○ ○ ●",
-        2 => "● ○ ○",
-        3 => "○ ● ○",
-        4 => "○ ○ ●",
-        _ => "● ○ ○",
-    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -6447,311 +5300,8 @@ fn render_details_actions(app: &Librapix) -> Element<'_, Message> {
     .into()
 }
 
-fn render_make_short_dialog(app: &Librapix) -> Element<'_, Message> {
-    let is_running = matches!(
-        app.make_short_dialog.run_state,
-        MakeShortRunState::Running { .. }
-    );
-    let has_smooth = make_short_has_smooth_warning(&app.make_short_dialog);
-
-    let effect_chip = |effect: ShortEffect, help_key: TextKey| {
-        let active = app.make_short_dialog.effects.contains(&effect);
-        let mut btn = button(text(effect.as_str()).size(FONT_CAPTION))
-            .style(filter_chip_style(active))
-            .padding([SPACE_2XS as u16, SPACE_SM as u16]);
-        if !is_running {
-            btn = btn.on_press(Message::MakeShortToggleEffect(effect));
-        }
-        row![btn, render_help_badge(app.i18n.text(help_key)),].spacing(SPACE_XS)
-    };
-
-    let crop_chip = |position: CropPosition, label: &'static str| {
-        let active = app.make_short_dialog.crop_position == position;
-        let mut btn = button(text(label).size(FONT_CAPTION))
-            .style(filter_chip_style(active))
-            .padding([SPACE_2XS as u16, SPACE_SM as u16]);
-        if !is_running {
-            btn = btn.on_press(Message::MakeShortSetCropPosition(position));
-        }
-        btn
-    };
-
-    let preset_chip = |preset: Preset, label: &'static str| {
-        let active = app.make_short_dialog.preset == preset;
-        let mut btn = button(text(label).size(FONT_CAPTION))
-            .style(filter_chip_style(active))
-            .padding([SPACE_2XS as u16, SPACE_SM as u16]);
-        if !is_running {
-            btn = btn.on_press(Message::MakeShortSetPreset(preset));
-        }
-        btn
-    };
-
-    let running_status: Element<'_, Message> = match &app.make_short_dialog.run_state {
-        MakeShortRunState::Running { stage, status } => {
-            let p = ui::palette(&theme(app));
-            let indicator_color = if matches!(stage, GenerationStage::Finalizing) {
-                p.success
-            } else {
-                p.accent
-            };
-            column![
-                text(status).size(FONT_BODY).style(text_primary),
-                row![
-                    text("\u{25CF}").size(FONT_CAPTION).color(indicator_color),
-                    text(app.i18n.text(TextKey::ActivityWorkingLabel))
-                        .size(FONT_CAPTION)
-                        .style(text_secondary),
-                ]
-                .spacing(SPACE_XS)
-                .align_y(iced::Alignment::Center),
-            ]
-            .spacing(SPACE_XS)
-            .into()
-        }
-        MakeShortRunState::Success { .. } => text(app.i18n.text(TextKey::MakeShortSuccessLabel))
-            .size(FONT_CAPTION)
-            .style(text_success)
-            .into(),
-        MakeShortRunState::Canceled { summary } => text(summary)
-            .size(FONT_CAPTION)
-            .style(text_secondary)
-            .into(),
-        MakeShortRunState::Failed { summary, details } => column![
-            text(summary).size(FONT_CAPTION).style(text_warning),
-            text(details).size(FONT_CAPTION).style(text_tertiary),
-        ]
-        .spacing(SPACE_2XS)
-        .into(),
-        MakeShortRunState::Idle => Space::new().into(),
-    };
-
-    let warning: Element<'_, Message> = if has_smooth {
-        text(app.i18n.text(TextKey::MakeShortSmoothWarning))
-            .size(FONT_CAPTION)
-            .style(text_warning)
-            .into()
-    } else {
-        Space::new().into()
-    };
-
-    let validation_error: Element<'_, Message> =
-        if let Some(error) = app.make_short_dialog.validation_error.as_ref() {
-            text(error).size(FONT_CAPTION).style(text_warning).into()
-        } else {
-            Space::new().into()
-        };
-
-    let mut generate_button = button(
-        row![
-            image(assets::icon_generate(app.is_dark_theme()))
-                .width(Length::Fixed(ICON_SM))
-                .height(Length::Fixed(ICON_SM))
-                .content_fit(ContentFit::Contain)
-                .filter_method(FilterMethod::Linear),
-            text(app.i18n.text(TextKey::MakeShortRunButton)).size(FONT_BODY),
-        ]
-        .spacing(SPACE_SM)
-        .align_y(iced::Alignment::Center),
-    )
-    .style(primary_button_style)
-    .padding([SPACE_XS as u16, SPACE_MD as u16]);
-    if !is_running {
-        generate_button = generate_button.on_press(Message::RunMakeShort);
-    }
-
-    let mut actions = if is_running {
-        let mut cancel_button =
-            button(text(app.i18n.text(TextKey::MakeShortCancelButton)).size(FONT_BODY))
-                .style(subtle_button_style)
-                .padding([SPACE_XS as u16, SPACE_MD as u16]);
-        if app.make_short_dialog.cancellation.is_some() {
-            cancel_button = cancel_button.on_press(Message::CancelMakeShortGeneration);
-        }
-        row![cancel_button]
-            .spacing(SPACE_SM)
-            .align_y(iced::Alignment::Center)
-    } else {
-        row![
-            button(text(app.i18n.text(TextKey::MakeShortCloseButton)).size(FONT_BODY))
-                .on_press(Message::CloseMakeShortDialog)
-                .style(subtle_button_style)
-                .padding([SPACE_XS as u16, SPACE_MD as u16]),
-            generate_button
-        ]
-        .spacing(SPACE_SM)
-        .align_y(iced::Alignment::Center)
-    };
-
-    if matches!(
-        app.make_short_dialog.run_state,
-        MakeShortRunState::Success { .. }
-    ) {
-        actions = actions.push(
-            button(text(app.i18n.text(TextKey::MakeShortOpenFileButton)).size(FONT_BODY))
-                .on_press(Message::OpenGeneratedShortFile)
-                .style(action_button_style)
-                .padding([SPACE_XS as u16, SPACE_MD as u16]),
-        );
-        actions = actions.push(
-            button(text(app.i18n.text(TextKey::MakeShortOpenFolderButton)).size(FONT_BODY))
-                .on_press(Message::OpenGeneratedShortFolder)
-                .style(action_button_style)
-                .padding([SPACE_XS as u16, SPACE_MD as u16]),
-        );
-    }
-
-    let fade_active = app.make_short_dialog.add_fade;
-    let mut fade_toggle = button(text(if fade_active { "On" } else { "Off" }).size(FONT_CAPTION))
-        .style(filter_chip_style(fade_active))
-        .padding([SPACE_2XS as u16, SPACE_SM as u16]);
-    if !is_running {
-        fade_toggle = fade_toggle.on_press(Message::MakeShortSetAddFade(!fade_active));
-    }
-
-    let output_row = row![
-        text_input(
-            app.i18n.text(TextKey::MakeShortOutputPathLabel),
-            &app.make_short_dialog.output_file_input
-        )
-        .on_input(Message::MakeShortOutputPathChanged)
-        .width(Length::Fill)
-        .style(field_input_style),
-        button(
-            row![
-                image(assets::icon_browse(app.is_dark_theme()))
-                    .width(Length::Fixed(ICON_XS))
-                    .height(Length::Fixed(ICON_XS))
-                    .content_fit(ContentFit::Contain)
-                    .filter_method(FilterMethod::Linear),
-                text(app.i18n.text(TextKey::MakeShortChooseOutputButton)).size(FONT_CAPTION),
-            ]
-            .spacing(SPACE_XS)
-            .align_y(iced::Alignment::Center),
-        )
-        .on_press(Message::MakeShortBrowseOutputPath)
-        .style(subtle_button_style)
-        .padding([SPACE_2XS as u16, SPACE_SM as u16]),
-    ]
-    .spacing(SPACE_SM)
-    .align_y(iced::Alignment::Center);
-
-    let dialog_content = column![
-        row![
-            text(app.i18n.text(TextKey::MakeShortDialogTitle))
-                .size(FONT_TITLE)
-                .style(text_primary),
-            Space::new().width(Length::Fill),
-            {
-                let mut dismiss =
-                    button(text(app.i18n.text(TextKey::DismissButton)).size(FONT_BODY))
-                        .style(subtle_button_style)
-                        .padding([SPACE_XS as u16, SPACE_MD as u16]);
-                if !is_running {
-                    dismiss = dismiss.on_press(Message::CloseMakeShortDialog);
-                }
-                dismiss
-            },
-        ]
-        .align_y(iced::Alignment::Center),
-        h_divider(),
-        section_heading(app.i18n.text(TextKey::MakeShortOutputPathLabel)),
-        output_row,
-        render_help_badge(app.i18n.text(TextKey::MakeShortHelpOutput)),
-        section_heading(app.i18n.text(TextKey::MakeShortEffectsLabel)),
-        row![
-            effect_chip(ShortEffect::Clean, TextKey::MakeShortHelpEffectsClean),
-            effect_chip(ShortEffect::Enhanced, TextKey::MakeShortHelpEffectsEnhanced),
-            effect_chip(
-                ShortEffect::Cinematic,
-                TextKey::MakeShortHelpEffectsCinematic
-            ),
-        ]
-        .spacing(SPACE_SM),
-        row![
-            effect_chip(ShortEffect::Night, TextKey::MakeShortHelpEffectsNight),
-            effect_chip(ShortEffect::Scenic, TextKey::MakeShortHelpEffectsScenic),
-            effect_chip(ShortEffect::Smooth, TextKey::MakeShortHelpEffectsSmooth),
-        ]
-        .spacing(SPACE_SM),
-        warning,
-        h_divider(),
-        section_heading(app.i18n.text(TextKey::MakeShortCropLabel)),
-        row![
-            crop_chip(CropPosition::Center, "center"),
-            crop_chip(CropPosition::Left, "left"),
-            crop_chip(CropPosition::Right, "right"),
-            render_help_badge(app.i18n.text(TextKey::MakeShortHelpCrop)),
-        ]
-        .spacing(SPACE_SM)
-        .align_y(iced::Alignment::Center),
-        row![
-            text(app.i18n.text(TextKey::MakeShortFadeLabel))
-                .size(FONT_CAPTION)
-                .style(text_secondary),
-            fade_toggle,
-            render_help_badge(app.i18n.text(TextKey::MakeShortHelpFade)),
-        ]
-        .spacing(SPACE_SM)
-        .align_y(iced::Alignment::Center),
-        h_divider(),
-        row![
-            text(app.i18n.text(TextKey::MakeShortSpeedLabel))
-                .size(FONT_CAPTION)
-                .style(text_secondary),
-            text_input("1.0", &app.make_short_dialog.speed_input)
-                .on_input(Message::MakeShortSpeedChanged)
-                .style(field_input_style)
-                .width(Length::Fixed(80.0)),
-            render_help_badge(app.i18n.text(TextKey::MakeShortHelpSpeed)),
-        ]
-        .spacing(SPACE_SM)
-        .align_y(iced::Alignment::Center),
-        row![
-            text(app.i18n.text(TextKey::MakeShortCrfLabel))
-                .size(FONT_CAPTION)
-                .style(text_secondary),
-            text_input("18", &app.make_short_dialog.crf_input)
-                .on_input(Message::MakeShortCrfChanged)
-                .style(field_input_style)
-                .width(Length::Fixed(80.0)),
-            render_help_badge(app.i18n.text(TextKey::MakeShortHelpCrf)),
-        ]
-        .spacing(SPACE_SM)
-        .align_y(iced::Alignment::Center),
-        section_heading(app.i18n.text(TextKey::MakeShortPresetLabel)),
-        row![
-            preset_chip(Preset::Fast, "fast"),
-            preset_chip(Preset::Medium, "medium"),
-            preset_chip(Preset::Slow, "slow"),
-            render_help_badge(app.i18n.text(TextKey::MakeShortHelpPreset)),
-        ]
-        .spacing(SPACE_SM)
-        .align_y(iced::Alignment::Center),
-        validation_error,
-        running_status,
-        h_divider(),
-        actions,
-    ]
-    .spacing(SPACE_SM);
-
-    render_dialog_frame(dialog_content.into(), 620.0, 780.0)
-}
-
 fn make_short_has_smooth_warning(state: &MakeShortDialogState) -> bool {
     state.effects.contains(&ShortEffect::Smooth)
-}
-
-fn render_help_badge<'a>(tooltip_text: &'a str) -> Element<'a, Message> {
-    tooltip(
-        container(text("(?)").size(FONT_CAPTION).style(text_tertiary))
-            .padding([0, SPACE_XS as u16]),
-        container(text(tooltip_text).size(FONT_CAPTION).style(text_primary))
-            .padding([SPACE_XS as u16, SPACE_SM as u16])
-            .style(card_style),
-        tooltip::Position::Top,
-    )
-    .into()
 }
 
 fn do_prepare_short(request: ShortGenerationRequest) -> Result<PreparedShortJob, String> {
@@ -11954,6 +10504,356 @@ fn map_roots_from_storage(roots: Vec<librapix_storage::SourceRootRecord>) -> Vec
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::views::dialogs::{
+        about::view as render_about_dialog, filters::view as render_filter_dialog,
+        library::view as render_library_dialog,
+        library_statistics::view as render_library_statistics_dialog,
+        make_short::view as render_make_short_dialog, new_media::view as render_new_media_dialog,
+        settings::view as render_settings_dialog,
+    };
+
+    #[test]
+    fn dialog_filter_selection_keeps_its_message_and_selected_appearance() {
+        let mut app = test_app();
+        app.filter_media_kind = Some("video".to_owned());
+        let before = dialog_frame_pixels(render_filter_dialog(&app), Theme::Light);
+        let before_text = pane_texts(render_filter_dialog(&app));
+        app.filter_extension = Some("mp4".to_owned());
+        let after = dialog_frame_pixels(render_filter_dialog(&app), Theme::Light);
+        assert_eq!(before_text, pane_texts(render_filter_dialog(&app)));
+        assert!(
+            before != after,
+            "selecting MP4 must change its active appearance"
+        );
+        let messages = dialog_click_label(render_filter_dialog(&app), "Videos");
+        assert!(
+            messages
+                .iter()
+                .any(|m| matches!(m, Message::SetFilterMediaKind(Some(kind)) if kind == "video"))
+        );
+        assert!(pane_texts(render_filter_dialog(&app)).contains(&"MP4".to_owned()));
+        assert!(
+            dialog_click_label(render_filter_dialog(&app), "MP4")
+                .iter()
+                .any(|m| matches!(m, Message::SetFilterExtension(Some(ext)) if ext == "mp4"))
+        );
+    }
+
+    #[test]
+    fn dialog_library_validation_remains_visible() {
+        let mut app = test_app();
+        let _ = update(&mut app, Message::SaveLibraryDialog);
+        assert!(
+            pane_texts(render_library_dialog(&app)).contains(&"Invalid folder path".to_owned())
+        );
+    }
+
+    #[test]
+    fn dialog_all_frames_keep_backdrop_capture_and_theme_rendering() {
+        let app = test_app();
+        for view in [
+            render_about_dialog,
+            render_filter_dialog,
+            render_settings_dialog,
+            render_library_dialog,
+            render_library_statistics_dialog,
+            render_make_short_dialog,
+        ] {
+            let outside = pane_click(view(&app), iced::Point::new(1.0, 1.0));
+            assert!(
+                outside
+                    .iter()
+                    .any(|m| matches!(m, Message::CloseAllDialogs))
+            );
+            let inside = pane_click(view(&app), iced::Point::new(700.0, 450.0));
+            assert!(!inside.iter().any(|m| matches!(m, Message::CloseAllDialogs)));
+            assert!(
+                inside
+                    .iter()
+                    .any(|m| matches!(m, Message::ModalContentClicked))
+            );
+            let light = dialog_frame_pixels(view(&app), Theme::Light);
+            let dark = dialog_frame_pixels(view(&app), Theme::Dark);
+            assert!(light != dark, "dialog must use theme-aware styling");
+        }
+        for (view, message) in [
+            (
+                render_settings_dialog as fn(&Librapix) -> Element<'_, Message>,
+                Message::CloseSettings,
+            ),
+            (render_library_dialog, Message::CloseLibraryDialog),
+            (
+                render_library_statistics_dialog,
+                Message::CloseLibraryStatisticsDialog,
+            ),
+        ] {
+            assert!(
+                dialog_click_label(view(&app), "Dismiss")
+                    .iter()
+                    .any(|m| std::mem::discriminant(m) == std::mem::discriminant(&message))
+            );
+        }
+    }
+
+    #[test]
+    fn dialog_short_success_keeps_open_actions_and_validation() {
+        let mut app = test_app();
+        app.make_short_dialog.validation_error = Some("Speed must be greater than 0".into());
+        assert!(
+            pane_texts(render_make_short_dialog(&app))
+                .contains(&"Speed must be greater than 0".to_owned())
+        );
+        app.make_short_dialog.validation_error = None;
+        app.make_short_dialog.run_state = MakeShortRunState::Success {
+            output_file: PathBuf::from("/output/short.mp4"),
+        };
+        for (key, expected) in [
+            (
+                TextKey::MakeShortOpenFileButton,
+                Message::OpenGeneratedShortFile,
+            ),
+            (
+                TextKey::MakeShortOpenFolderButton,
+                Message::OpenGeneratedShortFolder,
+            ),
+            (TextKey::MakeShortCloseButton, Message::CloseMakeShortDialog),
+        ] {
+            assert!(
+                dialog_click_label(render_make_short_dialog(&app), app.i18n.text(key))
+                    .iter()
+                    .any(|m| std::mem::discriminant(m) == std::mem::discriminant(&expected))
+            );
+        }
+    }
+
+    #[test]
+    fn dialog_short_option_help_and_disabled_effect_wiring_are_preserved() {
+        let mut app = test_app();
+        assert_eq!(
+            pane_texts(render_make_short_dialog(&app))
+                .iter()
+                .filter(|s| s.as_str() == "(?)")
+                .count(),
+            12
+        );
+        assert!(
+            dialog_click_label(render_make_short_dialog(&app), "smooth")
+                .iter()
+                .any(|m| matches!(m, Message::MakeShortToggleEffect(ShortEffect::Smooth)))
+        );
+        app.make_short_dialog.run_state = MakeShortRunState::Running {
+            stage: GenerationStage::Generating,
+            status: "Generating short".into(),
+        };
+        assert_eq!(
+            pane_texts(render_make_short_dialog(&app))
+                .iter()
+                .filter(|s| s.as_str() == "(?)")
+                .count(),
+            12
+        );
+        assert!(
+            !dialog_click_label(render_make_short_dialog(&app), "smooth")
+                .iter()
+                .any(|m| matches!(m, Message::MakeShortToggleEffect(_)))
+        );
+    }
+
+    #[test]
+    fn dialog_smooth_warning_is_only_shown_for_smooth() {
+        let mut app = test_app();
+        let warning = app.i18n.text(TextKey::MakeShortSmoothWarning);
+        assert!(
+            !pane_texts(render_make_short_dialog(&app))
+                .iter()
+                .any(|s| s == warning)
+        );
+        app.make_short_dialog.effects.push(ShortEffect::Smooth);
+        assert_eq!(
+            pane_texts(render_make_short_dialog(&app))
+                .iter()
+                .filter(|s| *s == warning)
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn dialog_short_running_has_one_stage_one_indicator_and_live_cancel() {
+        let mut app = test_app();
+        app.make_short_dialog.cancellation = Some(ShortGenerationCancellation::default());
+        for (stage, status) in [
+            (GenerationStage::Preparing, "Preparing short"),
+            (GenerationStage::Generating, "Generating short"),
+        ] {
+            app.make_short_dialog.run_state = MakeShortRunState::Running {
+                stage,
+                status: status.into(),
+            };
+            let texts = pane_texts(render_make_short_dialog(&app));
+            assert_eq!(texts.iter().filter(|s| s.as_str() == status).count(), 1);
+            assert!(
+                !texts
+                    .iter()
+                    .any(|s| s == app.i18n.text(TextKey::ActivityWorkingLabel)),
+                "no redundant working line"
+            );
+            let (_, node) = pane_layout(render_make_short_dialog(&app));
+            fn indicators(node: &iced_futures::core::layout::Node) -> usize {
+                usize::from(
+                    node.children().len() == 3
+                        && node
+                            .children()
+                            .iter()
+                            .all(|n| n.size() == Size::new(6.0, 6.0)),
+                ) + node.children().iter().map(indicators).sum::<usize>()
+            }
+            assert_eq!(indicators(&node), 1);
+            let messages = dialog_click_label(render_make_short_dialog(&app), "Cancel");
+            assert!(
+                messages
+                    .iter()
+                    .any(|m| matches!(m, Message::CancelMakeShortGeneration))
+            );
+            assert!(
+                !texts
+                    .iter()
+                    .any(|s| s == app.i18n.text(TextKey::MakeShortRunButton))
+            );
+        }
+    }
+
+    #[test]
+    fn dialog_short_canceled_and_failed_remain_distinct() {
+        let mut app = test_app();
+        app.make_short_dialog.run_state = MakeShortRunState::Canceled {
+            summary: "Generation canceled".into(),
+        };
+        let texts = pane_texts(render_make_short_dialog(&app));
+        assert!(texts.contains(&"Generation canceled".to_owned()));
+        assert!(!texts.contains(&"Failure details".to_owned()));
+        app.make_short_dialog.run_state = MakeShortRunState::Failed {
+            summary: "Generation failed".into(),
+            details: "Failure details".into(),
+        };
+        let texts = pane_texts(render_make_short_dialog(&app));
+        assert!(texts.contains(&"Generation failed".to_owned()));
+        assert!(texts.contains(&"Failure details".to_owned()));
+        assert!(!texts.contains(&"Generation canceled".to_owned()));
+    }
+
+    #[test]
+    fn dialog_new_media_loading_retains_meaningful_preview_text() {
+        let mut app = test_app();
+        app.new_media_announcement = Some(NewMediaAnnouncement {
+            media_id: 7,
+            title: "New clip".into(),
+            metadata_line: "Video".into(),
+            preview_path: None,
+            media_kind: "video".into(),
+            file_size_bytes: 1,
+            modified_unix_seconds: None,
+            width_px: None,
+            height_px: None,
+            absolute_path: PathBuf::from("/media/clip.mp4"),
+            additional_count: 0,
+        });
+        for phase in 0..6 {
+            app.new_media_preview_loading_phase = phase;
+            let texts = pane_texts(render_new_media_dialog(&app));
+            assert_eq!(
+                texts
+                    .iter()
+                    .filter(|s| *s
+                        == app
+                            .i18n
+                            .text(TextKey::NewFileAnnouncementPreparingPreviewLabel))
+                    .count(),
+                1
+            );
+            assert!(texts.contains(&"New clip".to_owned()));
+        }
+    }
+
+    fn dialog_click_label(mut element: Element<'_, Message>, label: &str) -> Vec<Message> {
+        use iced_futures::core::{Layout, layout, renderer::Headless, widget::Tree};
+        struct Bounds<'a>(&'a str, Option<iced::Rectangle>);
+        impl iced_futures::core::widget::Operation for Bounds<'_> {
+            fn traverse(
+                &mut self,
+                f: &mut dyn FnMut(&mut dyn iced_futures::core::widget::Operation),
+            ) {
+                f(self);
+            }
+            fn text(&mut self, _: Option<&Id>, bounds: iced::Rectangle, value: &str) {
+                if value == self.0 {
+                    self.1 = Some(bounds);
+                }
+            }
+        }
+        let renderer = iced_futures::futures::executor::block_on(iced::Renderer::new(
+            iced::Font::DEFAULT,
+            iced::Pixels(13.0),
+            Some("tiny-skia"),
+        ))
+        .unwrap();
+        let mut tree = Tree::new(&element);
+        let node = element.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, Size::new(1400.0, 900.0)),
+        );
+        let mut bounds = Bounds(label, None);
+        element
+            .as_widget_mut()
+            .operate(&mut tree, Layout::new(&node), &renderer, &mut bounds);
+        pane_click(element, bounds.1.expect("label in dialog").center())
+    }
+
+    fn dialog_frame_pixels(mut element: Element<'_, Message>, theme: Theme) -> Vec<u8> {
+        use iced_futures::core::{
+            Layout, Renderer, Shell, clipboard, layout, mouse,
+            renderer::{Headless, Style},
+            widget::Tree,
+        };
+        let mut renderer = iced_futures::futures::executor::block_on(iced::Renderer::new(
+            iced::Font::DEFAULT,
+            iced::Pixels(13.0),
+            Some("tiny-skia"),
+        ))
+        .unwrap();
+        let mut tree = Tree::new(&element);
+        let size = Size::new(1400.0, 900.0);
+        let node = element.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, size),
+        );
+        let viewport = iced::Rectangle::with_size(size);
+        // Iced resolves button status on RedrawRequested, not during layout.
+        // Initialize that runtime state before comparing selected styles.
+        element.as_widget_mut().update(
+            &mut tree,
+            &iced::Event::Window(iced::window::Event::RedrawRequested(Instant::now())),
+            Layout::new(&node),
+            mouse::Cursor::Unavailable,
+            &renderer,
+            &mut clipboard::Null,
+            &mut Shell::new(&mut Vec::new()),
+            &viewport,
+        );
+        renderer.reset(viewport);
+        element.as_widget().draw(
+            &tree,
+            &mut renderer,
+            &theme,
+            &Style::default(),
+            Layout::new(&node),
+            mouse::Cursor::Unavailable,
+            &viewport,
+        );
+        renderer.screenshot(Size::new(1400, 900), 1.0, ui::palette(&theme).bg_base)
+    }
 
     #[test]
     fn about_pattern_preserves_localized_content_and_overlay_actions() {

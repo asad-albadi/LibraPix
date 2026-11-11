@@ -1,5 +1,13 @@
 //! Product shell composition. Update/persistence/background work stay in the app.
 
+use super::dialogs::{
+    about::view as render_about_dialog, filters::view as render_filter_dialog,
+    library::view as render_library_dialog,
+    library_statistics::view as render_library_statistics_dialog,
+    make_short::view as render_make_short_dialog, new_media::view as render_new_media_dialog,
+    settings::view as render_settings_dialog,
+};
+
 use crate::ui::components::{button::ButtonVariant, icon_button::icon_button, notice::notice};
 use crate::ui::patterns::{
     details_pane::{DetailsPaneMode, details_pane},
@@ -8,9 +16,7 @@ use crate::ui::patterns::{
 use crate::ui::{self, *};
 use crate::{
     Librapix, MEDIA_SCROLLABLE_ID, MEDIA_SCROLLBAR_SPACING, Message, assets, display_name_for_root,
-    render_about_dialog, render_activity_status, render_details_panel, render_filter_dialog,
-    render_library_dialog, render_library_statistics_dialog, render_make_short_dialog,
-    render_media_panel, render_new_media_dialog, render_settings_dialog, render_timeline_scrubber,
+    render_activity_status, render_details_panel, render_media_panel, render_timeline_scrubber,
     render_update_chip, theme,
 };
 use iced::widget::image::FilterMethod;

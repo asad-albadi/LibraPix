@@ -173,26 +173,6 @@ pub fn nav_button_style(active: bool) -> impl Fn(&Theme, button::Status) -> butt
     }
 }
 
-pub fn filter_chip_style(active: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
-    move |theme, status| {
-        let p = palette(theme);
-        let (bg, text_color) = if active {
-            (p.accent, Color::WHITE)
-        } else {
-            match status {
-                button::Status::Hovered => (p.bg_hover, p.text_primary),
-                _ => (p.bg_surface, p.text_secondary),
-            }
-        };
-        button::Style {
-            background: Some(Background::Color(bg)),
-            text_color,
-            border: iced::border::rounded(RADIUS_PILL),
-            ..button::Style::default()
-        }
-    }
-}
-
 /// Segmented control button (Grid | Timeline toggle in the Library header).
 pub fn segment_button_style(active: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
     move |theme, status| {

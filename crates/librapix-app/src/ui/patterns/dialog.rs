@@ -12,9 +12,10 @@ use iced::{
     Alignment, Element, Length,
     widget::{Space, column, container, row, scrollable, text},
 };
+use std::borrow::Cow;
 
 pub struct DialogSpec<'a, Message> {
-    pub title: &'a str,
+    pub title: Cow<'a, str>,
     /// Localized label and existing close message; None omits the close action.
     pub close_message: Option<(&'a str, Message)>,
     pub body: Element<'a, Message>,

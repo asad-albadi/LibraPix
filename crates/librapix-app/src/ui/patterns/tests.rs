@@ -9,11 +9,30 @@ use iced::{
 };
 
 #[test]
+fn dialog_keeps_owned_dynamic_title_after_source_is_dropped() {
+    let element = {
+        let title = format!("Library statistics: {}", "Screenshots");
+        dialog(DialogSpec {
+            title: title.into(),
+            close_message: None,
+            body: text("Summary").into(),
+            footer: None,
+            max_width: 560.0,
+            max_height: 640.0,
+        })
+    };
+    assert_eq!(
+        inspect(element, Size::new(800.0, 700.0)).0,
+        ["Library statistics: Screenshots", "Summary"]
+    );
+}
+
+#[test]
 fn dialog_parts_keep_close_and_footer_independent() {
     for close in [false, true] {
         for footer in [false, true] {
             let spec = DialogSpec {
-                title: "About",
+                title: "About".into(),
                 close_message: close.then_some(("Dismiss", 7_u8)),
                 body: text("Body").into(),
                 footer: footer.then(|| text("Actions").into()),
@@ -105,7 +124,7 @@ fn dialog_keeps_header_and_footer_visible_when_body_overflows() {
     for size in [Size::new(1000.0, 800.0), Size::new(320.0, 260.0)] {
         let (_, node) = inspect(
             dialog(DialogSpec {
-                title: "Title",
+                title: "Title".into(),
                 close_message: Some(("Dismiss", 7)),
                 body: column![text("Body"), Space::new().height(2000)].into(),
                 footer: Some(text("Actions").into()),
@@ -135,7 +154,7 @@ fn dialog_bounds_stay_stable_for_short_and_overflowing_content() {
     for body_height in [20, 2000] {
         let (_, node) = inspect(
             dialog(DialogSpec {
-                title: "Title",
+                title: "Title".into(),
                 close_message: None,
                 body: Space::new().height(body_height).into(),
                 footer: None,

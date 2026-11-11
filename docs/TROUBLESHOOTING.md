@@ -1,5 +1,14 @@
 # Troubleshooting
 
+## Dialog migration verification and hidden library validation
+
+- Symptoms: an invalid library path leaves the dialog open without visible error feedback; Windows desktop automation may also fail to activate the validation app.
+- Affected area: library dialog presentation and local Windows visual verification.
+- Confirmed causes: library validation sets `root_status`, but the old dialog did not render that feedback. In the validation environment, desktop activation returned `GetCursorPos failed: Access is denied. (0x80070005)` on the initial attempt and one fresh-window retry; the capture showed desktop wallpaper instead of application content.
+- Resolution: the shared library path field displays the existing localized invalid-path status. No validation/update behavior changed. For the desktop access issue, do not treat the captured wallpaper as successful verification; rerun interactive checks in an accessible desktop session.
+- Prevention: retain real dialog layout/event regression tests and record desktop-access limitations explicitly. Headless light/dark rendering is supplemental, not a substitute for manual generation/cancellation checks.
+- Headless test note: send `Window::RedrawRequested` before drawing a newly constructed dialog tree. Iced 0.14 initializes button interaction styles on that event; layout alone (or a cursor event) draws the default disabled style, hiding active-filter differences and producing misleading pixel comparisons.
+
 ## Media jumps to the top when a shell notice changes
 
 - Symptoms: a layout-save error notice appearing or being dismissed resets the

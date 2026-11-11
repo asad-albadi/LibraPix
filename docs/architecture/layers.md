@@ -12,6 +12,7 @@
   - Message emission from user actions
   - App-shell composition and design-token usage
   - App-local `ui/tokens` and `ui/styles` modules, re-exported through the existing `ui` facade without changing dependency direction
+  - `ui/components` provides message-generic constructors over built-in Iced widgets; styles own variant/status mapping and components own compact layout. Components receive localized text and messages, never application services.
   - No direct storage/indexing logic
 - Application orchestration (`librapix-core::app`)
   - Explicit app state and state transitions

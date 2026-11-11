@@ -12,3 +12,7 @@ pub const SIDEBAR_WIDTH: f32 = 240.0;
 pub const DETAILS_WIDTH: f32 = 300.0;
 pub const HEADER_HEIGHT: f32 = 52.0;
 pub const GALLERY_GAP: u32 = 4;
+
+pub const CONTROL_HEIGHT_SM: f32 = 28.0;
+pub const CONTROL_HEIGHT_MD: f32 = 32.0;
+pub const CONTROL_HEIGHT_LG: f32 = 36.0;

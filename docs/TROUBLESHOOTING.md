@@ -2,6 +2,14 @@
 
 Issue `#12` is summarized in `docs/architecture/issue-12-runtime-optimization-summary.md`. This file keeps the recurring regression patterns and the final fixes that matter if those problems return.
 
+## Accent text loses contrast after a palette change
+
+- Symptoms: blue text is difficult to read on dark neutral surfaces even though white text on blue buttons remains readable.
+- Affected area: app-local semantic palette and accent text/button styles.
+- Confirmed cause: a filled-control accent must be dark enough for white text; reusing that fill as small foreground text on dark surfaces does not meet the same contrast requirement. Component contrast tests caught this during the media-first palette update.
+- Resolution: keep `accent` for filled controls and use the dedicated `accent_text` token for accent text and link buttons. Dark mode uses a brighter blue foreground; light mode retains the deeper blue.
+- Prevention: test text/background pairs in both themes, including hover/selection surfaces, instead of evaluating individual swatches in isolation.
+
 ## Catalog-first startup still feels like a preload or reaches ready too late
 
 - Symptoms

@@ -1,5 +1,7 @@
 //! App-local design tokens, widget styles, and compatibility layout helpers.
 
+// Primitives are intentionally staged before view migration (Tasks 4-7).
+#[allow(dead_code)]
 pub mod components;
 pub mod styles;
 pub mod tokens;

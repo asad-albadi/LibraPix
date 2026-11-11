@@ -17,6 +17,21 @@ All browsing views consume `BrowseItem` which carries:
 
 ## Shared primitives
 
+The app-local `ui/components` vocabulary contains buttons/icon buttons, badges,
+cards, inputs, selects, checkboxes, tabs, separators, tooltips, loading, empty
+states, and notices. It uses Iced 0.14 built-ins and closure styling only. These
+constructors are staged ahead of view migration; existing view call sites are
+unchanged. Media-first palettes keep the gallery canvas below raised controls,
+retain blue selection/focus, and use quiet one-pixel component borders.
+
+Loading primitives accept an externally driven animation phase, not a percentage:
+three fixed-size dots cycle emphasis without resizing; the working row displays
+one caller-localized stage label. Skeletons are static placeholders. Components
+own neither timers nor background work. A notice receives a localized tone label
+and summary plus an optional labeled dismiss action, so feedback is not color-only.
+Inputs and checkboxes retain Iced builder access for IDs, messages, and disabled
+state. No component reads or changes source media.
+
 - `render_media_card(item, selected, height)`: renders a single media card at a given row height.
   - includes top-right media-kind badge icon.
   - includes padded metadata row below the thumbnail.

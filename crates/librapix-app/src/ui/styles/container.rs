@@ -3,6 +3,84 @@ use crate::ui::tokens::*;
 use iced::widget::container;
 use iced::{Background, Border, Radians, Theme, gradient};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)] // Variants are staged before their view call sites (Tasks 4-7).
+pub enum BadgeVariant {
+    Default,
+    Secondary,
+    Outline,
+    Success,
+    Warning,
+    Destructive,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CardVariant {
+    Default,
+    Interactive,
+    Selected,
+}
+
+pub fn badge_style(theme: &Theme, variant: BadgeVariant) -> container::Style {
+    let p = palette(theme);
+    let (background, text, border) = match variant {
+        BadgeVariant::Default => (p.accent, iced::Color::WHITE, p.accent),
+        BadgeVariant::Secondary => (p.bg_card, p.text_secondary, p.divider),
+        BadgeVariant::Outline => (p.bg_surface, p.text_primary, p.border_strong),
+        BadgeVariant::Success => (p.bg_surface, p.success, p.success),
+        BadgeVariant::Warning => (p.bg_surface, p.warning, p.warning),
+        BadgeVariant::Destructive => (p.bg_surface, p.destructive_text, p.destructive),
+    };
+    container::Style {
+        background: Some(background.into()),
+        text_color: Some(text),
+        border: Border {
+            color: border,
+            width: 1.0,
+            radius: RADIUS_PILL.into(),
+        },
+        ..container::Style::default()
+    }
+}
+
+pub fn card_surface_style(theme: &Theme, variant: CardVariant) -> container::Style {
+    let p = palette(theme);
+    let selected = variant == CardVariant::Selected;
+    container::Style {
+        background: Some(
+            if selected {
+                p.bg_selected
+            } else {
+                p.bg_surface
+            }
+            .into(),
+        ),
+        text_color: Some(p.text_primary),
+        border: Border {
+            color: if selected { p.focus_ring } else { p.divider },
+            width: 1.0,
+            radius: RADIUS_LG.into(),
+        },
+        ..container::Style::default()
+    }
+}
+
+pub fn tooltip_style(theme: &Theme) -> container::Style {
+    let mut style = card_surface_style(theme, CardVariant::Default);
+    style.border.color = palette(theme).border_strong;
+    style.shadow = elevation_low(theme);
+    style
+}
+
+pub fn separator_style(theme: &Theme) -> iced::widget::rule::Style {
+    iced::widget::rule::Style {
+        color: palette(theme).divider,
+        radius: 0.0.into(),
+        fill_mode: iced::widget::rule::FillMode::Full,
+        snap: true,
+    }
+}
+
 // ── Container Styles ──
 
 pub fn app_bg_style(theme: &Theme) -> container::Style {

@@ -5,6 +5,7 @@ All notable changes to this project are documented in this file.
 ## [Unreleased]
 
 ### Changed
+- Applied media-first light/dark semantic palettes with quieter surfaces, blue focus/selection, explicit destructive tones, and contrast-tested foregrounds.
 - Split app-local UI tokens and widget styles into focused `ui/tokens` and `ui/styles` modules, preserving existing values, public names, visuals, and behavior; added palette/chip regression tests.
 
 ### Docs
@@ -22,6 +23,7 @@ All notable changes to this project are documented in this file.
 - Added ADR `0022` for the `librapix-video-tools` subsystem and documented Make Short architecture boundaries/config/dependency updates.
 
 ### Added
+- Added centralized app-local Iced component primitives for controls, cards, badges, loading, empty states, and dismissible notices; view migration remains a separate step.
 - Added backward-compatible independent pane-collapse preferences, app-side persistence transitions, dismissible error-notice state, and localized layout labels; visual pane controls follow separately.
 - Real Light theme and OS-following System theme alongside the existing Dark theme, selected via a semantic `Palette` resolved by `palette(theme)` (replaces the 16 hardcoded dark-only color constants). System appearance is detected via the `dark-light` crate and cached/throttled off the render path.
 - In-app theme toggle (System / Light / Dark) in Settings → Appearance, persisted to config (`config.theme`).

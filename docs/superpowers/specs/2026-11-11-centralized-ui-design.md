@@ -497,4 +497,3 @@ diagnostics before and after migration.
   <https://docs.iced.rs/iced/widget/struct.Button.html>
 - Iced container styling and composition:
   <https://docs.iced.rs/iced/widget/struct.Container.html>
-

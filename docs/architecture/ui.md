@@ -25,8 +25,8 @@ direction; ADR 0023's Light/Dark/System policy and ADR 0024's unified Library re
   their quieter text/pressed feedback without the fixed height of action buttons.
 - Library lifecycle dots/labels retain direct semantic palette colors because
   their active, unavailable, and deactivated states are product presentation,
-  not generic button variants. The scrubber slider retains Iced's built-in theme
-  styling and exact existing geometry; no custom slider implementation is needed.
+  not generic button variants. The scrubber retains the native Iced slider and exact geometry, with centralized
+  semantic rail/handle styling; no custom slider implementation is needed.
 - Unconsumed staged checkbox/select components and styles, placeholder slider/
   motion modules, unused variants, and disabled-text/asset helpers were removed
   rather than kept under dead-code allowances. Existing dialogs keep their
@@ -81,7 +81,7 @@ Shared visual tokens and widget styles are centralized in `librapix-app/src/ui/`
 - `scrollbar_style` renders thin, rounded, translucent overlay scrollbars (invisible rail, pill scroller that darkens on hover/drag), applied to the gallery, sidebar, details pane, dialog frame, and diagnostics list.
 
 ### Dialogs
-- `ui/patterns/dialog.rs` accepts a `DialogSpec` with a localized borrowed or owned title, optional labeled close message, body, optional footer, and size caps. It reserves a stable bounded frame with a fixed header and footer around a scrolling body, using built-in Iced widgets.
+- `ui/patterns/dialog.rs` accepts a `DialogSpec` with a localized borrowed or owned title, optional labeled close message, body, optional footer, and size caps. Footer-free frames shrink to content within their caps. Frames with footers retain bounded fill sizing to reserve the actual footer before the scrolling body; removing the remaining empty space in short footer-bearing dialogs is pending a layout-only adapter decision (see Troubleshooting).
 - All seven product dialogs live in `views/dialogs/`: About, filters, library management, library statistics, Make Short, new media, and settings. Each module exposes one `view(&Librapix)` function and composes shared buttons, inputs, tabs, separators, fields, and status patterns. Dedicated wrapping, statistics, tooltip, and preview helpers live with their consuming dialog; `ui/components/chip.rs` supplies managed tag/rule chips to dialogs and details.
 - `views/dialogs/mod.rs` owns the unchanged modal backdrop/content-click wrapper; `views/shell.rs` retains overlay ordering. Escape handling, state, validation decisions, request building, background tasks, cancellation, and lifecycle remain application-owned.
 - Make Short shows one stage line and one indeterminate working indicator, Cancel while running, and a Smooth-only warning. Success, failure details, canceled feedback, validation, and option hover help remain distinct. Library path errors use the existing `root_status` decision in a shared field instead of being hidden behind the modal.
@@ -252,3 +252,14 @@ Gallery, timeline, and search views share a unified media-view architecture:
 - Product-oriented language throughout.
 - Desktop-native interactions (double-click, folder picker, human-readable metadata).
 - Filtering as lightweight chips, not admin forms.
+
+### Final presentation refinements
+
+- The expanded library pane shares its Browse heading row with the localized collapse control. Root rows remain content-sized.
+- The Details edge centers its localized title in both axes. Iced 0.14 has no built-in Text rotation or general widget rotation; Float exposes scale/translation, while Image/Svg rotation does not rotate native text. The approved fallback uses newline-separated lettering, a full-height native button, and the unchanged descriptive Expand Details tooltip. It does not rasterize text or add a custom renderer.
+- Filters use native `Row::wrap` with content-sized buttons instead of estimated wrapping against a fixed dialog width. Short choices retain usable padding; arbitrary names can wrap completely without overlapping neighboring hit areas.
+- Managed tag removal accepts caller-provided localized tooltip text. Settings rules use neutral card rows rather than saturated tag-chip tones: pattern, status and actions share one line when wide and reflow at narrow widths. Input submit, edit/toggle/remove messages, diagnostics and scroll ownership are unchanged.
+- About uses localized product and safety descriptions, a logo/name/version group, and creator metadata. No new actions, claims or links are introduced.
+- Timeline year markers emphasize the current anchor's year, and the native slider uses a two-pixel neutral track and semantic handle states. The 168-pixel reserved panel and 96-pixel date-label lane remain unchanged to prevent viewport/cache churn or jumps on drag. The quiet date lane now sits beside the year/slider controls; its empty area is not a raised panel.
+
+Official APIs checked: [Iced 0.14](https://docs.rs/iced/0.14.0/iced/), [native Text](https://docs.rs/iced_widget/0.14.2/iced_widget/text/type.Text.html), and installed upstream `iced_widget` 0.14.2 sources for `Column`, `Row::wrap`, `Scrollable`, `Responsive`, `Float`, and slider styling. No dependency or MSRV change.

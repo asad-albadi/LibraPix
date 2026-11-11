@@ -35,6 +35,6 @@ pub fn text_warning(theme: &Theme) -> text::Style {
 
 pub fn text_error(theme: &Theme) -> text::Style {
     text::Style {
-        color: Some(palette(theme).destructive),
+        color: Some(palette(theme).destructive_text),
     }
 }

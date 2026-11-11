@@ -572,4 +572,3 @@ git commit -m "docs: document centralized LibraPix UI system"
 - [ ] Resolve review findings with focused commits.
 - [ ] Re-run the full serial validation loop.
 - [ ] Confirm the working tree is clean.
-

@@ -94,9 +94,14 @@ pub fn tab_style(theme: &Theme, status: button::Status, active: bool) -> button:
 // ── Button Styles ──
 
 /// Content-sized year labels retain quieter text and distinct pressed feedback.
-pub fn timeline_marker_style(theme: &Theme, status: button::Status) -> button::Style {
+pub fn timeline_marker_style(
+    theme: &Theme,
+    status: button::Status,
+    current: bool,
+) -> button::Style {
     let p = palette(theme);
     let (bg, text_color) = match status {
+        button::Status::Active if current => (p.bg_selected, p.accent_text),
         button::Status::Active => (Color::TRANSPARENT, p.text_secondary),
         button::Status::Hovered => (p.bg_hover, p.text_primary),
         button::Status::Pressed => (p.bg_card, p.text_primary),
@@ -105,7 +110,15 @@ pub fn timeline_marker_style(theme: &Theme, status: button::Status) -> button::S
     button::Style {
         background: Some(Background::Color(bg)),
         text_color,
-        border: iced::border::rounded(RADIUS_MD),
+        border: Border {
+            color: if current {
+                p.focus_ring
+            } else {
+                Color::TRANSPARENT
+            },
+            width: 1.0,
+            radius: RADIUS_SM.into(),
+        },
         ..button::Style::default()
     }
 }

@@ -121,7 +121,7 @@ pub(crate) fn view(app: &Librapix) -> Element<'_, Message> {
     let sidebar_mode = SidebarMode::from_collapsed(app.left_sidebar_collapsed);
     let sidebar = sidebar(
         sidebar_mode,
-        || render_expanded_sidebar(app),
+        |control| render_expanded_sidebar(app, control),
         icon_button(
             text("\u{2039}").size(ICON_LG).into(),
             app.i18n.text(TextKey::CollapseLibraries),
@@ -267,14 +267,22 @@ fn rail_action(app: &Librapix, action: GlobalRailAction) -> Element<'_, Message>
     )
 }
 
-fn render_expanded_sidebar(app: &Librapix) -> Element<'_, Message> {
+fn render_expanded_sidebar<'a>(
+    app: &'a Librapix,
+    collapse_control: Element<'a, Message>,
+) -> Element<'a, Message> {
     let is_gallery = matches!(app.state.active_route, Route::Gallery);
     let is_timeline = matches!(app.state.active_route, Route::Timeline);
     // ── Sidebar: Browse navigation ──
     // Gallery + Timeline are one "Library" surface; the Grid/Timeline split is a
     // toggle in the content header, so the sidebar carries a single entry.
     let nav_section = column![
-        section_heading(app.i18n.text(TextKey::BrowseSectionLabel)),
+        row![
+            section_heading(app.i18n.text(TextKey::BrowseSectionLabel)),
+            Space::new().width(Length::Fill),
+            collapse_control,
+        ]
+        .align_y(iced::Alignment::Center),
         tab_trigger(
             row![
                 image(assets::icon_gallery(app.is_dark_theme()))

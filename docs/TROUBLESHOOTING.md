@@ -231,3 +231,12 @@ Issue `#12` is summarized in `docs/architecture/issue-12-runtime-optimization-su
 - Prevention guidance
   - Never spawn a process and `wait()` on it inside `update()` / on the UI thread. Use the native API, or move blocking work to a background `Task`/thread.
   - On Windows, any subprocess launched from the GUI must set `CREATE_NO_WINDOW` to avoid console flicker.
+
+## Centralized UI labels, density, and dialog sizing
+
+- Symptoms: long filter names clip or outgrow their hit targets; inline red text is hard to read; collapse controls waste a row; short dialogs show large empty regions; Settings rules have oversized saturated surfaces.
+- Affected area: app-local components, dialog/pane patterns, filter and Settings views.
+- Confirmed causes: fixed 28-pixel tab height plus fixed-width wrapping estimates; fill/border destructive color used as a text color; a standalone collapse-control row; `Length::Fill` on the shared dialog frame/body; tag-style rows with an unconditional secondary status line.
+- Resolutions: content-sized native wrapping controls; `destructive_text`; integrated Browse header control; centered native Details lettering with full-label hover help; neutral responsive rule rows and localized remove help; content-sized footer-free frames.
+- Remaining limitation: short frames with a footer still fill their height cap. In Iced 0.14, changing the outer frame to `Shrink` compresses its Column and measures the scrolling body before the footer. The overflow regression then reports a zero-height footer. Retain the bounded fill path until a small layout-only adapter that measures fixed header/footer before the body is explicitly approved. Do not substitute guessed footer pixel budgets, hide footer actions, or accept a passing short-content test while overflow fails.
+- Prevention: exercise real Iced layout at narrow widths and short heights, compare complete wrapped text to its hit area, dispatch first/last-line clicks, test hover overlays, and retain the persistent-tree long-error scroll tests. Check the actual error-text helper against dialog gradient stops as well as solid palette surfaces.

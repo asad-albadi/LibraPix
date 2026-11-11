@@ -139,13 +139,12 @@ pub fn preview_loading_block_style(theme: &Theme) -> container::Style {
 pub fn scrubber_panel_style(theme: &Theme) -> container::Style {
     let p = palette(theme);
     container::Style {
-        background: Some(Background::Color(p.bg_surface)),
+        background: None,
         border: Border {
             color: p.divider,
-            width: 1.0,
+            width: 0.0,
             radius: RADIUS_MD.into(),
         },
-        shadow: elevation_low(theme),
         ..container::Style::default()
     }
 }

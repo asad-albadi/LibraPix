@@ -98,6 +98,8 @@ pub enum TextKey {
     DetailsAttachTagButton,
     DetailsAttachGameTagButton,
     DetailsDetachTagButton,
+    RemoveTagHelp,
+    RemoveIgnoreRuleHelp,
     DetailsOpenFileButton,
     DetailsOpenFolderButton,
     DetailsCopyFileButton,
@@ -110,6 +112,11 @@ pub enum TextKey {
     DetailsActionFailed,
     DetailsInvalidMediaId,
     IgnoreRuleInputLabel,
+    IgnoreRulePlaceholder,
+    DiagnosticsEmptyState,
+    DiagnosticsEmptyEvents,
+    DiagnosticsEvents,
+    DiagnosticsState,
     IgnoreRuleAddButton,
     IgnoreRuleDisableButton,
     IgnoreRuleListLabel,
@@ -190,8 +197,8 @@ pub enum TextKey {
     AboutDialogTitle,
     AboutVersionLabel,
     AboutCreatorLabel,
-    AboutWeekendProjectNote,
-    AboutSecondNote,
+    AboutDescription,
+    AboutSafetyNote,
     LibraryStatsDialogTitle,
     LibraryStatsSummarySectionLabel,
     LibraryStatsIndexingSectionLabel,
@@ -365,6 +372,8 @@ fn en_us(key: TextKey) -> &'static str {
         TextKey::DetailsAttachTagButton => "Add Tag",
         TextKey::DetailsAttachGameTagButton => "Game Tag",
         TextKey::DetailsDetachTagButton => "Remove",
+        TextKey::RemoveTagHelp => "Remove tag",
+        TextKey::RemoveIgnoreRuleHelp => "Remove ignore rule",
         TextKey::DetailsOpenFileButton => "Open",
         TextKey::DetailsOpenFolderButton => "Open Folder",
         TextKey::DetailsCopyFileButton => "Copy File",
@@ -377,6 +386,11 @@ fn en_us(key: TextKey) -> &'static str {
         TextKey::DetailsActionFailed => "Failed",
         TextKey::DetailsInvalidMediaId => "invalid media id",
         TextKey::IgnoreRuleInputLabel => "Ignore Rules",
+        TextKey::IgnoreRulePlaceholder => "*.tmp, **/cache/**",
+        TextKey::DiagnosticsEmptyState => "Click Refresh to load state.",
+        TextKey::DiagnosticsEmptyEvents => "(no events yet)",
+        TextKey::DiagnosticsEvents => "Events (newest first)",
+        TextKey::DiagnosticsState => "State",
         TextKey::IgnoreRuleAddButton => "Enable",
         TextKey::IgnoreRuleDisableButton => "Disable",
         TextKey::IgnoreRuleListLabel => "Ignore rules",
@@ -459,9 +473,11 @@ fn en_us(key: TextKey) -> &'static str {
         TextKey::AboutDialogTitle => "About LibraPix",
         TextKey::AboutVersionLabel => "Version",
         TextKey::AboutCreatorLabel => "Creator: Asad Al Badi",
-        TextKey::AboutWeekendProjectNote => "This is a weekend project.",
-        TextKey::AboutSecondNote => {
-            "Built it because I needed it. or at least I think I do, either way it's fun to build, AND I'm currently using it."
+        TextKey::AboutDescription => {
+            "A cross-platform, open-source local media gallery for screenshots and recordings."
+        }
+        TextKey::AboutSafetyNote => {
+            "Non-destructive by design: your original files stay unchanged."
         }
         TextKey::LibraryStatsDialogTitle => "Library Statistics",
         TextKey::LibraryStatsSummarySectionLabel => "SUMMARY",

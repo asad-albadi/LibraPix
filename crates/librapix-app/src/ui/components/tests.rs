@@ -23,6 +23,35 @@ fn contrast(a: Color, b: Color) -> f32 {
     (a.max(b) + 0.05) / (a.min(b) + 0.05)
 }
 
+#[test]
+fn inline_error_helper_is_legible_on_dialog_and_field_surfaces() {
+    for theme in [Theme::Dark, Theme::Light] {
+        let p = palette(&theme);
+        let foreground = styles::text::text_error(&theme).color.unwrap();
+        let mut surfaces = vec![p.bg_surface, p.bg_card, p.bg_layer];
+        if let Some(Background::Gradient(iced::Gradient::Linear(gradient))) =
+            styles::container::modal_dialog_style(&theme).background
+        {
+            for stop in gradient.stops.into_iter().flatten() {
+                // Worst-case bright media behind the 60% black modal scrim.
+                let c = stop.color;
+                surfaces.push(Color::from_rgb(
+                    c.r * c.a + 0.4 * (1.0 - c.a),
+                    c.g * c.a + 0.4 * (1.0 - c.a),
+                    c.b * c.a + 0.4 * (1.0 - c.a),
+                ));
+            }
+        }
+        for surface in surfaces {
+            assert!(
+                contrast(foreground, surface) >= 4.5,
+                "{theme:?}: {}",
+                contrast(foreground, surface)
+            );
+        }
+    }
+}
+
 fn fill(background: Option<Background>, fallback: Color) -> Color {
     match background {
         Some(Background::Color(c)) if c.a > 0.0 => c,
@@ -193,7 +222,6 @@ fn optional_press_really_disables_buttons_and_sizes_stay_consistent() {
     for (size, height) in [
         (ButtonSize::Small, 28.0),
         (ButtonSize::Default, 32.0),
-        (ButtonSize::Large, 36.0),
         (ButtonSize::Icon, 32.0),
     ] {
         for enabled in [false, true] {
@@ -452,6 +480,39 @@ fn shared_accent_text_remains_readable_on_neutral_surfaces() {
                 contrast(styles::text::text_accent(&theme).color.unwrap(), surface) >= 4.5,
                 "{theme:?}"
             );
+        }
+    }
+}
+
+#[test]
+fn timeline_native_styles_use_neutral_rail_and_accessible_year_states() {
+    for theme in [Theme::Light, Theme::Dark] {
+        let p = palette(&theme);
+        for status in [
+            iced::widget::slider::Status::Active,
+            iced::widget::slider::Status::Hovered,
+            iced::widget::slider::Status::Dragged,
+        ] {
+            let style = styles::slider::timeline_slider_style(&theme, status);
+            assert_eq!(style.rail.width, 2.0);
+            assert_eq!(
+                style.rail.backgrounds,
+                (p.border_strong.into(), p.border_strong.into())
+            );
+            assert!(contrast(fill(Some(style.handle.background), p.bg_base), p.bg_base) >= 3.0);
+        }
+        for current in [false, true] {
+            for status in [
+                button::Status::Active,
+                button::Status::Hovered,
+                button::Status::Pressed,
+            ] {
+                let style = styles::button::timeline_marker_style(&theme, status, current);
+                assert!(contrast(style.text_color, fill(style.background, p.bg_base)) >= 4.5);
+                if current {
+                    assert_eq!(style.border.color, p.focus_ring);
+                }
+            }
         }
     }
 }

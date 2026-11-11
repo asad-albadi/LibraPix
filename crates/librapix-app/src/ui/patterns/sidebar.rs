@@ -59,22 +59,12 @@ impl SidebarMode {
 /// Expanded content is built only when visible; rail inventory is always fixed.
 pub fn sidebar<'a, Message: 'a>(
     mode: SidebarMode,
-    expanded_content: impl FnOnce() -> Element<'a, Message>,
+    expanded_content: impl FnOnce(Element<'a, Message>) -> Element<'a, Message>,
     collapse_control: Element<'a, Message>,
     rail_action: impl FnMut(GlobalRailAction) -> Element<'a, Message>,
 ) -> Container<'a, Message> {
     let (content, width): (Element<'a, Message>, _) = match mode {
-        SidebarMode::Expanded => (
-            column![
-                container(collapse_control)
-                    .align_right(Length::Fill)
-                    .padding([SPACE_XS as u16, SPACE_SM as u16]),
-                expanded_content(),
-            ]
-            .height(Length::Fill)
-            .into(),
-            SIDEBAR_WIDTH,
-        ),
+        SidebarMode::Expanded => (expanded_content(collapse_control), SIDEBAR_WIDTH),
         SidebarMode::Rail => (
             column(mode.global_actions().iter().copied().map(rail_action))
                 .spacing(SPACE_SM)

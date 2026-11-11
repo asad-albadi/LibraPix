@@ -1,6 +1,6 @@
 use super::modal_overlay;
 use crate::ui::{
-    styles::text::{text_accent, text_primary, text_secondary},
+    styles::text::{text_primary, text_secondary},
     tokens::*,
 };
 use crate::{APP_VERSION, Librapix, Message, assets};
@@ -17,33 +17,34 @@ pub(crate) fn view(app: &Librapix) -> Element<'_, Message> {
                 .width(Length::Fixed(44.0))
                 .height(Length::Fixed(44.0))
                 .content_fit(ContentFit::Contain),
-            row![
-                text("Libra").size(FONT_SUBTITLE).style(text_primary),
-                text("Pix").size(FONT_SUBTITLE).style(text_accent),
+            column![
+                text(app.i18n.text(TextKey::AppTitle))
+                    .size(FONT_TITLE)
+                    .style(text_primary),
+                text(format!(
+                    "{}: {}",
+                    app.i18n.text(TextKey::AboutVersionLabel),
+                    APP_VERSION
+                ))
+                .size(FONT_CAPTION)
+                .style(text_secondary),
             ]
-            .spacing(0)
-            .align_y(iced::Alignment::Center),
+            .spacing(SPACE_2XS),
         ]
         .spacing(SPACE_SM)
         .align_y(iced::Alignment::Center),
-        text(format!(
-            "{}: {}",
-            app.i18n.text(TextKey::AboutVersionLabel),
-            APP_VERSION
-        ))
-        .size(FONT_BODY)
-        .style(text_secondary),
+        text(app.i18n.text(TextKey::AboutDescription))
+            .size(FONT_BODY)
+            .style(text_secondary),
+        text(app.i18n.text(TextKey::AboutSafetyNote))
+            .size(FONT_BODY)
+            .style(text_secondary),
+        crate::ui::components::separator::horizontal(),
         text(app.i18n.text(TextKey::AboutCreatorLabel))
-            .size(FONT_BODY)
-            .style(text_secondary),
-        text(app.i18n.text(TextKey::AboutWeekendProjectNote))
-            .size(FONT_BODY)
-            .style(text_secondary),
-        text(app.i18n.text(TextKey::AboutSecondNote))
-            .size(FONT_BODY)
+            .size(FONT_CAPTION)
             .style(text_secondary),
     ]
-    .spacing(SPACE_LG);
+    .spacing(SPACE_MD);
 
     modal_overlay(crate::ui::patterns::dialog::dialog(
         crate::ui::patterns::dialog::DialogSpec {

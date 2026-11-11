@@ -1,11 +1,14 @@
 use super::modal_overlay;
-use crate::ui::components::chip::managed_chip;
 use crate::ui::components::input::app_input;
 use crate::ui::components::tabs::tab_trigger;
 use crate::ui::components::text::section_heading;
 use crate::ui::components::{
     button::{ButtonSize, ButtonVariant, app_button},
     separator::horizontal,
+};
+use crate::ui::components::{
+    card::{CardVariant, card},
+    tooltip::app_tooltip,
 };
 use crate::ui::patterns::dialog::{DialogSpec, dialog};
 use crate::ui::patterns::field::{FieldSpec, field};
@@ -21,7 +24,7 @@ use crate::{Librapix, Message, assets};
 use iced::{
     ContentFit, Element, Length,
     widget::image::FilterMethod,
-    widget::{Space, column, container, image, row, scrollable, text},
+    widget::{Space, column, container, image, responsive, row, scrollable, text},
 };
 use librapix_config::ThemePreference;
 use librapix_i18n::TextKey;
@@ -88,53 +91,38 @@ pub(crate) fn view(app: &Librapix) -> Element<'_, Message> {
             .style(text_tertiary)
             .into()
     } else {
-        app.ignore_rules
-            .iter()
-            .fold(column![].spacing(SPACE_XS), |col, rule| {
-                let status = if rule.is_enabled {
-                    app.i18n.text(TextKey::IgnoreRuleEnabled)
-                } else {
-                    app.i18n.text(TextKey::IgnoreRuleDisabled)
-                };
-                let toggle_label = if rule.is_enabled {
-                    app.i18n.text(TextKey::IgnoreRuleDisableButton)
-                } else {
-                    app.i18n.text(TextKey::IgnoreRuleAddButton)
-                };
-                col.push(managed_chip(
-                    &rule.pattern,
-                    &rule.pattern,
-                    Some(status.to_owned()),
-                    Some((
-                        toggle_label.to_owned(),
-                        Message::IgnoreRuleToggleEnabled(rule.id),
-                    )),
-                    Some((
-                        app.i18n.text(TextKey::RootEditButton).to_owned(),
-                        Message::IgnoreRuleStartEdit(rule.id),
-                    )),
-                    Some(Message::IgnoreRuleRemove(rule.id)),
-                    app.is_dark_theme(),
-                ))
-            })
-            .into()
+        column(
+            app.ignore_rules
+                .iter()
+                .map(|rule| ignore_rule_row(app, rule)),
+        )
+        .spacing(SPACE_2XS)
+        .into()
     };
-
     let ignore_section = column![
         field(FieldSpec {
             label: app.i18n.text(TextKey::IgnoreRuleInputLabel),
-            control: app_input("*.tmp, **/cache/**", &app.ignore_rule_input, false)
+            control: row![
+                app_input(
+                    app.i18n.text(TextKey::IgnoreRulePlaceholder),
+                    &app.ignore_rule_input,
+                    false
+                )
                 .on_input(Message::IgnoreRuleInputChanged)
                 .on_submit(if app.ignore_rule_editing_id.is_some() {
                     Message::IgnoreRuleApplyEdit
                 } else {
                     Message::IgnoreRuleAdd
                 })
-                .into(),
+                .width(Length::Fill),
+                ignore_input_actions
+            ]
+            .spacing(SPACE_XS)
+            .align_y(iced::Alignment::Center)
+            .into(),
             help: None,
             error: None,
         }),
-        ignore_input_actions,
         ignore_chip_list,
         horizontal(),
         field(FieldSpec {
@@ -218,7 +206,7 @@ pub(crate) fn view(app: &Librapix) -> Element<'_, Message> {
     let diagnostics_section = {
         let state_lines = if app.diagnostics_lines.is_empty() {
             column![
-                text("Click Refresh to load state.")
+                text(app.i18n.text(TextKey::DiagnosticsEmptyState))
                     .size(FONT_CAPTION)
                     .style(text_tertiary)
             ]
@@ -236,7 +224,7 @@ pub(crate) fn view(app: &Librapix) -> Element<'_, Message> {
         };
         let event_lines = if app.diagnostics_events.is_empty() {
             column![
-                text("(no events yet)")
+                text(app.i18n.text(TextKey::DiagnosticsEmptyEvents))
                     .size(FONT_CAPTION)
                     .style(text_tertiary)
             ]
@@ -265,13 +253,15 @@ pub(crate) fn view(app: &Librapix) -> Element<'_, Message> {
                 ),
             ]
             .align_y(iced::Alignment::Center),
-            text("Events (newest first)")
+            text(app.i18n.text(TextKey::DiagnosticsEvents))
                 .size(FONT_CAPTION)
                 .style(text_secondary),
             scrollable(event_lines)
                 .style(scrollbar_style)
                 .height(Length::Fixed(120.0)),
-            text("State").size(FONT_CAPTION).style(text_secondary),
+            text(app.i18n.text(TextKey::DiagnosticsState))
+                .size(FONT_CAPTION)
+                .style(text_secondary),
             state_lines,
         ]
         .spacing(SPACE_SM)
@@ -309,7 +299,7 @@ pub(crate) fn view(app: &Librapix) -> Element<'_, Message> {
         horizontal(),
         diagnostics_section,
     ]
-    .spacing(SPACE_LG);
+    .spacing(SPACE_MD);
 
     modal_overlay(dialog(DialogSpec {
         title: app.i18n.text(TextKey::SettingsDialogTitle).into(),
@@ -322,4 +312,73 @@ pub(crate) fn view(app: &Librapix) -> Element<'_, Message> {
         max_width: 680.0,
         max_height: 820.0,
     }))
+}
+
+fn ignore_rule_row<'a>(
+    app: &'a Librapix,
+    rule: &'a librapix_storage::IgnoreRuleRecord,
+) -> Element<'a, Message> {
+    responsive(move |size| {
+        let status = text(app.i18n.text(if rule.is_enabled {
+            TextKey::IgnoreRuleEnabled
+        } else {
+            TextKey::IgnoreRuleDisabled
+        }))
+        .size(FONT_CAPTION)
+        .style(text_tertiary);
+        let actions = row![
+            app_button(
+                text(app.i18n.text(if rule.is_enabled {
+                    TextKey::IgnoreRuleDisableButton
+                } else {
+                    TextKey::IgnoreRuleAddButton
+                }))
+                .size(FONT_CAPTION),
+                Some(Message::IgnoreRuleToggleEnabled(rule.id)),
+                ButtonVariant::Ghost,
+                ButtonSize::Small
+            ),
+            app_button(
+                text(app.i18n.text(TextKey::RootEditButton)).size(FONT_CAPTION),
+                Some(Message::IgnoreRuleStartEdit(rule.id)),
+                ButtonVariant::Ghost,
+                ButtonSize::Small
+            ),
+            app_tooltip(
+                app_button(
+                    text("x").size(FONT_CAPTION),
+                    Some(Message::IgnoreRuleRemove(rule.id)),
+                    ButtonVariant::Ghost,
+                    ButtonSize::Small
+                ),
+                app.i18n.text(TextKey::RemoveIgnoreRuleHelp)
+            ),
+        ]
+        .spacing(SPACE_2XS)
+        .align_y(iced::Alignment::Center);
+        let pattern = text(rule.pattern.as_str())
+            .size(FONT_BODY)
+            .style(text_secondary)
+            .width(Length::Fill);
+        let content: Element<'_, Message> = if size.width < 420.0 {
+            column![
+                pattern,
+                row![status, Space::new().width(Length::Fill), actions]
+                    .align_y(iced::Alignment::Center)
+            ]
+            .spacing(SPACE_2XS)
+            .into()
+        } else {
+            row![pattern, status, actions]
+                .spacing(SPACE_SM)
+                .align_y(iced::Alignment::Center)
+                .into()
+        };
+        card(content, CardVariant::Default)
+            .padding([SPACE_2XS as u16, SPACE_SM as u16])
+            .width(Length::Fill)
+            .into()
+    })
+    .height(Length::Shrink)
+    .into()
 }

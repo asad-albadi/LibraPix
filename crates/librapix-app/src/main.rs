@@ -1010,7 +1010,6 @@ const MEDIA_SCROLLBAR_SPACING: f32 = SPACE_XS as f32;
 const SCRUBBER_PANEL_WIDTH: f32 = 168.0;
 const SCRUBBER_CHIP_TRACK_WIDTH: f32 = 96.0;
 const FILTER_DIALOG_MAX_WIDTH: f32 = 480.0;
-const FILTER_DIALOG_CHIP_ROW_MAX_WIDTH: f32 = FILTER_DIALOG_MAX_WIDTH - (SPACE_LG as f32 * 2.0);
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 const GITHUB_LATEST_RELEASE_API_URL: &str =
     "https://api.github.com/repos/asad-albadi/LibraPix/releases/latest";
@@ -9339,6 +9338,7 @@ fn map_roots_from_storage(roots: Vec<librapix_storage::SourceRootRecord>) -> Vec
 
 #[cfg(test)]
 mod tests {
+    mod final_polish;
     #[test]
     fn presentation_scrubber_keeps_year_actions_and_drag_label() {
         let mut app = test_app();
@@ -10381,8 +10381,8 @@ mod tests {
             TextKey::AboutDialogTitle,
             TextKey::DismissButton,
             TextKey::AboutCreatorLabel,
-            TextKey::AboutWeekendProjectNote,
-            TextKey::AboutSecondNote,
+            TextKey::AboutDescription,
+            TextKey::AboutSafetyNote,
         ] {
             assert_eq!(
                 texts
@@ -10397,8 +10397,7 @@ mod tests {
             app.i18n.text(TextKey::AboutVersionLabel),
             APP_VERSION
         )));
-        assert!(texts.contains(&"Libra".to_owned()));
-        assert!(texts.contains(&"Pix".to_owned()));
+        assert!(texts.contains(&app.i18n.text(TextKey::AppTitle).to_owned()));
 
         let messages = pane_click(render_about_dialog(&app), iced::Point::new(1.0, 1.0));
         assert!(
@@ -10571,7 +10570,11 @@ mod tests {
             )
             .into(),
         );
-        assert!(texts.iter().any(|label| label == "Details"));
+        assert!(
+            texts
+                .iter()
+                .any(|label| label.replace('\n', "") == "Details")
+        );
         assert!(!texts.iter().any(|label| label == "Select a photo"));
     }
 
@@ -10636,7 +10639,11 @@ mod tests {
         });
         let collapsed = pane_texts(views::shell::view(&app));
         assert!(!collapsed.iter().any(|label| label == "My screenshots"));
-        assert!(collapsed.iter().any(|label| label == "Details"));
+        assert!(
+            collapsed
+                .iter()
+                .any(|label| label.replace('\n', "") == "Details")
+        );
         assert!(collapsed.iter().any(|label| label == "Test layout notice"));
         assert!(
             collapsed

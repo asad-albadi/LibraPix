@@ -4,7 +4,7 @@ use crate::ui::components::tabs::tab_trigger;
 use crate::ui::components::text::section_heading;
 use crate::ui::patterns::dialog::{DialogSpec, dialog};
 use crate::ui::{styles::text::text_tertiary, tokens::*};
-use crate::{FILTER_DIALOG_CHIP_ROW_MAX_WIDTH, FILTER_DIALOG_MAX_WIDTH, Librapix, Message};
+use crate::{FILTER_DIALOG_MAX_WIDTH, Librapix, Message};
 use iced::{
     Element,
     widget::{column, row, text},
@@ -158,61 +158,23 @@ struct FilterChipSpec {
     active: bool,
 }
 
-fn estimate_filter_chip_width(label: &str) -> f32 {
-    // Approximate text + horizontal button chrome for wrapping decisions.
-    // Keep this estimate slightly conservative, but not so high that rows
-    // break too early and leave obvious right-side whitespace.
-    let glyph_width = 6.4;
-    let text_width = label.chars().count() as f32 * glyph_width;
-    let horizontal_padding = (SPACE_MD * 2) as f32;
-    let estimated = text_width + horizontal_padding + 8.0;
-    estimated.max(56.0)
-}
-
 fn render_wrapped_filter_chips(chips: Vec<FilterChipSpec>) -> Element<'static, Message> {
-    let mut rows: Vec<Vec<FilterChipSpec>> = Vec::new();
-    let mut current_row: Vec<FilterChipSpec> = Vec::new();
-    let mut current_row_width = 0.0_f32;
-
-    for chip in chips {
-        let chip_width = estimate_filter_chip_width(&chip.label);
-        let spacing = if current_row.is_empty() {
-            0.0
-        } else {
-            SPACE_SM as f32
-        };
-        let would_overflow = !current_row.is_empty()
-            && (current_row_width + spacing + chip_width) > FILTER_DIALOG_CHIP_ROW_MAX_WIDTH;
-
-        if would_overflow {
-            rows.push(current_row);
-            current_row = Vec::new();
-            current_row_width = 0.0;
-        }
-
-        if !current_row.is_empty() {
-            current_row_width += SPACE_SM as f32;
-        }
-        current_row_width += chip_width;
-        current_row.push(chip);
-    }
-
-    if !current_row.is_empty() {
-        rows.push(current_row);
-    }
-
-    let mut wrapped_rows = column![].spacing(SPACE_SM);
-    for row_chips in rows {
-        let mut chip_row = row![].spacing(SPACE_SM).align_y(iced::Alignment::Center);
-        for chip in row_chips {
-            chip_row = chip_row.push(tab_trigger(
-                text(chip.label).size(FONT_BODY),
-                Some(chip.on_press),
-                chip.active,
-            ));
-        }
-        wrapped_rows = wrapped_rows.push(chip_row);
-    }
-
-    wrapped_rows.into()
+    row(chips.into_iter().map(|chip| {
+        tab_trigger(
+            text(chip.label).size(FONT_BODY),
+            Some(chip.on_press),
+            chip.active,
+        )
+        .height(iced::Length::Shrink)
+        .padding([(SPACE_XS + SPACE_2XS) as u16, SPACE_MD as u16])
+        .into()
+    }))
+    .spacing(SPACE_SM)
+    .align_y(iced::Alignment::Center)
+    .wrap()
+    .vertical_spacing(SPACE_SM)
+    .into()
 }
+#[cfg(test)]
+#[path = "filter_tests.rs"]
+mod tests;

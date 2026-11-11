@@ -79,7 +79,11 @@ pub fn dialog<'a, Message: Clone + 'a>(spec: DialogSpec<'a, Message>) -> Element
     }
     container(content)
         .width(Length::Fill)
-        .height(Length::Fill)
+        .height(if parts.has_footer {
+            Length::Fill
+        } else {
+            Length::Shrink
+        })
         .max_width(spec.max_width)
         .max_height(spec.max_height)
         .padding(SPACE_LG as u16)

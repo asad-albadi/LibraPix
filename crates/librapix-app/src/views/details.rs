@@ -123,7 +123,10 @@ pub(crate) fn view(app: &Librapix) -> Element<'_, Message> {
                         Some(app.i18n.text(TextKey::InheritedTagLabel).to_owned()),
                         None,
                         None,
-                        Some(Message::DetachTagByName(tag.name.clone())),
+                        Some((
+                            app.i18n.text(TextKey::RemoveTagHelp).to_owned(),
+                            Message::DetachTagByName(tag.name.clone()),
+                        )),
                         app.is_dark_theme(),
                     ))
                 });
@@ -147,7 +150,10 @@ pub(crate) fn view(app: &Librapix) -> Element<'_, Message> {
                             app.i18n.text(TextKey::RootEditButton).to_owned(),
                             Message::DetailsStartEditTag(tag.name.clone()),
                         )),
-                        Some(Message::DetachTagByName(tag.name.clone())),
+                        Some((
+                            app.i18n.text(TextKey::RemoveTagHelp).to_owned(),
+                            Message::DetachTagByName(tag.name.clone()),
+                        )),
                         app.is_dark_theme(),
                     ))
                 });

@@ -5,11 +5,17 @@ All notable changes to this project are documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- Restored complete, content-sized filter labels with native width-aware wrapping and readable inline error/warning contrast in both themes.
+- Centered the collapsed Details label vertically using native vertical lettering, and placed the library collapse action in the Browse header instead of an empty top row.
+- Added localized remove-action hover help for managed tags and ignore rules.
+- Made footer-free dialogs content-sized, including a more compact, product-focused About dialog. Footer-bearing dialog sizing remains a documented follow-up so actions are not clipped on overflow.
 - Restored content-sized library navigation rows so long names wrap completely within distinct clickable areas.
 - Gave Make Short its own generation-active indeterminate animation timer and kept long ffmpeg errors in the scrolling dialog body so result actions remain visible.
 - Preserved media scroll position when layout-save notices appear or are dismissed by keeping the shell widget-tree structure stable.
 
 ### Changed
+- Simplified Settings with neutral, compact ignore-rule rows, responsive action layout, consistent section spacing, and localized diagnostics labels; all settings and messages are preserved.
+- Restyled the native timeline slider as a quiet two-pixel rail with current-year emphasis and semantic hover/drag feedback, preserving the reserved label lane, anchor mapping, and viewport geometry.
 - Completed app-local product view extraction and removed legacy UI facades, superseded visual helpers, and staged dead-code allowances; retained orchestration, layout caches, and background behavior unchanged.
 - Migrated Library, details, header/navigation, search, managed chips, and runtime feedback to centralized app-local components while preserving media interactions and viewport-bounded layout/cache behavior.
 - Migrated every product dialog into focused app-local view modules using shared dialog frames, fields, buttons, tabs, separators, and status treatments; retained existing actions and background workflows, with one Make Short working line and inline library-path validation.

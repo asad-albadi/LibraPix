@@ -1,5 +1,6 @@
 //! Deterministic managed tag/rule chip, independent of product state.
 use crate::ui::{
+    components::tooltip::app_tooltip,
     styles::{button::managed_chip_action_style, container::managed_chip_style},
     tokens::*,
 };
@@ -14,7 +15,7 @@ pub fn managed_chip<Message: Clone + 'static>(
     status_label: Option<String>,
     toggle: Option<(String, Message)>,
     edit: Option<(String, Message)>,
-    remove: Option<Message>,
+    remove: Option<(String, Message)>,
     dark: bool,
 ) -> Element<'static, Message> {
     let label = label.into();
@@ -36,13 +37,14 @@ pub fn managed_chip<Message: Clone + 'static>(
                 .padding([SPACE_2XS as u16, SPACE_XS as u16]),
         );
     }
-    if let Some(msg) = remove {
-        controls = controls.push(
+    if let Some((label, msg)) = remove {
+        controls = controls.push(app_tooltip(
             button(text("x").size(FONT_CAPTION))
                 .on_press(msg)
                 .style(managed_chip_action_style(tone, true))
                 .padding([SPACE_2XS as u16, SPACE_XS as u16]),
-        );
+            label,
+        ));
     }
     let status: Element<'static, Message> = if let Some(value) = status_label {
         text(value)

@@ -250,6 +250,7 @@ pub(crate) fn scrubber(app: &Librapix) -> Element<'_, Message> {
     .on_release(Message::TimelineScrubReleased)
     .step(0.001)
     .width(12.0)
+    .style(crate::ui::styles::slider::timeline_slider_style)
     .height(Length::Fill);
 
     let active_anchor = app
@@ -280,10 +281,11 @@ pub(crate) fn scrubber(app: &Librapix) -> Element<'_, Message> {
         .height(Length::Fill);
 
     let year_markers = timeline_year_markers(&app.timeline_anchors);
-    let marker_track = year_marker_track(&year_markers);
+    let marker_track =
+        year_marker_track(&year_markers, active_anchor.and_then(|anchor| anchor.year));
     let scrub_controls = row![
-        marker_track,
-        row![chip_track, slider]
+        chip_track,
+        row![marker_track, slider]
             .spacing(SPACE_XS)
             .height(Length::Fill),
     ]
@@ -298,7 +300,10 @@ pub(crate) fn scrubber(app: &Librapix) -> Element<'_, Message> {
         .into()
 }
 
-fn year_marker_track(markers: &[TimelineYearMarker]) -> Element<'static, Message> {
+fn year_marker_track(
+    markers: &[TimelineYearMarker],
+    current_year: Option<i32>,
+) -> Element<'static, Message> {
     if markers.is_empty() {
         return Space::new().width(Length::Fixed(0.0)).into();
     }
@@ -307,6 +312,7 @@ fn year_marker_track(markers: &[TimelineYearMarker]) -> Element<'static, Message
     let mut previous_position = 0.0f32;
 
     for marker in markers {
+        let is_current = current_year.is_some_and(|year| marker.label == year.to_string());
         let current = marker.normalized_position.clamp(0.0, 1.0);
         let spacer = ((current - previous_position).max(0.0) * 1000.0).round() as u16;
         if spacer > 0 {
@@ -316,7 +322,7 @@ fn year_marker_track(markers: &[TimelineYearMarker]) -> Element<'static, Message
         track = track.push(
             button(text(marker.label.clone()).size(FONT_CAPTION))
                 .on_press(Message::JumpToTimelineAnchor(marker.group_index))
-                .style(timeline_marker_style)
+                .style(move |theme, status| timeline_marker_style(theme, status, is_current))
                 .padding([SPACE_2XS as u16, SPACE_XS as u16]),
         );
         previous_position = current;

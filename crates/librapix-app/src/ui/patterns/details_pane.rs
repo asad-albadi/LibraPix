@@ -1,15 +1,11 @@
 use crate::ui::{
-    components::{
-        button::{ButtonSize, ButtonVariant, app_button},
-        icon_button::icon_button,
-        tooltip::app_tooltip,
-    },
+    components::{button::ButtonVariant, icon_button::icon_button, tooltip::app_tooltip},
     styles::{container::details_pane_style, scrollable::scrollbar_style, text::text_secondary},
     tokens::*,
 };
 use iced::{
     Alignment, Element, Length,
-    widget::{Container, Space, column, container, row, scrollable, text},
+    widget::{Container, Space, button, column, container, row, scrollable, text},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,17 +59,27 @@ pub fn details_pane<'a, Message: Clone + 'a>(
         ),
         DetailsPaneMode::Edge => (
             app_tooltip(
-                app_button(
-                    column![
-                        text("\u{2039}").size(ICON_LG),
-                        text(title).size(FONT_CAPTION),
-                    ]
-                    .align_x(Alignment::Center),
-                    Some(toggle_message),
-                    ButtonVariant::Ghost,
-                    ButtonSize::Large,
+                button(
+                    container(
+                        // Iced 0.14 cannot rotate Text; retain native text and hover
+                        // semantics with the approved vertical-lettering fallback.
+                        text(
+                            title
+                                .chars()
+                                .map(|c| c.to_string())
+                                .collect::<Vec<_>>()
+                                .join("\n"),
+                        )
+                        .size(FONT_CAPTION)
+                        .align_x(Alignment::Center),
+                    )
+                    .center(Length::Fill),
                 )
-                .height(56)
+                .on_press(toggle_message)
+                .style(|theme, status| {
+                    crate::ui::styles::button::button_style(theme, status, ButtonVariant::Ghost)
+                })
+                .height(Length::Fill)
                 .width(Length::Fill),
                 toggle_label,
             )

@@ -66,7 +66,10 @@ pub(crate) fn view(app: &Librapix) -> Element<'_, Message> {
                         app.i18n.text(TextKey::RootEditButton).to_owned(),
                         Message::LibraryDialogStartEditTag(name.clone()),
                     )),
-                    Some(Message::LibraryDialogRemoveTag(name.clone())),
+                    Some((
+                        app.i18n.text(TextKey::RemoveTagHelp).to_owned(),
+                        Message::LibraryDialogRemoveTag(name.clone()),
+                    )),
                     app.is_dark_theme(),
                 ))
             })

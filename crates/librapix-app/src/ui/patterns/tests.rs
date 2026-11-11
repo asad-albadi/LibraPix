@@ -149,7 +149,7 @@ fn dialog_keeps_header_and_footer_visible_when_body_overflows() {
 }
 
 #[test]
-fn dialog_bounds_stay_stable_for_short_and_overflowing_content() {
+fn dialog_shrinks_short_content_but_caps_overflow() {
     let mut sizes = Vec::new();
     for body_height in [20, 2000] {
         let (_, node) = inspect(
@@ -165,7 +165,13 @@ fn dialog_bounds_stay_stable_for_short_and_overflowing_content() {
         );
         sizes.push(node.size());
     }
-    assert_eq!(sizes[0], sizes[1]);
+    assert!(
+        sizes[0].height < 160.0,
+        "short content must not fill the height cap: {:?}",
+        sizes[0]
+    );
+    assert_eq!(sizes[1].height, 440.0);
+    assert_eq!(sizes[0].width, sizes[1].width);
 }
 
 #[test]

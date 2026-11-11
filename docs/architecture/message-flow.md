@@ -110,9 +110,9 @@ The current shell uses header/sidebar/main/details regions to separate navigatio
   - Details pane exposes `Make Short` only when the selected media kind is video.
   - Dialog captures output path, script-equivalent effects, crop, fade, speed, CRF, and preset.
   - App builds `ShortGenerationRequest` and dispatches background tasks with `Task::perform`.
-  - Stage-based dialog status transitions are explicit (`Preparing` -> `Probing` -> `Building filters` -> `Generating` -> `Finalizing`).
+  - Observable running stages are `Preparing` and `Generating`, plus `Canceling` after a cancel request. Probing and filter construction happen during preparation. Finalizing is replaced by the terminal result in the same update, not displayed as a separate stage.
   - ffprobe/ffmpeg validation/probe/filter/args/process logic stays in `librapix-video-tools`.
-  - Completion feeds explicit success/failure dialog state with open-file/open-folder follow-up actions.
+  - Completion feeds explicit success/failure/canceled dialog state with open-file/open-folder follow-up actions.
   - Cancel signals the existing cancellation token and background worker; the
     video-tools process runner stops the child and attempts to remove newly
     created partial output, without deleting a previously existing destination. Canceled

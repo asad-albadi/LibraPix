@@ -10,7 +10,6 @@ pub use crate::ui::styles::button::ButtonVariant;
 pub enum ButtonSize {
     Small,
     Default,
-    Large,
     Icon,
 }
 
@@ -23,7 +22,6 @@ pub fn app_button<'a, Message: Clone + 'a>(
     let (height, horizontal) = match size {
         ButtonSize::Small => (CONTROL_HEIGHT_SM, SPACE_SM),
         ButtonSize::Default => (CONTROL_HEIGHT_MD, SPACE_MD),
-        ButtonSize::Large => (CONTROL_HEIGHT_LG, SPACE_LG),
         ButtonSize::Icon => (CONTROL_HEIGHT_MD, SPACE_XS),
     };
     let control = button(

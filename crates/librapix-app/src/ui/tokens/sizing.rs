@@ -17,4 +17,3 @@ pub const GALLERY_GAP: u32 = 4;
 
 pub const CONTROL_HEIGHT_SM: f32 = 28.0;
 pub const CONTROL_HEIGHT_MD: f32 = 32.0;
-pub const CONTROL_HEIGHT_LG: f32 = 36.0;

@@ -9,7 +9,9 @@ pub const ICON_XL: f32 = 40.0;
 // ── Layout ──
 
 pub const SIDEBAR_WIDTH: f32 = 240.0;
+pub const SIDEBAR_RAIL_WIDTH: f32 = 56.0;
 pub const DETAILS_WIDTH: f32 = 300.0;
+pub const DETAILS_EDGE_WIDTH: f32 = 72.0;
 pub const HEADER_HEIGHT: f32 = 52.0;
 pub const GALLERY_GAP: u32 = 4;
 

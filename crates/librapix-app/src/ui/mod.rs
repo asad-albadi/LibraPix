@@ -3,6 +3,7 @@
 // Primitives are intentionally staged before view migration (Tasks 4-7).
 #[allow(dead_code)]
 pub mod components;
+pub mod patterns;
 pub mod styles;
 pub mod tokens;
 

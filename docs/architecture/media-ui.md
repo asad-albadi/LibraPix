@@ -17,11 +17,24 @@ All browsing views consume `BrowseItem` which carries:
 
 ## Shared primitives
 
+The application shell is composed in `views/shell.rs`. Its independently
+collapsible panes use app-local presentation patterns: the left rail contains
+only Library, Add Library, Refresh, and Expand, with localized tooltips. Dynamic
+library roots and their Edit/Statistics actions remain in the expanded sidebar.
+The collapsed right edge shows a compact horizontal Details label and an Expand
+Details tooltip; no text rotation or custom renderer is used. Expanding restores
+the existing inspector content. Pane widths change the available media width,
+allowing the existing responsive gallery/timeline layout to reflow without
+requesting indexing or projection work or changing route/selection.
+
+Layout-save errors appear in a dismissible bottom-right notice layered above
+the shell, below modal dialogs. The notice does not consume media-layout space.
+
 The app-local `ui/components` vocabulary contains buttons/icon buttons, badges,
 cards, inputs, selects, checkboxes, tabs, separators, tooltips, loading, empty
 states, and notices. It uses Iced 0.14 built-ins and closure styling only. These
-constructors are staged ahead of view migration; existing view call sites are
-unchanged. Media-first palettes keep the gallery canvas below raised controls,
+constructors are consumed by the shell pane controls and notices; remaining
+view migrations are staged separately. Media-first palettes keep the gallery canvas below raised controls,
 retain blue selection/focus, and use quiet one-pixel component borders.
 
 Loading primitives accept an externally driven animation phase, not a percentage:

@@ -4,6 +4,7 @@ mod assets;
 mod format;
 mod startup_log;
 mod ui; // App-local tokens and styles, exposed through the existing facade.
+mod views;
 
 use chrono::Local;
 use iced::keyboard;
@@ -22,7 +23,6 @@ use librapix_config::{
 use librapix_core::app::{
     AppMessage, AppState, IndexingSummary, LibraryRootView, RootLifecycle, Route,
 };
-use librapix_core::domain::non_destructive;
 use librapix_i18n::{Locale, TextKey, Translator};
 use librapix_indexer::{IgnoreEngine, ScanOptions, ScanRoot, scan_roots};
 use librapix_projections::ProjectionMedia;
@@ -68,7 +68,7 @@ fn main() -> iced::Result {
         icon: assets::window_icon(),
         ..iced::window::Settings::default()
     };
-    iced::application(init, update, view)
+    iced::application(init, update, views::shell::view)
         .title(title)
         .theme(theme)
         .subscription(subscription)
@@ -85,11 +85,8 @@ enum Message {
     OpenGallery,
     OpenTimeline,
     SetThemePreference(ThemePreference),
-    #[allow(dead_code)] // Emitted by the visual shell in Task 4.
     ToggleLeftSidebar,
-    #[allow(dead_code)] // Emitted by the visual shell in Task 4.
     ToggleDetailsSidebar,
-    #[allow(dead_code)] // Emitted by the reusable notice renderer in Task 3.
     DismissShellNotice,
     SelectRoot(i64),
     DeactivateRoot,
@@ -2972,311 +2969,6 @@ fn update_check_status_label(state: &UpdateCheckState) -> String {
         }
         UpdateCheckState::Failed => "failed".to_owned(),
     }
-}
-
-fn view(app: &Librapix) -> Element<'_, Message> {
-    let _required_rules = non_destructive::required_rules();
-    let is_gallery = matches!(app.state.active_route, Route::Gallery);
-    let is_timeline = matches!(app.state.active_route, Route::Timeline);
-
-    // ── Header ──
-    let brand = row![
-        svg(assets::logo_svg())
-            .width(Length::Fixed(ICON_XL))
-            .height(Length::Fixed(ICON_XL))
-            .content_fit(ContentFit::Contain),
-        row![
-            text("Libra").size(FONT_DISPLAY).style(text_primary),
-            text("Pix").size(FONT_DISPLAY).style(text_accent),
-        ]
-        .spacing(0)
-        .align_y(iced::Alignment::Center),
-    ]
-    .spacing(SPACE_SM)
-    .align_y(iced::Alignment::Center);
-
-    let settings_btn = button(text(app.i18n.text(TextKey::SettingsButtonLabel)).size(FONT_BODY))
-        .on_press(Message::OpenSettings)
-        .style(subtle_button_style)
-        .padding([SPACE_XS as u16, SPACE_MD as u16]);
-    let about_btn = button(text(app.i18n.text(TextKey::AboutButtonLabel)).size(FONT_BODY))
-        .on_press(Message::OpenAbout)
-        .style(subtle_button_style)
-        .padding([SPACE_XS as u16, SPACE_MD as u16]);
-
-    let github_btn = button(
-        image(assets::icon_github(app.is_dark_theme()))
-            .width(Length::Fixed(ICON_LG))
-            .height(Length::Fixed(ICON_LG))
-            .content_fit(ContentFit::Contain)
-            .filter_method(FilterMethod::Linear),
-    )
-    .on_press(Message::OpenGitHub)
-    .style(subtle_button_style)
-    .padding([SPACE_XS as u16, SPACE_XS as u16]);
-
-    let header = container(
-        row![
-            brand,
-            Space::new().width(Length::Fill),
-            row![
-                image(assets::icon_search(app.is_dark_theme()))
-                    .width(Length::Fixed(ICON_MD))
-                    .height(Length::Fixed(ICON_MD))
-                    .content_fit(ContentFit::Contain)
-                    .filter_method(FilterMethod::Linear),
-                text_input(
-                    app.i18n.text(TextKey::SearchInputLabel),
-                    &app.state.search_query
-                )
-                .on_input(Message::SearchQueryChanged)
-                .on_submit(Message::RunSearchQuery)
-                .width(Length::Fixed(380.0))
-                .style(search_input_style),
-            ]
-            .spacing(SPACE_SM)
-            .align_y(iced::Alignment::Center),
-            Space::new().width(Length::Fill),
-            settings_btn,
-            about_btn,
-            github_btn,
-        ]
-        .spacing(SPACE_SM)
-        .align_y(iced::Alignment::Center),
-    )
-    .padding([0, SPACE_XL as u16])
-    .center_y(HEADER_HEIGHT)
-    .width(Length::Fill)
-    .style(header_style);
-
-    // ── Sidebar: Browse navigation ──
-    // Gallery + Timeline are one "Library" surface; the Grid/Timeline split is a
-    // toggle in the content header, so the sidebar carries a single entry.
-    let nav_section = column![
-        section_heading(app.i18n.text(TextKey::BrowseSectionLabel)),
-        button(
-            row![
-                image(assets::icon_gallery(app.is_dark_theme()))
-                    .width(Length::Fixed(ICON_MD))
-                    .height(Length::Fixed(ICON_MD))
-                    .content_fit(ContentFit::Contain)
-                    .filter_method(FilterMethod::Linear),
-                text(app.i18n.text(TextKey::LibraryTab)).size(FONT_BODY),
-            ]
-            .spacing(SPACE_SM)
-            .align_y(iced::Alignment::Center),
-        )
-        .width(Length::Fill)
-        .on_press(Message::OpenGallery)
-        .style(nav_button_style(is_gallery || is_timeline))
-        .padding([SPACE_SM as u16, SPACE_MD as u16]),
-    ]
-    .spacing(SPACE_XS);
-
-    // ── Sidebar: Library roots ──
-    let roots_list: Element<'_, Message> = if app.state.library_roots.is_empty() {
-        text(app.i18n.text(TextKey::EmptyRootsLabel))
-            .size(FONT_BODY)
-            .style(text_tertiary)
-            .into()
-    } else {
-        app.state
-            .library_roots
-            .iter()
-            .fold(column![].spacing(SPACE_2XS), |col, root| {
-                let is_selected = app.state.selected_root_id == Some(root.id);
-                let label = display_name_for_root(root);
-                let p = ui::palette(&theme(app));
-                let status_color = match root.lifecycle {
-                    RootLifecycle::Active => p.success,
-                    RootLifecycle::Unavailable => p.warning,
-                    RootLifecycle::Deactivated => p.text_disabled,
-                };
-                col.push(
-                    row![
-                        button(
-                            row![
-                                text("\u{25CF}").size(FONT_CAPTION).color(status_color),
-                                text(label).size(FONT_BODY).color(if is_selected {
-                                    p.text_primary
-                                } else {
-                                    p.text_secondary
-                                }),
-                            ]
-                            .spacing(SPACE_SM)
-                            .align_y(iced::Alignment::Center),
-                        )
-                        .width(Length::Fill)
-                        .on_press(Message::SelectRoot(root.id))
-                        .style(nav_button_style(is_selected))
-                        .padding([SPACE_XS as u16, SPACE_SM as u16]),
-                        button(text(app.i18n.text(TextKey::RootEditButton)).size(FONT_CAPTION))
-                            .on_press(Message::OpenEditLibraryDialog(root.id))
-                            .style(subtle_button_style)
-                            .padding([SPACE_2XS as u16, SPACE_SM as u16]),
-                        button(text(app.i18n.text(TextKey::RootStatsButton)).size(FONT_CAPTION))
-                            .on_press(Message::OpenLibraryStatisticsDialog(root.id))
-                            .style(subtle_button_style)
-                            .padding([SPACE_2XS as u16, SPACE_SM as u16]),
-                    ]
-                    .spacing(SPACE_XS)
-                    .align_y(iced::Alignment::Center),
-                )
-            })
-            .into()
-    };
-    let library_section = column![
-        section_heading(app.i18n.text(TextKey::LibrarySectionLabel)),
-        roots_list,
-        row![
-            button(text(app.i18n.text(TextKey::LibraryAddButtonLabel)).size(FONT_BODY))
-                .on_press(Message::OpenAddLibraryDialog)
-                .style(action_button_style)
-                .padding([SPACE_XS as u16, SPACE_MD as u16]),
-            button(text(app.i18n.text(TextKey::RootRefreshButton)).size(FONT_BODY))
-                .on_press(Message::RefreshRoots)
-                .style(subtle_button_style)
-                .padding([SPACE_XS as u16, SPACE_MD as u16]),
-        ]
-        .spacing(SPACE_XS),
-        text(app.root_status.clone())
-            .size(FONT_CAPTION)
-            .style(text_tertiary),
-    ]
-    .spacing(SPACE_SM);
-
-    let sidebar_content = scrollable(
-        column![nav_section, h_divider(), library_section]
-            .spacing(SPACE_LG)
-            .padding(SPACE_LG as u16),
-    )
-    .style(scrollbar_style)
-    .height(Length::Fill);
-    let sidebar_status = container(
-        column![
-            section_heading(app.i18n.text(TextKey::StatusSectionLabel)),
-            render_update_chip(app).width(Length::Fill),
-            render_activity_status(app),
-        ]
-        .spacing(SPACE_XS),
-    )
-    .width(Length::Fill)
-    .padding([SPACE_SM as u16, SPACE_MD as u16]);
-    let sidebar = container(
-        column![sidebar_content, h_divider(), sidebar_status]
-            .height(Length::Fill)
-            .spacing(SPACE_XS),
-    )
-    .width(Length::Fixed(SIDEBAR_WIDTH))
-    .style(sidebar_style);
-
-    // ── Media pane ──
-    let (media_header, media_scrollable_content) = render_media_panel(app);
-    let base_media_scrollable = scrollable(media_scrollable_content)
-        .id(Id::new(MEDIA_SCROLLABLE_ID))
-        .style(scrollbar_style)
-        .direction(scrollable::Direction::Vertical(
-            scrollable::Scrollbar::default().spacing(MEDIA_SCROLLBAR_SPACING),
-        ))
-        .on_scroll(|viewport| Message::MediaViewportChanged {
-            absolute_y: viewport.absolute_offset().y,
-            max_y: (viewport.content_bounds().height - viewport.bounds().height).max(0.0),
-            viewport_height: viewport.bounds().height.max(0.0),
-        })
-        .height(Length::Fill);
-    let media_scrollable: Element<'_, Message> = base_media_scrollable.into();
-    let media_body: Element<'_, Message> = if matches!(app.state.active_route, Route::Timeline) {
-        row![
-            container(media_scrollable)
-                .width(Length::Fill)
-                .height(Length::Fill),
-            render_timeline_scrubber(app),
-        ]
-        .spacing(SPACE_SM)
-        .height(Length::Fill)
-        .into()
-    } else {
-        container(media_scrollable)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
-    };
-
-    // ── Details pane ──
-    let details_content = render_details_panel(app);
-
-    // ── Body ──
-    let body = row![
-        sidebar,
-        ui::v_divider(),
-        container(column![media_header, media_body,].spacing(SPACE_SM),)
-            .padding([SPACE_LG as u16, SPACE_XL as u16])
-            .width(Length::Fill),
-        ui::v_divider(),
-        container(
-            scrollable(details_content)
-                .style(scrollbar_style)
-                .direction(scrollable::Direction::Vertical(
-                    scrollable::Scrollbar::default().spacing(PANEL_SCROLLBAR_SPACING),
-                ))
-                .height(Length::Fill),
-        )
-        .width(Length::Fixed(DETAILS_WIDTH))
-        .padding(SPACE_LG as u16)
-        .style(details_pane_style),
-    ]
-    .height(Length::Fill);
-
-    let shell: Element<'_, Message> = container(column![header, body])
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .style(app_bg_style)
-        .into();
-
-    let mut overlay: Element<'_, Message> = shell;
-    if app.filter_dialog_open {
-        overlay = stack([overlay, render_filter_dialog(app)])
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into();
-    }
-    if app.new_media_announcement.is_some() {
-        overlay = stack([overlay, render_new_media_dialog(app)])
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into();
-    }
-    if app.settings_open {
-        overlay = stack([overlay, render_settings_dialog(app)])
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into();
-    }
-    if app.about_open {
-        overlay = stack([overlay, render_about_dialog(app)])
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into();
-    }
-    if app.library_dialog_open {
-        overlay = stack([overlay, render_library_dialog(app)])
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into();
-    }
-    if app.library_stats_dialog_open {
-        overlay = stack([overlay, render_library_statistics_dialog(app)])
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into();
-    }
-    if app.make_short_dialog.open {
-        overlay = stack([overlay, render_make_short_dialog(app)])
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into();
-    }
-    overlay
 }
 
 fn render_media_panel(app: &Librapix) -> (Element<'_, Message>, Element<'_, Message>) {
@@ -12265,6 +11957,248 @@ fn map_roots_from_storage(roots: Vec<librapix_storage::SourceRootRecord>) -> Vec
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pane_rail_exposes_exact_global_action_inventory() {
+        use ui::patterns::sidebar::{GlobalRailAction, SidebarMode};
+        assert_eq!(SidebarMode::from_collapsed(true), SidebarMode::Rail);
+        assert_eq!(
+            SidebarMode::Rail.global_actions(),
+            &[
+                GlobalRailAction::Library,
+                GlobalRailAction::AddLibrary,
+                GlobalRailAction::Refresh,
+                GlobalRailAction::Expand,
+            ]
+        );
+        assert!(SidebarMode::Expanded.global_actions().is_empty());
+    }
+
+    #[derive(Default)]
+    struct PaneTexts(Vec<String>);
+
+    impl iced_futures::core::widget::Operation for PaneTexts {
+        fn traverse(
+            &mut self,
+            operate: &mut dyn FnMut(&mut dyn iced_futures::core::widget::Operation),
+        ) {
+            operate(self);
+        }
+
+        fn text(&mut self, _: Option<&Id>, _: iced::Rectangle, text: &str) {
+            self.0.push(text.to_owned());
+        }
+    }
+
+    fn pane_layout(
+        mut element: Element<'_, Message>,
+    ) -> (Vec<String>, iced_futures::core::layout::Node) {
+        use iced_futures::core::{Layout, layout, renderer::Headless, widget::Tree};
+        let renderer = iced_futures::futures::executor::block_on(iced::Renderer::new(
+            iced::Font::DEFAULT,
+            iced::Pixels(13.0),
+            Some("tiny-skia"),
+        ))
+        .unwrap();
+        let mut tree = Tree::new(&element);
+        let node = element.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, Size::new(1400.0, 900.0)),
+        );
+        let mut texts = PaneTexts::default();
+        element
+            .as_widget_mut()
+            .operate(&mut tree, Layout::new(&node), &renderer, &mut texts);
+        (texts.0, node)
+    }
+
+    fn pane_texts(element: Element<'_, Message>) -> Vec<String> {
+        pane_layout(element).0
+    }
+
+    fn pane_click(mut element: Element<'_, Message>, point: iced::Point) -> Vec<Message> {
+        use iced_futures::core::{
+            Layout, Shell, clipboard, layout, mouse, renderer::Headless, widget::Tree,
+        };
+        let renderer = iced_futures::futures::executor::block_on(iced::Renderer::new(
+            iced::Font::DEFAULT,
+            iced::Pixels(13.0),
+            Some("tiny-skia"),
+        ))
+        .unwrap();
+        let mut tree = Tree::new(&element);
+        let size = Size::new(1400.0, 900.0);
+        let node = element.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, size),
+        );
+        let mut messages = Vec::new();
+        for event in [
+            mouse::Event::ButtonPressed(mouse::Button::Left),
+            mouse::Event::ButtonReleased(mouse::Button::Left),
+        ] {
+            element.as_widget_mut().update(
+                &mut tree,
+                &iced::Event::Mouse(event),
+                Layout::new(&node),
+                mouse::Cursor::Available(point),
+                &renderer,
+                &mut clipboard::Null,
+                &mut Shell::new(&mut messages),
+                &iced::Rectangle::with_size(size),
+            );
+        }
+        messages
+    }
+
+    #[test]
+    fn pane_details_edge_exposes_details_and_expand_details() {
+        use ui::patterns::details_pane::{DetailsPaneMode, details_pane};
+        let app = test_app();
+        let mode = DetailsPaneMode::from_collapsed(true);
+        assert_eq!(mode, DetailsPaneMode::Edge);
+        let texts = pane_texts(
+            details_pane(
+                mode,
+                app.i18n.text(TextKey::DetailsLabel),
+                app.i18n.text(TextKey::ExpandDetails),
+                Message::ToggleDetailsSidebar,
+                || panic!("collapsed details must not build expanded content"),
+            )
+            .into(),
+        );
+        assert!(texts.iter().any(|label| label == "Details"));
+        assert!(!texts.iter().any(|label| label == "Select a photo"));
+    }
+
+    #[test]
+    fn pane_toggles_preserve_route_selection_and_background_work() {
+        for route in [Route::Gallery, Route::Timeline] {
+            let mut app = test_app();
+            app.state.active_route = route;
+            app.state.selected_media_id = Some(42);
+            app.state.selected_root_id = Some(7);
+            app.background.pending_reconcile = true;
+            app.background.projection_in_flight = true;
+            app.background.startup_deferred_timeline_refresh = true;
+            let background_before = format!("{:?}", app.background);
+            let dir = unique_temp_dir("pane-state-preservation");
+            app.runtime.config_file = dir.join("config.toml");
+            save_to_path(&app.runtime.config_file, &app.config).unwrap();
+            for message in [
+                Message::ToggleLeftSidebar,
+                Message::ToggleDetailsSidebar,
+                Message::ToggleLeftSidebar,
+                Message::ToggleDetailsSidebar,
+            ] {
+                let task = update(&mut app, message);
+                assert_eq!(task.units(), 0, "pane toggles must not dispatch work");
+                assert_eq!(app.state.active_route, route);
+                assert_eq!(app.state.selected_media_id, Some(42));
+                assert_eq!(app.state.selected_root_id, Some(7));
+                assert_eq!(format!("{:?}", app.background), background_before);
+            }
+            std::fs::remove_file(&app.runtime.config_file).unwrap();
+            std::fs::remove_dir(dir).unwrap();
+        }
+    }
+
+    #[test]
+    fn pane_shell_preserves_expanded_content_and_hides_roots_in_rail() {
+        let mut app = test_app();
+        app.state.library_roots.push(LibraryRootView {
+            id: 7,
+            normalized_path: PathBuf::from("/media/screenshots"),
+            lifecycle: RootLifecycle::Active,
+            display_name: Some("My screenshots".into()),
+        });
+        let expanded = pane_texts(views::shell::view(&app));
+        assert!(expanded.iter().any(|label| label == "My screenshots"));
+        assert!(
+            expanded
+                .iter()
+                .any(|label| label == app.i18n.text(TextKey::RootEditButton))
+        );
+        assert!(
+            expanded
+                .iter()
+                .any(|label| label == app.i18n.text(TextKey::RootStatsButton))
+        );
+        app.left_sidebar_collapsed = true;
+        app.details_sidebar_collapsed = true;
+        app.shell_notice = Some(ShellNotice {
+            tone: NoticeTone::Error,
+            summary: "Test layout notice".into(),
+        });
+        let collapsed = pane_texts(views::shell::view(&app));
+        assert!(!collapsed.iter().any(|label| label == "My screenshots"));
+        assert!(collapsed.iter().any(|label| label == "Details"));
+        assert!(collapsed.iter().any(|label| label == "Test layout notice"));
+        assert!(
+            collapsed
+                .iter()
+                .any(|label| label == app.i18n.text(TextKey::DismissButton))
+        );
+    }
+
+    #[test]
+    fn pane_shell_rail_and_details_edge_emit_the_existing_messages() {
+        let mut app = test_app();
+        app.left_sidebar_collapsed = true;
+        app.details_sidebar_collapsed = true;
+        // The four real rail controls are evenly spaced below the fixed header.
+        for (index, expected) in [
+            "OpenGallery",
+            "OpenAddLibraryDialog",
+            "RefreshRoots",
+            "ToggleLeftSidebar",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let y = HEADER_HEIGHT
+                + SPACE_SM as f32
+                + CONTROL_HEIGHT_MD / 2.0
+                + index as f32 * (CONTROL_HEIGHT_MD + SPACE_SM as f32);
+            let messages = pane_click(views::shell::view(&app), iced::Point::new(28.0, y));
+            assert_eq!(messages.len(), 1, "{expected}");
+            assert_eq!(message_event_label(&messages[0]), expected);
+        }
+        let messages = pane_click(
+            views::shell::view(&app),
+            iced::Point::new(1400.0 - DETAILS_EDGE_WIDTH / 2.0, HEADER_HEIGHT + 24.0),
+        );
+        assert!(matches!(
+            messages.as_slice(),
+            [Message::ToggleDetailsSidebar]
+        ));
+    }
+
+    #[test]
+    fn pane_notice_overlays_without_resizing_or_blocking_the_shell() {
+        let mut app = test_app();
+        app.left_sidebar_collapsed = true;
+        let (_, baseline) = pane_layout(views::shell::view(&app));
+        app.shell_notice = Some(ShellNotice {
+            tone: NoticeTone::Error,
+            summary: "Could not save layout preference.".into(),
+        });
+        let (_, with_notice) = pane_layout(views::shell::view(&app));
+        assert_eq!(
+            format!("{baseline:?}"),
+            format!("{:?}", with_notice.children()[0])
+        );
+        let messages = pane_click(
+            views::shell::view(&app),
+            iced::Point::new(
+                28.0,
+                HEADER_HEIGHT + SPACE_SM as f32 + CONTROL_HEIGHT_MD / 2.0,
+            ),
+        );
+        assert!(matches!(messages.as_slice(), [Message::OpenGallery]));
+    }
 
     #[test]
     fn pane_preference_updates_each_pane_independently() {

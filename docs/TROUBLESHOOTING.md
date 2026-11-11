@@ -1,5 +1,16 @@
 # Troubleshooting
 
+## Windows rebuild fails while the validation app is running
+
+- Symptom: Cargo reports `failed to remove file ... librapix-app.exe` with
+  `Access is denied (os error 5)` during a check/test/build after manual validation.
+- Affected area: local Windows development, not application pane behavior.
+- Confirmed cause: the running executable is locked by Windows while Cargo tries
+  to replace it. This occurred during the collapsible-pane validation loop.
+- Resolution: close the validation app normally, then rerun the command.
+- Prevention: finish manual interaction and close that build before rebuilding;
+  no application or process-spawning workaround is needed.
+
 Issue `#12` is summarized in `docs/architecture/issue-12-runtime-optimization-summary.md`. This file keeps the recurring regression patterns and the final fixes that matter if those problems return.
 
 ## Accent text loses contrast after a palette change

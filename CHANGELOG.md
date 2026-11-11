@@ -9,6 +9,7 @@ All notable changes to this project are documented in this file.
 - Split app-local UI tokens and widget styles into focused `ui/tokens` and `ui/styles` modules, preserving existing values, public names, visuals, and behavior; added palette/chip regression tests.
 
 ### Docs
+- Documented the hybrid shell/pane presentation boundary and the Windows running-executable lock encountered during manual validation.
 - Added ADR `0023` (themeable design system: semantic palette + Light/Dark/System) and ADR `0024` (unified Library surface) documenting the visual-overhaul branch decisions.
 - Updated `docs/architecture/ui.md` for the semantic `Palette`/`palette(theme)` token layer, Light/Dark/System theming, soft elevation, glass dialogs, the centralized `render_dialog_frame`, styled scrollbars, and the in-app theme toggle.
 - Updated `docs/architecture/projections.md` to describe the single canonical timeline projection that feeds both the flat grid and the grouped timeline.
@@ -23,6 +24,7 @@ All notable changes to this project are documented in this file.
 - Added ADR `0022` for the `librapix-video-tools` subsystem and documented Make Short architecture boundaries/config/dependency updates.
 
 ### Added
+- Added independently collapsible application panes: a global-actions library rail, a compact labeled Details edge, and overlay layout-save error notices, using the existing persisted pane preferences without changing browsing/background behavior.
 - Added centralized app-local Iced component primitives for controls, cards, badges, loading, empty states, and dismissible notices; view migration remains a separate step.
 - Added backward-compatible independent pane-collapse preferences, app-side persistence transitions, dismissible error-notice state, and localized layout labels; visual pane controls follow separately.
 - Real Light theme and OS-following System theme alongside the existing Dark theme, selected via a semantic `Palette` resolved by `palette(theme)` (replaces the 16 hardcoded dark-only color constants). System appearance is detected via the `dark-light` crate and cached/throttled off the render path.

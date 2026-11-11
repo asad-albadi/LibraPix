@@ -3,7 +3,7 @@
 mod assets;
 mod format;
 mod startup_log;
-mod ui;
+mod ui; // App-local tokens and styles, exposed through the existing facade.
 
 use chrono::Local;
 use iced::keyboard;

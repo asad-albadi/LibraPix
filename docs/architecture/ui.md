@@ -12,7 +12,12 @@ Librapix UI uses a themeable, Fluent-inspired design system with an app-shell la
 
 ## Design system
 
-All visual presentation is centralized in `librapix-app/src/ui.rs`:
+Shared visual tokens and widget styles are centralized in `librapix-app/src/ui/`:
+
+- `tokens/` owns the existing palette/chip tones, elevation, spacing, typography, sizing, and radii.
+- `styles/` owns the existing Iced button, container, input, scrollbar, and text style functions.
+- `mod.rs` preserves the existing `ui::*` facade and layout helpers so view call sites remain unchanged during extraction. Reserved modules contain no new tokens or widget behavior until a real call site needs them.
+- This structural extraction preserves all concrete values, themes, visuals, and product behavior; the approved migration is recorded in `docs/superpowers/plans/2026-11-11-centralized-ui.md`.
 
 ### Color palette / theming
 - Semantic `Palette` struct with two `static` instances, `DARK` and `LIGHT`; `palette(&Theme)` selects one via `theme.extended_palette().is_dark`.

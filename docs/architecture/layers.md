@@ -11,6 +11,7 @@
   - View composition
   - Message emission from user actions
   - App-shell composition and design-token usage
+  - App-local `ui/tokens` and `ui/styles` modules, re-exported through the existing `ui` facade without changing dependency direction
   - No direct storage/indexing logic
 - Application orchestration (`librapix-core::app`)
   - Explicit app state and state transitions

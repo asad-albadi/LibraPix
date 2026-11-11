@@ -14,6 +14,7 @@ Librapix is a desktop-first Rust application with strict internal boundaries.
 - Video tools subsystem: `librapix-video-tools` (Make Short ffprobe/ffmpeg orchestration).
 - Media-actions flow: app-orchestrated open/copy workflows (file + path) over storage read models.
 - UI shell system: app-side shell regions, Fluent-inspired design tokens, and reusable component styles in `librapix-app`.
+- Shared UI tokens and styles live in app-local `ui/tokens` and `ui/styles` modules behind a compatibility facade; no separate UI crate or runtime behavior is introduced by the extraction.
 - Live announcement UX: in-app modal new-file dialog driven by filesystem-index deltas.
 - Keyboard input flow: ignored-key subscription route for copy shortcuts integrated in app update logic.
 - Background execution model: indexed work and projection/search refresh both run through Iced `Task::perform` modes to keep UI responsive on large libraries.

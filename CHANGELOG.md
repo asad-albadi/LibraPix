@@ -22,6 +22,7 @@ All notable changes to this project are documented in this file.
 - Added ADR `0022` for the `librapix-video-tools` subsystem and documented Make Short architecture boundaries/config/dependency updates.
 
 ### Added
+- Added backward-compatible independent pane-collapse preferences, app-side persistence transitions, dismissible error-notice state, and localized layout labels; visual pane controls follow separately.
 - Real Light theme and OS-following System theme alongside the existing Dark theme, selected via a semantic `Palette` resolved by `palette(theme)` (replaces the 16 hardcoded dark-only color constants). System appearance is detected via the `dark-light` crate and cached/throttled off the render path.
 - In-app theme toggle (System / Light / Dark) in Settings → Appearance, persisted to config (`config.theme`).
 - Theme-aware UI icons (white on dark, black on light) and theme-aware text-style helpers; icon-size tokens (`ICON_XS`..`ICON_XL`) and a second Light chip palette.

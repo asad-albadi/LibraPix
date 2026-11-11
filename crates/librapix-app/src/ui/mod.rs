@@ -1,5 +1,6 @@
 //! App-local design tokens, widget styles, and compatibility layout helpers.
 
+pub mod components;
 pub mod styles;
 pub mod tokens;
 

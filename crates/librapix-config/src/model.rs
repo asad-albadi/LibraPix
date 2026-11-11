@@ -33,6 +33,13 @@ pub struct VideoToolsConfig {
     pub default_shorts_output_dir: Option<PathBuf>,
 }
 
+#[derive(Default, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct UiConfig {
+    pub left_sidebar_collapsed: bool,
+    pub details_sidebar_collapsed: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AppConfig {
     pub schema_version: u32,
@@ -42,6 +49,8 @@ pub struct AppConfig {
     pub path_overrides: PathOverrides,
     #[serde(default)]
     pub video_tools: VideoToolsConfig,
+    #[serde(default)]
+    pub ui: UiConfig,
 }
 
 impl Default for AppConfig {
@@ -53,6 +62,7 @@ impl Default for AppConfig {
             library_source_roots: Vec::new(),
             path_overrides: PathOverrides::default(),
             video_tools: VideoToolsConfig::default(),
+            ui: UiConfig::default(),
         }
     }
 }

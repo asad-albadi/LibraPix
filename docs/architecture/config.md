@@ -21,6 +21,15 @@
 - `library_source_roots`
 - `path_overrides` for future path relocation support
 - `video_tools.default_shorts_output_dir` (optional default output base directory for Make Short)
+- `ui.left_sidebar_collapsed` and `ui.details_sidebar_collapsed` are independent layout preferences, defaulting to `false` (expanded). Missing `[ui]` tables and missing individual fields use Serde defaults; schema version remains `1`.
+
+## Pane preference persistence
+
+- Bootstrap hydrates app-local pane state from `config.ui`.
+- Pane transitions update visible state and in-memory preferences before attempting persistence.
+- Saves reload the existing config and merge only `ui`, preserving settings saved by other app flows.
+- A load/save failure retains the selected layout for the session, logs the full error, and stores a concise localized error notice. Dismissal clears only that notice.
+- The app-local `ui/components/notice` module defines notice data and tone only; rendering and pane controls are introduced separately.
 
 ## Validation behavior
 

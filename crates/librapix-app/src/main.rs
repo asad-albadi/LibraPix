@@ -16,8 +16,8 @@ use iced::widget::{
 };
 use iced::{ContentFit, Element, Length, Size, Subscription, Task, Theme};
 use librapix_config::{
-    LocalePreference, ThemePreference, lexical_normalize_path, load_from_path, load_or_create,
-    save_to_path,
+    AppConfig, LocalePreference, ThemePreference, lexical_normalize_path, load_from_path,
+    load_or_create, save_to_path,
 };
 use librapix_core::app::{
     AppMessage, AppState, IndexingSummary, LibraryRootView, RootLifecycle, Route,
@@ -58,6 +58,7 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
+use ui::components::notice::{NoticeTone, ShellNotice};
 use ui::*;
 
 fn main() -> iced::Result {
@@ -84,6 +85,12 @@ enum Message {
     OpenGallery,
     OpenTimeline,
     SetThemePreference(ThemePreference),
+    #[allow(dead_code)] // Emitted by the visual shell in Task 4.
+    ToggleLeftSidebar,
+    #[allow(dead_code)] // Emitted by the visual shell in Task 4.
+    ToggleDetailsSidebar,
+    #[allow(dead_code)] // Emitted by the reusable notice renderer in Task 3.
+    DismissShellNotice,
     SelectRoot(i64),
     DeactivateRoot,
     ReactivateRoot,
@@ -836,6 +843,10 @@ struct PreparedShortJob {
 
 struct Librapix {
     state: AppState,
+    config: AppConfig,
+    left_sidebar_collapsed: bool,
+    details_sidebar_collapsed: bool,
+    shell_notice: Option<ShellNotice>,
     i18n: Translator,
     theme_preference: ThemePreference,
     /// Cached OS appearance for `ThemePreference::System`, refreshed (throttled)
@@ -919,6 +930,12 @@ struct Librapix {
 enum LibraryDialogMode {
     Add,
     Edit(i64),
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Pane {
+    Left,
+    Details,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1061,6 +1078,10 @@ impl Default for Librapix {
         let bootstrap = bootstrap_runtime();
         let mut app = Self {
             state: AppState::default(),
+            left_sidebar_collapsed: bootstrap.config.ui.left_sidebar_collapsed,
+            details_sidebar_collapsed: bootstrap.config.ui.details_sidebar_collapsed,
+            config: bootstrap.config,
+            shell_notice: None,
             i18n: Translator::new(bootstrap.locale),
             theme_preference: bootstrap.theme_preference,
             system_dark: Cell::new(system_is_dark()),
@@ -1373,6 +1394,9 @@ fn message_event_label(msg: &Message) -> String {
         Message::OpenGallery => "OpenGallery".into(),
         Message::OpenTimeline => "OpenTimeline".into(),
         Message::SetThemePreference(_) => "SetThemePreference".into(),
+        Message::ToggleLeftSidebar => "ToggleLeftSidebar".into(),
+        Message::ToggleDetailsSidebar => "ToggleDetailsSidebar".into(),
+        Message::DismissShellNotice => "DismissShellNotice".into(),
         Message::SelectRoot(id) => format!("SelectRoot({id})"),
         Message::DeactivateRoot => "DeactivateRoot".into(),
         Message::ReactivateRoot => "ReactivateRoot".into(),
@@ -1729,6 +1753,15 @@ fn update(app: &mut Librapix, message: Message) -> Task<Message> {
         }
         Message::SetThemePreference(preference) => {
             set_theme_preference(app, preference);
+        }
+        Message::ToggleLeftSidebar => {
+            toggle_pane_preference(app, Pane::Left);
+        }
+        Message::ToggleDetailsSidebar => {
+            toggle_pane_preference(app, Pane::Details);
+        }
+        Message::DismissShellNotice => {
+            app.shell_notice = None;
         }
         Message::SelectRoot(id) => {
             app.state.apply(AppMessage::SetSelectedRoot);
@@ -7143,6 +7176,48 @@ fn build_short_request_from_dialog(app: &mut Librapix) -> Option<ShortGeneration
     Some(request)
 }
 
+fn apply_pane_preference(
+    app: &mut Librapix,
+    pane: Pane,
+    collapsed: bool,
+    save: impl FnOnce(&AppConfig) -> Result<(), String>,
+) {
+    match pane {
+        Pane::Left => {
+            app.left_sidebar_collapsed = collapsed;
+            app.config.ui.left_sidebar_collapsed = collapsed;
+        }
+        Pane::Details => {
+            app.details_sidebar_collapsed = collapsed;
+            app.config.ui.details_sidebar_collapsed = collapsed;
+        }
+    }
+    if let Err(error) = save(&app.config) {
+        startup_log::log_error("ui.pane_preference.save_failed", &error);
+        app.shell_notice = Some(ShellNotice {
+            tone: NoticeTone::Error,
+            summary: app
+                .i18n
+                .text(TextKey::LayoutPreferenceSaveFailed)
+                .to_owned(),
+        });
+    }
+}
+
+fn toggle_pane_preference(app: &mut Librapix, pane: Pane) {
+    let collapsed = match pane {
+        Pane::Left => !app.left_sidebar_collapsed,
+        Pane::Details => !app.details_sidebar_collapsed,
+    };
+    let config_file = app.runtime.config_file.clone();
+    apply_pane_preference(app, pane, collapsed, |preferences| {
+        // Other settings flows save independently; merge only our pane preferences.
+        let mut config = load_from_path(&config_file).map_err(|error| error.to_string())?;
+        config.ui = preferences.ui.clone();
+        save_to_path(&config_file, &config).map_err(|error| error.to_string())
+    });
+}
+
 fn set_theme_preference(app: &mut Librapix, preference: ThemePreference) {
     if app.theme_preference == preference {
         return;
@@ -7175,6 +7250,7 @@ fn save_shorts_output_dir_setting(app: &mut Librapix) {
 }
 
 struct BootstrapRuntime {
+    config: AppConfig,
     locale: Locale,
     theme_preference: ThemePreference,
     database_file: PathBuf,
@@ -7187,6 +7263,7 @@ struct BootstrapRuntime {
 fn bootstrap_runtime() -> BootstrapRuntime {
     let bootstrap_started_at = Instant::now();
     let mut runtime = BootstrapRuntime {
+        config: AppConfig::default(),
         locale: Locale::EnUs,
         theme_preference: ThemePreference::System,
         database_file: PathBuf::from("librapix.db"),
@@ -7211,6 +7288,7 @@ fn bootstrap_runtime() -> BootstrapRuntime {
         &format!("config_file={}", loaded.paths.config_file.display()),
     );
 
+    runtime.config = loaded.config.clone();
     runtime.locale = match loaded.config.locale {
         LocalePreference::EnUs => Locale::EnUs,
     };
@@ -12188,9 +12266,85 @@ fn map_roots_from_storage(roots: Vec<librapix_storage::SourceRootRecord>) -> Vec
 mod tests {
     use super::*;
 
+    #[test]
+    fn pane_preference_updates_each_pane_independently() {
+        let mut app = test_app();
+        apply_pane_preference(&mut app, Pane::Left, true, |_| Ok(()));
+        assert!(app.left_sidebar_collapsed);
+        assert!(!app.details_sidebar_collapsed);
+        assert!(app.config.ui.left_sidebar_collapsed);
+        assert!(!app.config.ui.details_sidebar_collapsed);
+        apply_pane_preference(&mut app, Pane::Details, true, |_| Ok(()));
+        apply_pane_preference(&mut app, Pane::Left, false, |_| Ok(()));
+        assert!(!app.left_sidebar_collapsed);
+        assert!(app.details_sidebar_collapsed);
+        assert!(!app.config.ui.left_sidebar_collapsed);
+        assert!(app.config.ui.details_sidebar_collapsed);
+        assert!(app.shell_notice.is_none());
+    }
+
+    #[test]
+    fn pane_preference_failed_save_retains_layout_and_sets_notice() {
+        let mut app = test_app();
+        for pane in [Pane::Left, Pane::Details] {
+            apply_pane_preference(&mut app, pane, true, |_| Err("private path: denied".into()));
+            let notice = app.shell_notice.as_ref().expect("save error notice");
+            assert_eq!(notice.tone, NoticeTone::Error);
+            assert_eq!(notice.summary, "Could not save layout preference.");
+            assert!(!notice.summary.contains("private path"));
+        }
+        assert!(app.left_sidebar_collapsed && app.details_sidebar_collapsed);
+        assert!(app.config.ui.left_sidebar_collapsed && app.config.ui.details_sidebar_collapsed);
+        let _ = update(&mut app, Message::DismissShellNotice);
+        assert!(app.shell_notice.is_none());
+        assert!(app.left_sidebar_collapsed && app.details_sidebar_collapsed);
+    }
+
+    #[test]
+    fn pane_preference_messages_persist_without_overwriting_other_settings() {
+        let mut app = test_app();
+        let dir = unique_temp_dir("pane-preferences");
+        app.runtime.config_file = dir.join("config.toml");
+        let saved = AppConfig {
+            theme: ThemePreference::Light,
+            ..AppConfig::default()
+        };
+        save_to_path(&app.runtime.config_file, &saved).expect("seed config");
+
+        let _ = update(&mut app, Message::ToggleLeftSidebar);
+        let _ = update(&mut app, Message::ToggleDetailsSidebar);
+        let _ = update(&mut app, Message::ToggleLeftSidebar);
+
+        let restored = load_from_path(&app.runtime.config_file).expect("reload pane preferences");
+        assert!(!restored.ui.left_sidebar_collapsed);
+        assert!(restored.ui.details_sidebar_collapsed);
+        assert_eq!(restored.theme, ThemePreference::Light);
+        assert_eq!(restored.ui, app.config.ui);
+        assert!(app.shell_notice.is_none());
+        std::fs::remove_file(&app.runtime.config_file).expect("remove test config");
+        std::fs::remove_dir(dir).expect("remove test directory");
+    }
+
+    #[test]
+    fn pane_preference_load_failure_keeps_session_choice() {
+        let mut app = test_app();
+        let dir = unique_temp_dir("pane-missing-config");
+        app.runtime.config_file = dir.join("missing.toml");
+        let _ = update(&mut app, Message::ToggleDetailsSidebar);
+        assert!(app.details_sidebar_collapsed);
+        assert!(app.config.ui.details_sidebar_collapsed);
+        assert_eq!(app.shell_notice.as_ref().unwrap().tone, NoticeTone::Error);
+        assert!(!app.runtime.config_file.exists());
+        std::fs::remove_dir(dir).expect("remove test directory");
+    }
+
     fn test_app() -> Librapix {
         Librapix {
             state: AppState::default(),
+            config: AppConfig::default(),
+            left_sidebar_collapsed: false,
+            details_sidebar_collapsed: false,
+            shell_notice: None,
             i18n: Translator::new(Locale::EnUs),
             theme_preference: ThemePreference::System,
             system_dark: Cell::new(true),

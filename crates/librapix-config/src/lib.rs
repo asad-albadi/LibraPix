@@ -7,7 +7,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 pub use model::{
-    AppConfig, LibrarySourceRoot, LocalePreference, ThemePreference, VideoToolsConfig,
+    AppConfig, LibrarySourceRoot, LocalePreference, ThemePreference, UiConfig, VideoToolsConfig,
 };
 pub use pathing::{ConfigPaths, default_paths, lexical_normalize_path};
 
@@ -164,6 +164,39 @@ impl AppConfig {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[test]
+    fn ui_preferences_default_to_expanded_when_absent() {
+        let config: AppConfig = toml::from_str(
+            "schema_version = 1\nlocale = 'en-us'\ntheme = 'system'\nlibrary_source_roots = []\n[path_overrides]\n",
+        )
+        .expect("legacy config should load");
+        assert!(!config.ui.left_sidebar_collapsed);
+        assert!(!config.ui.details_sidebar_collapsed);
+        assert_eq!(config.schema_version, 1);
+    }
+
+    #[test]
+    fn ui_preferences_round_trip() {
+        for (left, details) in [(false, false), (true, false), (false, true), (true, true)] {
+            let mut config = AppConfig::default();
+            config.ui.left_sidebar_collapsed = left;
+            config.ui.details_sidebar_collapsed = details;
+            let serialized = toml::to_string_pretty(&config).expect("serialize preferences");
+            let restored: AppConfig = toml::from_str(&serialized).expect("restore preferences");
+            assert_eq!(restored, config);
+        }
+    }
+
+    #[test]
+    fn ui_preferences_allow_partially_specified_table() {
+        let config: AppConfig = toml::from_str(
+            "schema_version = 1\nlocale = 'en-us'\ntheme = 'system'\nlibrary_source_roots = []\n[path_overrides]\n[ui]\nleft_sidebar_collapsed = true\n",
+        )
+        .expect("partial ui preferences should load");
+        assert!(config.ui.left_sidebar_collapsed);
+        assert!(!config.ui.details_sidebar_collapsed);
+    }
 
     #[test]
     fn default_config_validates() {

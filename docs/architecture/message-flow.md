@@ -6,6 +6,12 @@ Issue `#12` runtime rationale and evidence are consolidated in `docs/architectur
 
 ## Flow
 
+Pane layout messages (`ToggleLeftSidebar`, `ToggleDetailsSidebar`) update independent
+app-local state and `config.ui` through `apply_pane_preference`, then use the config
+crate's existing load/save flow to persist only layout preferences. Persistence
+failure keeps the session choice and sets a localized `ShellNotice` with error tone;
+`DismissShellNotice` clears that bounded notice without changing pane state.
+
 1. `view` renders controls from current `AppState`.
 2. User action emits a UI message.
 3. `update` maps UI message to `librapix-core::app::AppMessage`.
